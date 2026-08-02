@@ -5,6 +5,7 @@ import {
   readDir,
   readFile,
   readTextFile,
+  remove,
   rename,
   writeFile,
   writeTextFile,
@@ -110,7 +111,7 @@ export function loadAsset(dir: string, name: string): Promise<ImageBitmap> {
 
 const urls = new Map<string, Promise<string>>();
 
-/** For showing an asset in an <img>, e.g. while placing the mosaic. */
+/** For showing an asset in an image element, e.g. while placing the mosaic. */
 export function assetUrl(dir: string, name: string): Promise<string> {
   let url = urls.get(name);
   if (!url) {
@@ -133,6 +134,38 @@ export const vaultPath = async (dir: string, id: string) => join(await vaultDir(
 export async function restoreFromVault(dir: string, id: string) {
   const backup = await vaultPath(dir, id);
   if (await exists(backup)) await copyFile(backup, await tilePath(dir, id));
+}
+
+/* A snapshot is a copy of the manifest, nothing more. A look is fully described
+ * by it plus the content-hashed assets, which are never deleted — storing
+ * rendered images would cost megabytes per look and lose editability. */
+const snapshotDir = async (dir: string) => join(await projectDir(dir), "snapshots");
+
+const snapshotFile = async (dir: string, name: string) =>
+  join(await snapshotDir(dir), `${name.replace(/[^\w \-.]/g, "_")}.json`);
+
+export async function listSnapshots(dir: string): Promise<string[]> {
+  try {
+    return (await readDir(await snapshotDir(dir)))
+      .filter((e) => e.isFile && e.name.endsWith(".json"))
+      .map((e) => e.name.replace(/\.json$/, ""))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+export async function writeSnapshot(dir: string, name: string, m: Manifest) {
+  await mkdir(await snapshotDir(dir), { recursive: true });
+  await writeTextFile(await snapshotFile(dir, name), JSON.stringify(m, null, 2));
+}
+
+export async function readSnapshot(dir: string, name: string): Promise<Manifest> {
+  return migrate(JSON.parse(await readTextFile(await snapshotFile(dir, name))));
+}
+
+export async function deleteSnapshot(dir: string, name: string) {
+  await remove(await snapshotFile(dir, name));
 }
 
 export async function vaultedIds(dir: string): Promise<string[]> {

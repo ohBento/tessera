@@ -6,10 +6,15 @@
   "permissions": [
     "core:default",
     "dialog:allow-open",
+    "opener:allow-open-url",
     "fs:allow-document-read-recursive",
     "fs:allow-document-write-recursive",
     {
       "identifier": "fs:allow-read-file",
+      "allow": [{ "path": "**" }]
+    },
+    {
+      "identifier": "fs:allow-write-file",
       "allow": [{ "path": "**" }]
     }
   ]

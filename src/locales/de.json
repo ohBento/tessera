@@ -64,5 +64,15 @@
   "mosaic.cancel": "Abbrechen",
   "mosaic.adjust": "Mosaik anpassen",
   "tile.file": "Datei",
-  "editor.empty": "Kachel anklicken zum Bearbeiten"
+  "editor.empty": "Kachel anklicken zum Bearbeiten",
+  "export.to": "Export in Ordner…",
+  "snapshot.title": "Looks",
+  "snapshot.save": "Look speichern",
+  "snapshot.delete": "Löschen",
+  "snapshot.name": "Name für diesen Look",
+  "snapshot.delete.confirm": "Look „{{name}}\" löschen?",
+  "busy.snapshot": "Bearbeitet Looks…",
+  "busy.export": "Exportiert…",
+  "update.available": "Version {{version}} ist da",
+  "update.open": "Zur Release-Seite"
 }

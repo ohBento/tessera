@@ -64,5 +64,15 @@
   "mosaic.cancel": "Cancel",
   "mosaic.adjust": "Adjust mosaic",
   "tile.file": "File",
-  "editor.empty": "Pick a tile to edit it"
+  "editor.empty": "Pick a tile to edit it",
+  "export.to": "Export to folder…",
+  "snapshot.title": "Looks",
+  "snapshot.save": "Save look",
+  "snapshot.delete": "Delete",
+  "snapshot.name": "Name for this look",
+  "snapshot.delete.confirm": "Delete the look \"{{name}}\"?",
+  "busy.snapshot": "Working on looks…",
+  "busy.export": "Exporting…",
+  "update.available": "Version {{version}} is out",
+  "update.open": "Open release page"
 }

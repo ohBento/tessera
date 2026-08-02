@@ -12,14 +12,18 @@ import {
   type Layer,
   type Manifest,
 } from "./model";
+import { join } from "@tauri-apps/api/path";
 import {
   assetUrl,
   defaultDir,
+  deleteSnapshot,
   importAsset,
+  listSnapshots,
   listTiles,
   loadApplied,
   loadAsset,
   loadManifest,
+  readSnapshot,
   restoreFromVault,
   saveApplied,
   saveManifest,
@@ -27,9 +31,11 @@ import {
   vaultOriginal,
   vaultPath,
   vaultedIds,
+  writeSnapshot,
   type Applied,
 } from "./project";
 import { defaultMosaicRect, exportBmp, previewUrl, splitRect, tileCover } from "./render";
+import { latestRelease } from "./update";
 
 /** Previews must be rendered at least as wide as they are shown or the browser
  *  upscales them and everything looks soft. The grid is freely resizable, so
@@ -58,6 +64,9 @@ export const app = $state({
   editing: "",
   selectedLayer: "",
   fonts: [] as string[],
+  snapshots: [] as string[],
+  /** newer release tag once the update check has found one */
+  update: "",
   previewW: 240,
   busy: "",
   error: "",
@@ -146,6 +155,9 @@ export async function open(dir?: string) {
     app.preview = {};
     app.editing = "";
     if (!app.fonts.length) app.fonts = await invoke<string[]>("system_fonts");
+    await refreshSnapshots();
+    // Deliberately not awaited: a slow or absent network must not delay the grid.
+    void latestRelease().then((tag) => (app.update = tag));
     await refreshAll();
   });
 }
@@ -365,6 +377,50 @@ export async function restoreAll() {
     await commit();
     saved = {};
     await saveApplied(app.dir, saved);
+  });
+}
+
+/* ---- snapshots ---- */
+
+export async function refreshSnapshots() {
+  app.snapshots = await listSnapshots(app.dir);
+}
+
+export async function saveSnapshot(name: string) {
+  await run("snapshot", async () => {
+    await writeSnapshot(app.dir, name, plain(app.manifest));
+    await refreshSnapshots();
+  });
+}
+
+/** Loading a look only changes the project; nothing reaches the game folder
+ *  until it is saved, and undo still gets you back. */
+export async function loadSnapshot(name: string) {
+  await run("snapshot", async () => {
+    checkpoint();
+    app.manifest = await readSnapshot(app.dir, name);
+    await commit();
+  });
+}
+
+export async function removeSnapshot(name: string) {
+  await run("snapshot", async () => {
+    await deleteSnapshot(app.dir, name);
+    await refreshSnapshots();
+  });
+}
+
+/* ---- export elsewhere ---- */
+
+/** Writes every visible tile into a folder of the user's choosing, leaving the
+ *  game folder alone. Hidden tiles stay out, as they do everywhere. */
+export async function exportTo(target: string) {
+  await run("export", async () => {
+    for (const id of visible()) {
+      const eff = effective(id);
+      if (!eff.base && !eff.layers.length) continue;
+      await writeFile(await join(target, `${id}.bmp`), await exportBmp(app.dir, id, eff));
+    }
   });
 }
 

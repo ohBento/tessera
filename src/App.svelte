@@ -1,5 +1,7 @@
 <script lang="ts">
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
+  import { openUrl } from "@tauri-apps/plugin-opener";
+  import { releasePage } from "./lib/update";
   import { COLS } from "./lib/render";
   import MosaicPlacer from "./MosaicPlacer.svelte";
   import SplitPane from "./SplitPane.svelte";
@@ -11,9 +13,13 @@
     canUndo,
     dirty,
     ensurePreviewWidth,
+    exportTo,
+    loadSnapshot,
     open,
     redo,
+    removeSnapshot,
     restoreAll,
+    saveSnapshot,
     saveToGame,
     startMosaic,
     swapTiles,
@@ -24,6 +30,7 @@
 
   let dragFrom = $state(-1);
   let gridWidth = $state(0);
+  let chosen = $state("");
   const dirtyIds = $derived(new Set(dirty()));
   const shown = $derived(visible());
 
@@ -46,6 +53,23 @@
 
   async function onRestoreAll() {
     if (confirm(t("vault.restore.confirm"))) await restoreAll();
+  }
+
+  async function onExportTo() {
+    const picked = await openDialog({ directory: true });
+    if (typeof picked === "string") await exportTo(picked);
+  }
+
+  async function onSaveSnapshot() {
+    const name = prompt(t("snapshot.name"))?.trim();
+    if (name) await saveSnapshot(name);
+  }
+
+  async function onRemoveSnapshot() {
+    if (chosen && confirm(t("snapshot.delete.confirm", { name: chosen }))) {
+      await removeSnapshot(chosen);
+      chosen = "";
+    }
   }
 
   function onKey(e: KeyboardEvent) {
@@ -86,9 +110,25 @@
     {dirtyIds.size ? t("save.dirty", { count: dirtyIds.size }) : t("save.clean")}
   </span>
   <button onclick={saveToGame} disabled={!dirtyIds.size}>{t("save.action")}</button>
+  <button onclick={onExportTo}>{t("export.to")}</button>
 
   {#if app.busy}<span class="dim">{t(`busy.${app.busy}`)}</span>{/if}
   {#if app.error}<span class="warn">{app.error}</span>{/if}
+</div>
+
+<div class="bar">
+  <span class="dim">{t("snapshot.title")}</span>
+  <select bind:value={chosen} onchange={() => chosen && loadSnapshot(chosen)}>
+    <option value="">—</option>
+    {#each app.snapshots as name}<option value={name}>{name}</option>{/each}
+  </select>
+  <button onclick={onSaveSnapshot}>{t("snapshot.save")}</button>
+  <button onclick={onRemoveSnapshot} disabled={!chosen}>{t("snapshot.delete")}</button>
+
+  {#if app.update}
+    <span class="ok">{t("update.available", { version: app.update })}</span>
+    <button onclick={() => openUrl(releasePage)}>{t("update.open")}</button>
+  {/if}
 </div>
 
 {#if app.placing}
