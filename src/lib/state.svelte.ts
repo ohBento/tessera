@@ -31,11 +31,18 @@ import {
 } from "./project";
 import { defaultMosaicRect, exportBmp, previewUrl, splitRect, tileCover } from "./render";
 
-/** Grid previews must be rendered at least as wide as they are shown, or the
- *  browser upscales them and everything looks soft. A cell is roughly 180 CSS
- *  px in a maximised window, times the display scaling, capped at the real tile
- *  width because rendering beyond that buys nothing. */
-export const PREVIEW_W = Math.min(TILE_W, Math.round(360 * (window.devicePixelRatio || 1)));
+/** Previews must be rendered at least as wide as they are shown or the browser
+ *  upscales them and everything looks soft. The grid is freely resizable, so
+ *  this follows the real cell width instead of guessing. */
+const PREVIEW_STEP = 120;
+const previewFor = (cellCssWidth: number) =>
+  Math.min(
+    TILE_W,
+    Math.max(
+      PREVIEW_STEP,
+      Math.ceil((cellCssWidth * (window.devicePixelRatio || 1)) / PREVIEW_STEP) * PREVIEW_STEP,
+    ),
+  );
 
 export const app = $state({
   dir: "",
@@ -51,9 +58,19 @@ export const app = $state({
   editing: "",
   selectedLayer: "",
   fonts: [] as string[],
+  previewW: 240,
   busy: "",
   error: "",
 });
+
+/** Raises the preview resolution when the grid grows. It never lowers it —
+ *  shrinking would re-render all 60 tiles for no visible gain. */
+export async function ensurePreviewWidth(cellCssWidth: number) {
+  const want = previewFor(cellCssWidth);
+  if (!(want > app.previewW) || !app.dir) return;
+  app.previewW = want;
+  await run("load", refreshAll);
+}
 
 /** What the game folder currently holds, so "dirty" means "differs from disk". */
 let saved: Applied = {};
@@ -86,7 +103,7 @@ async function refresh(id: string) {
   const eff = effective(id);
   URL.revokeObjectURL(app.preview[id] ?? "");
   if (eff.base || eff.layers.length) {
-    app.preview[id] = await previewUrl(app.dir, id, eff, PREVIEW_W);
+    app.preview[id] = await previewUrl(app.dir, id, eff, app.previewW);
     return;
   }
   // Untouched: show the true original, which lives in the vault once the game

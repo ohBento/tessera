@@ -138,14 +138,11 @@ button:disabled {
   min-height: 100%;
 }
 
-/* Capped rather than stretched to the window: the grid is 7 by 9 and therefore
-   very tall, so smaller cells mean more of the mosaic is visible at once. */
+/* Fills whatever width the divider leaves it; preview resolution follows. */
 .grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 2px;
-  max-width: 820px;
-  margin-inline: auto;
 }
 
 .cell {

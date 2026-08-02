@@ -1,5 +1,6 @@
 <script lang="ts">
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
+  import { COLS } from "./lib/render";
   import MosaicPlacer from "./MosaicPlacer.svelte";
   import SplitPane from "./SplitPane.svelte";
   import TileEditor from "./TileEditor.svelte";
@@ -9,6 +10,7 @@
     canRedo,
     canUndo,
     dirty,
+    ensurePreviewWidth,
     open,
     redo,
     restoreAll,
@@ -21,8 +23,14 @@
   } from "./lib/state.svelte";
 
   let dragFrom = $state(-1);
+  let gridWidth = $state(0);
   const dirtyIds = $derived(new Set(dirty()));
   const shown = $derived(visible());
+
+  // Keeps preview resolution in step with however wide the divider leaves the grid.
+  $effect(() => {
+    if (gridWidth > 0) ensurePreviewWidth(gridWidth / COLS);
+  });
 
   async function pickFolder() {
     const picked = await openDialog({ directory: true, defaultPath: app.dir || undefined });
@@ -89,7 +97,7 @@
 
 {#snippet gridPane()}
   <div class="viewport">
-    <div class="grid">
+    <div class="grid" bind:clientWidth={gridWidth}>
       {#each shown as id, i (id)}
         <div
           class="cell"

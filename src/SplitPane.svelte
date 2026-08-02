@@ -12,7 +12,7 @@
     initial?: number;
     storageKey?: string;
   }
-  const { left, right, min = 520, max = 1100, initial = 840, storageKey }: Props = $props();
+  const { left, right, min = 420, max = Infinity, initial = 840, storageKey }: Props = $props();
 
   const MIN_RIGHT = 300;
 
@@ -61,7 +61,11 @@
 </script>
 
 <div class="split" bind:this={container}>
-  <div class="pane" style:flex-basis={right ? `${width}px` : "100%"} style:max-width={right ? null : `${max}px`}>
+  <div
+    class="pane"
+    style:flex-basis={right ? `${width}px` : "100%"}
+    style:max-width={!right && Number.isFinite(max) ? `${max}px` : null}
+  >
     {@render left()}
   </div>
 
@@ -74,7 +78,7 @@
       aria-label="Resize"
       aria-valuenow={Math.round(width)}
       aria-valuemin={min}
-      aria-valuemax={max}
+      aria-valuemax={Number.isFinite(max) ? max : undefined}
       tabindex="0"
       onpointerdown={(e) => { dragging = true; e.preventDefault(); }}
       onkeydown={onKey}
