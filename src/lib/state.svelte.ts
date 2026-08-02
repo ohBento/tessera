@@ -51,7 +51,12 @@ let saved: Applied = {};
 const past: Manifest[] = [];
 const future: Manifest[] = [];
 
-const snap = () => structuredClone($state.snapshot(app.manifest)) as Manifest;
+/** Reactive state is a deep Proxy, and structuredClone refuses to clone those —
+ *  that is exactly what $state.snapshot is for. Every copy taken out of state
+ *  goes through here so a raw structuredClone can never creep back in. */
+const plain = <T>(value: T): T => $state.snapshot(value) as T;
+
+const snap = () => plain(app.manifest);
 export const effective = (id: string): Effective => effectiveTile(app.manifest, id);
 export const visible = () => app.manifest.order.filter((id) => !app.manifest.hidden.includes(id));
 
@@ -100,7 +105,7 @@ async function run(label: string, fn: () => Promise<void>) {
 async function commit(touched?: string[]) {
   if (touched) for (const id of touched) await refresh(id);
   else await refreshAll();
-  await saveManifest(app.dir, $state.snapshot(app.manifest));
+  await saveManifest(app.dir, plain(app.manifest));
 }
 
 export async function open(dir?: string) {
@@ -156,7 +161,7 @@ export async function swapTiles(from: number, to: number) {
   checkpoint();
   const order = app.manifest.order;
   [order[from], order[to]] = [order[to], order[from]];
-  await saveManifest(app.dir, $state.snapshot(app.manifest));
+  await saveManifest(app.dir, plain(app.manifest));
 }
 
 export async function toggleHidden(id: string) {
@@ -165,7 +170,7 @@ export async function toggleHidden(id: string) {
   const at = hidden.indexOf(id);
   if (at >= 0) hidden.splice(at, 1);
   else hidden.push(id);
-  await saveManifest(app.dir, $state.snapshot(app.manifest));
+  await saveManifest(app.dir, plain(app.manifest));
 }
 
 /* ---- layers ---- */
@@ -249,7 +254,7 @@ export async function detachLayer(tileId: string, layerId: string) {
   const shared = app.manifest.shared.find((s) => s.id === layerId);
   if (!shared) return;
   checkpoint();
-  tileOf(tileId).layers.push(structuredClone($state.snapshot(shared)) as Layer);
+  tileOf(tileId).layers.push(plain(shared));
   await commit([tileId]);
 }
 
@@ -297,7 +302,7 @@ export async function saveToGame() {
       } else {
         await restoreFromVault(app.dir, id);
       }
-      saved[id] = structuredClone(eff);
+      saved[id] = plain(eff);
     }
     await saveApplied(app.dir, saved);
   });
