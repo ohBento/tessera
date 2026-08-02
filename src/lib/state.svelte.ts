@@ -25,7 +25,9 @@ export const app = $state({
   manifest: emptyManifest() as Manifest,
   /** id -> object URL currently shown in the grid */
   preview: {} as Record<string, string>,
-  vaulted: new Set<string>(),
+  /* A plain Set is NOT reactive inside $state — Svelte ships SvelteSet for that
+   * reason. An array is deeply reactive, and membership over 60 ids is free. */
+  vaulted: [] as string[],
   busy: "",
   error: "",
 });
@@ -59,7 +61,7 @@ async function refresh(id: string) {
   }
   // Without an override the tile shows the true original, which lives in the
   // vault once the game file has been overwritten.
-  const path = app.vaulted.has(id) ? await vaultPath(app.dir, id) : await tilePath(app.dir, id);
+  const path = app.vaulted.includes(id) ? await vaultPath(app.dir, id) : await tilePath(app.dir, id);
   app.preview[id] = URL.createObjectURL(new Blob([await readFile(path)], { type: "image/bmp" }));
 }
 
@@ -80,7 +82,7 @@ export async function open(dir?: string) {
     app.dir = dir ?? (await defaultDir());
     const ids = await listTiles(app.dir);
     app.manifest = await loadManifest(app.dir, ids);
-    app.vaulted = new Set(await vaultedIds(app.dir));
+    app.vaulted = await vaultedIds(app.dir);
     saved = await loadApplied(app.dir);
     past.length = 0;
     future.length = 0;
@@ -135,7 +137,7 @@ export async function saveToGame() {
     for (const id of dirty()) {
       const tile = app.manifest.tiles[id];
       await vaultOriginal(app.dir, id);
-      app.vaulted.add(id);
+      if (!app.vaulted.includes(id)) app.vaulted.push(id);
       if (tile) {
         const path = await tilePath(app.dir, id);
         await writeFile(`${path}.tmp`, await exportBmp(app.dir, tile));
@@ -152,7 +154,7 @@ export async function saveToGame() {
 export async function restoreAll() {
   await run("restore", async () => {
     checkpoint();
-    for (const id of [...app.vaulted]) await restoreFromVault(app.dir, id);
+    for (const id of app.vaulted) await restoreFromVault(app.dir, id);
     app.manifest.tiles = {};
     for (const id of app.manifest.order) await refresh(id);
     await saveManifest(app.dir, $state.snapshot(app.manifest));

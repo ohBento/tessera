@@ -70,10 +70,10 @@
 </div>
 
 <div class="bar">
-  <span class={app.vaulted.size ? "ok" : "dim"}>
-    {app.vaulted.size ? t("vault.safe") : t("vault.empty")}
+  <span class={app.vaulted.length ? "ok" : "dim"}>
+    {app.vaulted.length ? t("vault.safe") : t("vault.empty")}
   </span>
-  <button onclick={onRestoreAll} disabled={!app.vaulted.size}>{t("vault.restore")}</button>
+  <button onclick={onRestoreAll} disabled={!app.vaulted.length}>{t("vault.restore")}</button>
 
   <span class={dirtyIds.size ? "pending" : "dim"}>
     {dirtyIds.size ? t("save.dirty", { count: dirtyIds.size }) : t("save.clean")}
