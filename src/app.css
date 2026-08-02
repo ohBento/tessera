@@ -8,39 +8,25 @@ body {
   font-size: var(--step-0);
 }
 
-/* The area around the tiles is deliberately desaturated: a tinted surround
-   makes it impossible to judge the colour of a portrait against it. */
-.viewport {
-  background: oklch(0.16 0 0);
-  padding: var(--gap-3);
-}
-
-.grid {
-  display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 2px;
-}
-
-.tile {
-  aspect-ratio: 624 / 804;
-  width: 100%;
-  display: block;
-  padding: 0;
-  border: none;
+button,
+select {
+  font: inherit;
+  color: var(--fg);
   background: var(--row);
+  border: 1px solid var(--line);
+  border-radius: var(--r-chip);
+  padding: 5px 10px;
   cursor: pointer;
 }
 
-.tile img {
-  width: 100%;
-  height: 100%;
-  display: block;
-  object-fit: cover;
+button:hover:not(:disabled),
+select:hover {
+  border-color: var(--accent);
 }
 
-.tile:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: -2px;
+button:disabled {
+  color: var(--fg-dim);
+  cursor: default;
 }
 
 .bar {
@@ -53,11 +39,79 @@ body {
 }
 
 .bar .path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: var(--mono);
   font-size: var(--step--1);
   color: var(--fg-dim);
 }
 
-.bar .warn {
+.ok {
+  color: var(--accent);
+}
+.pending {
+  color: var(--duplicate);
+}
+.dim {
+  color: var(--fg-dim);
+}
+.warn {
   color: var(--flag);
+}
+
+/* Deliberately neutral: a tinted surround makes it impossible to judge the
+   colour of a portrait against it. */
+.viewport {
+  background: oklch(0.16 0 0);
+  padding: var(--gap-3);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 2px;
+}
+
+.cell {
+  position: relative;
+}
+
+.cell.dirty {
+  outline: 2px solid var(--duplicate);
+  outline-offset: -2px;
+}
+
+.tile {
+  display: block;
+  width: 100%;
+  aspect-ratio: 624 / 804;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: var(--row);
+}
+
+.tile img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.reset {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  padding: 0 5px;
+  line-height: 1.4;
+  background: var(--card);
+  opacity: 0;
+}
+
+.cell:hover .reset,
+.reset:focus-visible {
+  opacity: 1;
 }
