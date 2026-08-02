@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { TILE_W } from "./bmp";
 import { readFile, rename, writeFile } from "@tauri-apps/plugin-fs";
 import {
   effectiveTile,
@@ -30,7 +31,11 @@ import {
 } from "./project";
 import { defaultMosaicRect, exportBmp, previewUrl, splitRect, tileCover } from "./render";
 
-export const PREVIEW_W = 120;
+/** Grid previews must be rendered at least as wide as they are shown, or the
+ *  browser upscales them and everything looks soft. A cell is roughly 180 CSS
+ *  px in a maximised window, times the display scaling, capped at the real tile
+ *  width because rendering beyond that buys nothing. */
+export const PREVIEW_W = Math.min(TILE_W, Math.round(360 * (window.devicePixelRatio || 1)));
 
 export const app = $state({
   dir: "",

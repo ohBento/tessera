@@ -49,9 +49,17 @@
     p.rect.h = h;
   }
 
-  const onWheel = (e: WheelEvent) => zoomTo(p.rect.w * (e.deltaY > 0 ? 1.08 : 1 / 1.08));
+  /** Without preventDefault the wheel keeps scrolling the window underneath. */
+  function onWheel(e: WheelEvent) {
+    e.preventDefault();
+    zoomTo(p.rect.w * (e.deltaY > 0 ? 1.08 : 1 / 1.08));
+  }
+
+  const close = () => (app.placing = null);
   const fit = () => (app.placing!.rect = defaultMosaicRect(p.w, p.h, count));
 </script>
+
+<svelte:window onkeydown={(e) => e.key === "Escape" && close()} />
 
 <div class="placer">
   <div class="bar">
@@ -67,7 +75,7 @@
       />
     </label>
     <button onclick={fit}>{t("mosaic.fit")}</button>
-    <button onclick={() => (app.placing = null)}>{t("mosaic.cancel")}</button>
+    <button onclick={close}>{t("mosaic.cancel")}</button>
     <button onclick={applyMosaic}>{t("mosaic.apply")}</button>
   </div>
 
