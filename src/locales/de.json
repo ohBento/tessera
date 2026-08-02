@@ -62,5 +62,6 @@
   "mosaic.fit": "Einpassen",
   "mosaic.apply": "Übernehmen",
   "mosaic.cancel": "Abbrechen",
-  "mosaic.adjust": "Mosaik anpassen"
+  "mosaic.adjust": "Mosaik anpassen",
+  "tile.file": "Datei"
 }

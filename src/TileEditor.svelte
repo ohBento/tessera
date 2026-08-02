@@ -105,7 +105,10 @@
       onpointerup={onUp}
       class:grabbing={!!drag}
     />
-    <span class="path">{id}</span>
+    <span class="pill">
+      <span class="pill-label">{t("tile.file")}</span>
+      <span class="numeric">{id}.bmp</span>
+    </span>
   </div>
 
   <div class="panel">

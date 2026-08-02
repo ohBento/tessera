@@ -5,6 +5,12 @@ body {
   height: 100%;
 }
 
+/* Chromium honours the standard scrollbar properties, so no vendor rules. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -37,10 +43,24 @@ body {
 }
 
 .divider {
-  flex: 0 0 6px;
+  position: relative;
+  flex: 0 0 8px;
   cursor: col-resize;
   background: var(--line-soft);
   touch-action: none;
+}
+
+/* A grip, so the divider reads as something you can grab rather than a seam. */
+.divider::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 2px;
+  height: 34px;
+  border-radius: var(--r-pill);
+  background: var(--fg-dim);
 }
 
 .divider:hover,
@@ -48,6 +68,12 @@ body {
 .divider:focus-visible {
   background: var(--accent);
   outline: none;
+}
+
+.divider:hover::after,
+.divider.dragging::after,
+.divider:focus-visible::after {
+  background: var(--accent-ink);
 }
 
 button,
@@ -126,11 +152,6 @@ button:disabled {
   position: relative;
 }
 
-.cell.dirty {
-  outline: 2px solid var(--duplicate);
-  outline-offset: -2px;
-}
-
 .cell.editing {
   outline: 2px solid var(--focus);
   outline-offset: -2px;
@@ -166,10 +187,35 @@ button:disabled {
   gap: var(--gap-2);
 }
 
+/* Two per row so every button ends up the same width, whatever its label. */
 .panel .row {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: var(--gap-1);
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gap-2);
+  margin-top: var(--gap-2);
+  padding: 3px 4px 3px 10px;
+  background: var(--row);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-pill);
+  font-size: var(--step--1);
+  color: var(--fg-mid);
+}
+
+.pill-label {
+  color: var(--fg-dim);
+}
+
+.pill .numeric {
+  padding: 1px 8px;
+  background: var(--card);
+  border-radius: var(--r-pill);
+  color: var(--fg);
 }
 
 .layers {

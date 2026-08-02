@@ -93,7 +93,6 @@
       {#each shown as id, i (id)}
         <div
           class="cell"
-          class:dirty={dirtyIds.has(id)}
           class:editing={app.editing === id}
           draggable="true"
           role="listitem"

@@ -62,5 +62,6 @@
   "mosaic.fit": "Fit",
   "mosaic.apply": "Apply",
   "mosaic.cancel": "Cancel",
-  "mosaic.adjust": "Adjust mosaic"
+  "mosaic.adjust": "Adjust mosaic",
+  "tile.file": "File"
 }
