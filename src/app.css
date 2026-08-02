@@ -138,11 +138,15 @@ button:disabled {
   min-height: 100%;
 }
 
-/* Fills whatever width the divider leaves it; preview resolution follows. */
+/* Scales with the pane the divider leaves it, but stops at 180px per cell —
+   beyond that the tiles are just big, not more useful. Preview resolution
+   follows the measured cell width. */
 .grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 2px;
+  max-width: 1272px;
+  margin-inline: auto;
 }
 
 .cell {
@@ -160,6 +164,17 @@ button:disabled {
   padding: var(--gap-3);
   background: var(--card);
   min-height: 100%;
+}
+
+/* Same footprint as a real tile preview, so the pane does not resize on the
+   first selection. Kept in step with EDITOR_W/EDITOR_H in TileEditor. */
+.placeholder {
+  width: 312px;
+  height: 402px;
+  flex: none;
+  background: var(--row);
+  border: 1px dashed var(--line);
+  border-radius: var(--r-row);
 }
 
 /* Without this an img starts Chromium's native picture drag, which paints a

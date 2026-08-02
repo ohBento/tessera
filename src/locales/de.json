@@ -63,5 +63,6 @@
   "mosaic.apply": "Übernehmen",
   "mosaic.cancel": "Abbrechen",
   "mosaic.adjust": "Mosaik anpassen",
-  "tile.file": "Datei"
+  "tile.file": "Datei",
+  "editor.empty": "Kachel anklicken zum Bearbeiten"
 }

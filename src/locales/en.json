@@ -63,5 +63,6 @@
   "mosaic.apply": "Apply",
   "mosaic.cancel": "Cancel",
   "mosaic.adjust": "Adjust mosaic",
-  "tile.file": "File"
+  "tile.file": "File",
+  "editor.empty": "Pick a tile to edit it"
 }

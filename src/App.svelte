@@ -127,7 +127,16 @@
 {/snippet}
 
 {#snippet editorPane()}
-  <TileEditor />
+  {#if app.editing}
+    <TileEditor />
+  {:else}
+    <div class="editor">
+      <div class="stage placeholder"></div>
+      <p class="dim">{t("editor.empty")}</p>
+    </div>
+  {/if}
 {/snippet}
 
-<SplitPane left={gridPane} right={app.editing ? editorPane : undefined} storageKey="tessera.split" />
+<!-- The editor pane is always mounted: opening it on selection made the whole
+     layout jump and squeezed the grid mid-click. -->
+<SplitPane left={gridPane} right={editorPane} storageKey="tessera.split" />
