@@ -91,15 +91,33 @@ export async function importAsset(dir: string, sourcePath: string): Promise<stri
   return name;
 }
 
+/** SVG needs its type spelled out or the blob will not decode at all. */
+const mime = (name: string) => (name.toLowerCase().endsWith(".svg") ? "image/svg+xml" : "");
+
+const assetBlob = async (dir: string, name: string) =>
+  new Blob([await readFile(await join(await assetsDir(dir), name))], { type: mime(name) });
+
 const bitmaps = new Map<string, Promise<ImageBitmap>>();
 
 export function loadAsset(dir: string, name: string): Promise<ImageBitmap> {
   let bmp = bitmaps.get(name);
   if (!bmp) {
-    bmp = (async () => createImageBitmap(new Blob([await readFile(await join(await assetsDir(dir), name))])))();
+    bmp = (async () => createImageBitmap(await assetBlob(dir, name)))();
     bitmaps.set(name, bmp);
   }
   return bmp;
+}
+
+const urls = new Map<string, Promise<string>>();
+
+/** For showing an asset in an <img>, e.g. while placing the mosaic. */
+export function assetUrl(dir: string, name: string): Promise<string> {
+  let url = urls.get(name);
+  if (!url) {
+    url = (async () => URL.createObjectURL(await assetBlob(dir, name)))();
+    urls.set(name, url);
+  }
+  return url;
 }
 
 /** Copies an untouched original into the vault. Never overwrites what is already there. */

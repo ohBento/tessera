@@ -12,20 +12,30 @@ export function coverCrop(sw: number, sh: number, aspect: number): Crop {
   return { x: (sw - w) / 2, y: (sh - h) / 2, w, h };
 }
 
-/** One image spread over the grid: cover the whole grid once, then hand each
- *  tile its own cell of that rectangle. */
-export function mosaicCrops(sw: number, sh: number, count: number): Crop[] {
-  const rows = Math.ceil(count / COLS);
-  const grid = coverCrop(sw, sh, (COLS * TILE_W) / (rows * TILE_H));
-  const cw = grid.w / COLS;
-  const ch = grid.h / rows;
+export const gridRows = (count: number) => Math.ceil(count / COLS);
+
+export const gridAspect = (count: number) => (COLS * TILE_W) / (gridRows(count) * TILE_H);
+
+/** Where the grid sits on the source image before the user moves it. */
+export const defaultMosaicRect = (sw: number, sh: number, count: number) =>
+  coverCrop(sw, sh, gridAspect(count));
+
+/** Hands each tile its own cell of the placed rectangle. */
+export function splitRect(rect: Crop, count: number): Crop[] {
+  const rows = gridRows(count);
+  const cw = rect.w / COLS;
+  const ch = rect.h / rows;
   return Array.from({ length: count }, (_, i) => ({
-    x: grid.x + (i % COLS) * cw,
-    y: grid.y + Math.floor(i / COLS) * ch,
+    x: rect.x + (i % COLS) * cw,
+    y: rect.y + Math.floor(i / COLS) * ch,
     w: cw,
     h: ch,
   }));
 }
+
+/** One image spread over the grid at its default placement. */
+export const mosaicCrops = (sw: number, sh: number, count: number) =>
+  splitRect(defaultMosaicRect(sw, sh, count), count);
 
 export const tileCover = (img: { width: number; height: number }) =>
   coverCrop(img.width, img.height, TILE_W / TILE_H);

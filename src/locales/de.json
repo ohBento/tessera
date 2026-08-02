@@ -56,5 +56,11 @@
   "layer.locked": "Gesperrt",
   "layer.up": "Nach oben",
   "layer.down": "Nach unten",
-  "layer.swapImage": "Bild austauschen"
+  "layer.swapImage": "Bild austauschen",
+  "mosaic.place": "Bild über dem Raster platzieren",
+  "mosaic.zoom": "Zoom",
+  "mosaic.fit": "Einpassen",
+  "mosaic.apply": "Übernehmen",
+  "mosaic.cancel": "Abbrechen",
+  "mosaic.adjust": "Mosaik anpassen"
 }

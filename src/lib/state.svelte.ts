@@ -6,11 +6,13 @@ import {
   emptyTile,
   newImageLayer,
   newTextLayer,
+  type Crop,
   type Effective,
   type Layer,
   type Manifest,
 } from "./model";
 import {
+  assetUrl,
   defaultDir,
   importAsset,
   listTiles,
@@ -26,7 +28,7 @@ import {
   vaultedIds,
   type Applied,
 } from "./project";
-import { exportBmp, mosaicCrops, previewUrl, tileCover } from "./render";
+import { defaultMosaicRect, exportBmp, previewUrl, splitRect, tileCover } from "./render";
 
 export const PREVIEW_W = 120;
 
@@ -38,6 +40,8 @@ export const app = $state({
   /* A plain Set is NOT reactive inside $state — Svelte ships SvelteSet for that
    * reason. An array is deeply reactive, and membership over 60 ids is free. */
   vaulted: [] as string[],
+  /** mosaic being placed over the grid, null when the view is closed */
+  placing: null as null | { asset: string; url: string; w: number; h: number; rect: Crop },
   /** tile currently open in the editor, "" for none */
   editing: "",
   selectedLayer: "",
@@ -133,14 +137,36 @@ export async function replaceTile(id: string, sourcePath: string) {
   });
 }
 
-export async function fillMosaic(sourcePath: string) {
+/** Opens the placement view. Nothing is applied until the user confirms. */
+export async function startMosaic(sourcePath?: string) {
+  await run("mosaic", async () => {
+    const stored = app.manifest.mosaic;
+    const asset = sourcePath ? await importAsset(app.dir, sourcePath) : stored?.asset;
+    if (!asset) return;
+    const img = await loadAsset(app.dir, asset);
+    app.placing = {
+      asset,
+      url: await assetUrl(app.dir, asset),
+      w: img.width,
+      h: img.height,
+      rect:
+        !sourcePath && stored?.asset === asset
+          ? plain(stored.rect)
+          : defaultMosaicRect(img.width, img.height, visible().length),
+    };
+  });
+}
+
+export async function applyMosaic() {
+  const placing = app.placing;
+  if (!placing) return;
   await run("mosaic", async () => {
     checkpoint();
-    const asset = await importAsset(app.dir, sourcePath);
-    const img = await loadAsset(app.dir, asset);
     const ids = visible();
-    const crops = mosaicCrops(img.width, img.height, ids.length);
-    ids.forEach((id, i) => (app.manifest.tiles[id].base = { asset, crop: crops[i] }));
+    const crops = splitRect(plain(placing.rect), ids.length);
+    ids.forEach((id, i) => (app.manifest.tiles[id].base = { asset: placing.asset, crop: crops[i] }));
+    app.manifest.mosaic = { asset: placing.asset, rect: plain(placing.rect) };
+    app.placing = null;
     await commit(ids);
   });
 }

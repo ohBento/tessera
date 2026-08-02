@@ -45,6 +45,10 @@ export type Tile = {
   text: Record<string, string>;
 };
 
+/** Where the grid was laid over the source image. Kept so the placement stays
+ *  editable instead of being computed once and lost. */
+export type Mosaic = { asset: string; rect: Crop } | null;
+
 export type Manifest = {
   version: 2;
   order: string[];
@@ -52,6 +56,7 @@ export type Manifest = {
   /** Project-scope layers: they exist once and appear on every tile. */
   shared: Layer[];
   tiles: Record<string, Tile>;
+  mosaic?: Mosaic;
 };
 
 export const emptyTile = (): Tile => ({ base: null, layers: [], text: {} });
@@ -62,6 +67,7 @@ export const emptyManifest = (): Manifest => ({
   hidden: [],
   shared: [],
   tiles: {},
+  mosaic: null,
 });
 
 export const newId = () => Math.random().toString(36).slice(2, 10);

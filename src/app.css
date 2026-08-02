@@ -221,6 +221,56 @@ button:disabled {
   padding: 3px 6px;
 }
 
+.placer {
+  background: var(--card);
+  border-bottom: 1px solid var(--line-soft);
+  padding: var(--gap-2) var(--gap-3) var(--gap-3);
+}
+
+.placer .bar {
+  background: none;
+  border: none;
+  padding: 0 0 var(--gap-2);
+}
+
+.placer .zoom {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-2);
+  font-size: var(--step--1);
+  color: var(--fg-mid);
+}
+
+.placer .canvas {
+  position: relative;
+  background: oklch(0.16 0 0);
+  overflow: hidden;
+}
+
+.placer img {
+  display: block;
+  opacity: 0.45;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* The framed area is what lands on the grid; the cell lines show where the
+   cuts between tiles will fall. */
+.placer .frame {
+  position: absolute;
+  cursor: grab;
+  touch-action: none;
+  outline: 1px solid var(--accent);
+  background-color: rgb(255 255 255 / 0.12);
+  background-image:
+    linear-gradient(to right, rgb(255 255 255 / 0.35) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(255 255 255 / 0.35) 1px, transparent 1px);
+}
+
+.placer .frame.grabbing {
+  cursor: grabbing;
+}
+
 .hidden-strip {
   display: flex;
   flex-wrap: wrap;

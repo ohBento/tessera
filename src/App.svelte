@@ -1,5 +1,6 @@
 <script lang="ts">
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
+  import MosaicPlacer from "./MosaicPlacer.svelte";
   import TileEditor from "./TileEditor.svelte";
   import { languages, locale, setLocale, t } from "./lib/i18n.svelte";
   import {
@@ -7,11 +8,11 @@
     canRedo,
     canUndo,
     dirty,
-    fillMosaic,
     open,
     redo,
     restoreAll,
     saveToGame,
+    startMosaic,
     swapTiles,
     toggleHidden,
     undo,
@@ -31,7 +32,7 @@
     const picked = await openDialog({
       filters: [{ name: t("image.pick"), extensions: ["png", "jpg", "jpeg", "webp", "gif", "bmp", "avif"] }],
     });
-    if (typeof picked === "string") await fillMosaic(picked);
+    if (typeof picked === "string") await startMosaic(picked);
   }
 
   async function onRestoreAll() {
@@ -55,6 +56,9 @@
   <span>{t("tiles.count", { count: shown.length })}</span>
 
   <button onclick={onMosaic} disabled={!shown.length}>{t("mosaic.fill")}</button>
+  {#if app.manifest.mosaic}
+    <button onclick={() => startMosaic()}>{t("mosaic.adjust")}</button>
+  {/if}
   <button onclick={undo} disabled={!canUndo()}>{t("edit.undo")}</button>
   <button onclick={redo} disabled={!canRedo()}>{t("edit.redo")}</button>
 
@@ -77,6 +81,10 @@
   {#if app.busy}<span class="dim">{t(`busy.${app.busy}`)}</span>{/if}
   {#if app.error}<span class="warn">{app.error}</span>{/if}
 </div>
+
+{#if app.placing}
+  <MosaicPlacer />
+{/if}
 
 <div class="work">
   <div class="viewport">

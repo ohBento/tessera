@@ -56,5 +56,11 @@
   "layer.locked": "Locked",
   "layer.up": "Move up",
   "layer.down": "Move down",
-  "layer.swapImage": "Swap picture"
+  "layer.swapImage": "Swap picture",
+  "mosaic.place": "Place the image over the grid",
+  "mosaic.zoom": "Zoom",
+  "mosaic.fit": "Fit",
+  "mosaic.apply": "Apply",
+  "mosaic.cancel": "Cancel",
+  "mosaic.adjust": "Adjust mosaic"
 }
