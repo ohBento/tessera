@@ -8,13 +8,21 @@
     left: Snippet;
     right?: Snippet;
     min?: number;
+    /** The right pane's own content width — below this it just gets clipped. */
+    minRight?: number;
     max?: number;
     initial?: number;
     storageKey?: string;
   }
-  const { left, right, min = 420, max = Infinity, initial = 840, storageKey }: Props = $props();
-
-  const MIN_RIGHT = 300;
+  const {
+    left,
+    right,
+    min = 420,
+    minRight = 300,
+    max = Infinity,
+    initial = 840,
+    storageKey,
+  }: Props = $props();
 
   // Seeded once on purpose — from here on the divider owns the width.
   let width = $state(
@@ -24,10 +32,23 @@
     }),
   );
   let container: HTMLDivElement | undefined = $state();
+  let containerW = $state(0);
   let dragging = $state(false);
 
   const clamp = (px: number, total: number) =>
-    Math.max(min, Math.min(px, max, Math.max(min, total - MIN_RIGHT)));
+    Math.max(min, Math.min(px, max, Math.max(min, total - minRight)));
+
+  /* A width restored from a previous, wider window would push the right pane
+     off screen, so re-clamp whenever the container resizes — including once at
+     startup. Reads of `width` are untracked or this effect would retrigger
+     itself. */
+  $effect(() => {
+    const total = containerW;
+    if (!total) return;
+    const current = untrack(() => width);
+    const next = clamp(current, total);
+    if (next !== current) width = next;
+  });
 
   function onMove(e: PointerEvent) {
     if (!container) return;
@@ -60,7 +81,7 @@
   });
 </script>
 
-<div class="split" bind:this={container}>
+<div class="split" bind:this={container} bind:clientWidth={containerW}>
   <div
     class="pane"
     style:flex-basis={right ? `${width}px` : "100%"}

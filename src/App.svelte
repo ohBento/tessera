@@ -139,4 +139,4 @@
 
 <!-- The editor pane is always mounted: opening it on selection made the whole
      layout jump and squeezed the grid mid-click. -->
-<SplitPane left={gridPane} right={editorPane} storageKey="tessera.split" />
+<SplitPane left={gridPane} right={editorPane} minRight={600} storageKey="tessera.split" />
