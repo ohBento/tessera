@@ -1,11 +1,53 @@
 @import "./tokens.css";
 
+html,
+body {
+  height: 100%;
+}
+
 body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
   font-family: var(--sans);
   font-size: var(--step-0);
+}
+
+/* The bars keep their natural height and the split fills whatever is left, so
+   the panes scroll internally instead of the whole page. */
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.split {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.split > .pane {
+  min-width: 0;
+  overflow: auto;
+}
+
+.split > .pane.grow {
+  flex: 1;
+}
+
+.divider {
+  flex: 0 0 6px;
+  cursor: col-resize;
+  background: var(--line-soft);
+  touch-action: none;
+}
+
+.divider:hover,
+.divider.dragging,
+.divider:focus-visible {
+  background: var(--accent);
+  outline: none;
 }
 
 button,
@@ -67,6 +109,7 @@ button:disabled {
 .viewport {
   background: oklch(0.16 0 0);
   padding: var(--gap-3);
+  min-height: 100%;
 }
 
 /* Capped rather than stretched to the window: the grid is 7 by 9 and therefore
@@ -93,22 +136,12 @@ button:disabled {
   outline-offset: -2px;
 }
 
-.work {
-  display: flex;
-  align-items: flex-start;
-}
-
-.work .viewport {
-  flex: 1;
-  min-width: 0;
-}
-
 .editor {
   display: flex;
   gap: var(--gap-3);
   padding: var(--gap-3);
   background: var(--card);
-  border-left: 1px solid var(--line-soft);
+  min-height: 100%;
 }
 
 /* Without this an img starts Chromium's native picture drag, which paints a

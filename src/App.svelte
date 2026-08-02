@@ -1,6 +1,7 @@
 <script lang="ts">
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import MosaicPlacer from "./MosaicPlacer.svelte";
+  import SplitPane from "./SplitPane.svelte";
   import TileEditor from "./TileEditor.svelte";
   import { languages, locale, setLocale, t } from "./lib/i18n.svelte";
   import {
@@ -86,7 +87,7 @@
   <MosaicPlacer />
 {/if}
 
-<div class="work">
+{#snippet gridPane()}
   <div class="viewport">
     <div class="grid">
       {#each shown as id, i (id)}
@@ -116,8 +117,10 @@
       </div>
     {/if}
   </div>
+{/snippet}
 
-  {#if app.editing}
-    <TileEditor />
-  {/if}
-</div>
+{#snippet editorPane()}
+  <TileEditor />
+{/snippet}
+
+<SplitPane left={gridPane} right={app.editing ? editorPane : undefined} storageKey="tessera.split" />
