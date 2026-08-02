@@ -50,5 +50,11 @@
   "busy.layer": "Adding layer…",
   "busy.save": "Writing…",
   "busy.restore": "Restoring…",
-  "image.pick": "Images"
+  "image.pick": "Images",
+  "field.name": "Name",
+  "field.locked": "Locked",
+  "layer.locked": "Locked",
+  "layer.up": "Move up",
+  "layer.down": "Move down",
+  "layer.swapImage": "Swap picture"
 }

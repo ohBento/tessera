@@ -1,7 +1,7 @@
 <script lang="ts">
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { TILE_H, TILE_W } from "./lib/bmp";
-  import { isDetached, type Layer, type TextLayer } from "./lib/model";
+  import { isDetached, layerLabel, type TextLayer } from "./lib/model";
   import { previewUrl } from "./lib/render";
   import { t } from "./lib/i18n.svelte";
   import {
@@ -14,7 +14,9 @@
     detachLayer,
     editable,
     effective,
+    moveLayer,
     reattachLayer,
+    swapLayerImage,
     replaceTile,
     resetTile,
     setTileText,
@@ -47,7 +49,7 @@
   let drag = $state<{ x: number; y: number; lx: number; ly: number } | null>(null);
 
   function onDown(e: PointerEvent) {
-    if (!layer) return;
+    if (!layer || layer.locked) return;
     checkpointEdit();
     drag = { x: e.clientX, y: e.clientY, lx: layer.x, ly: layer.y };
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
@@ -81,7 +83,13 @@
     if (typeof picked === "string") await replaceTile(id, picked);
   }
 
-  const label = (l: Layer) => (l.kind === "text" ? `T ${l.text}` : `IMG ${l.asset.slice(0, 6)}`);
+  async function swapImage() {
+    if (!layer) return;
+    const picked = await openDialog({
+      filters: [{ name: t("image.pick"), extensions: ["png", "jpg", "jpeg", "webp", "gif", "bmp", "avif", "svg"] }],
+    });
+    if (typeof picked === "string") await swapLayerImage(id, layer.id, picked);
+  }
 </script>
 
 <div class="editor">
@@ -91,6 +99,7 @@
       alt={id}
       width={EDITOR_W}
       height={EDITOR_H}
+      draggable="false"
       onpointerdown={onDown}
       onpointermove={onMove}
       onpointerup={onUp}
@@ -119,20 +128,46 @@
     </div>
 
     <ul class="layers">
-      {#each eff.layers as l (l.id)}
+      <!-- Reversed so the top of the list is the top-most layer, as in every
+           other editor — eff.layers is painted back to front. -->
+      {#each [...eff.layers].reverse() as l (l.id)}
         <li class:sel={l.id === app.selectedLayer}>
-          <button class="pick" onclick={() => (app.selectedLayer = l.id)}>{label(l)}</button>
+          <button class="pick" onclick={() => (app.selectedLayer = l.id)}>{layerLabel(l)}</button>
+          {#if l.locked}<span class="dim" title={t("layer.locked")}>■</span>{/if}
           {#if app.manifest.shared.some((s) => s.id === l.id)}
             <span class="scope" class:local={isDetached(app.manifest, id, l.id)}>
               {isDetached(app.manifest, id, l.id) ? t("layer.scope.local") : t("layer.scope.all")}
             </span>
           {/if}
+          <button class="step" onclick={() => moveLayer(id, l.id, -1)} title={t("layer.down")}>↓</button>
+          <button class="step" onclick={() => moveLayer(id, l.id, 1)} title={t("layer.up")}>↑</button>
         </li>
       {/each}
     </ul>
 
     {#if layer}
       <div class="fields">
+        <label>{t("field.name")}
+          <input
+            value={layer.name ?? ""}
+            placeholder={layerLabel(layer)}
+            onfocus={checkpointEdit}
+            oninput={(e) => (layer.name = e.currentTarget.value)}
+            onchange={commit}
+          />
+        </label>
+        <label>{t("field.locked")}
+          <input
+            type="checkbox"
+            checked={!!layer.locked}
+            onchange={(e) => { layer.locked = e.currentTarget.checked; commit(); }}
+          />
+        </label>
+
+        {#if layer.kind === "image"}
+          <button onclick={swapImage}>{t("layer.swapImage")}</button>
+        {/if}
+
         {#if shared}
           {#if detached}
             <button onclick={() => reattachLayer(id, layer.id)}>{t("layer.reattach")}</button>
@@ -145,7 +180,9 @@
           <label>{t("field.text")}
             <input
               value={app.manifest.tiles[id]?.text[layer.id] ?? (layer as TextLayer).text}
+              onfocus={checkpointEdit}
               oninput={(e) => setTileText(id, layer.id, e.currentTarget.value)}
+              onchange={commit}
             />
           </label>
           <label>{t("field.font")}

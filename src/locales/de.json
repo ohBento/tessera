@@ -50,5 +50,11 @@
   "busy.layer": "Fügt Ebene hinzu…",
   "busy.save": "Schreibt…",
   "busy.restore": "Stellt wieder her…",
-  "image.pick": "Bilder"
+  "image.pick": "Bilder",
+  "field.name": "Name",
+  "field.locked": "Gesperrt",
+  "layer.locked": "Gesperrt",
+  "layer.up": "Nach oben",
+  "layer.down": "Nach unten",
+  "layer.swapImage": "Bild austauschen"
 }

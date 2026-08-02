@@ -15,6 +15,9 @@ type Common = {
   opacity: number; // 0..1
   blend: GlobalCompositeOperation;
   filter: string; // CSS filter chain, "" for none
+  /* Optional so manifests written before these existed still load unchanged. */
+  name?: string;
+  locked?: boolean;
 };
 
 export type ImageLayer = Common & { kind: "image"; asset: string; scale: number };
@@ -93,6 +96,9 @@ export const newTextLayer = (): TextLayer => ({
   shadowColor: "#000000",
   y: 0.9,
 });
+
+export const layerLabel = (l: Layer) =>
+  l.name || (l.kind === "text" ? l.text : l.asset.replace(/\.[^.]+$/, "").slice(0, 8));
 
 /** Shared layers first, in their own order, each replaced by a detached copy
  *  where the tile has one. Tile-only layers follow on top. */

@@ -214,6 +214,37 @@ export async function afterEdit(tileId: string, layerId: string) {
     : [tileId]);
 }
 
+/** The list a layer actually lives in — shared layers move among shared ones,
+ *  tile-local layers among their own. Moving across scopes is what detach and
+ *  reattach are for. */
+function ownerList(tileId: string, layerId: string) {
+  const shared = app.manifest.shared;
+  if (shared.some((l) => l.id === layerId)) return { list: shared, shared: true };
+  return { list: tileOf(tileId).layers, shared: false };
+}
+
+export async function moveLayer(tileId: string, layerId: string, delta: number) {
+  const { list, shared } = ownerList(tileId, layerId);
+  const at = list.findIndex((l) => l.id === layerId);
+  const to = at + delta;
+  if (at < 0 || to < 0 || to >= list.length) return;
+  checkpoint();
+  [list[at], list[to]] = [list[to], list[at]];
+  await commit(shared ? undefined : [tileId]);
+}
+
+/** Swaps the picture of an image layer but keeps position, size and effects,
+ *  so a logo can be replaced without placing it again. */
+export async function swapLayerImage(tileId: string, layerId: string, sourcePath: string) {
+  await run("layer", async () => {
+    checkpoint();
+    const asset = await importAsset(app.dir, sourcePath);
+    const layer = editable(tileId, layerId);
+    if (layer?.kind === "image") layer.asset = asset;
+    await afterEdit(tileId, layerId);
+  });
+}
+
 export async function detachLayer(tileId: string, layerId: string) {
   const shared = app.manifest.shared.find((s) => s.id === layerId);
   if (!shared) return;
@@ -241,9 +272,11 @@ export async function deleteLayer(tileId: string, layerId: string) {
   await commit(shared >= 0 ? undefined : [tileId]);
 }
 
+/** Live while typing: updates the preview but does not touch disk. The manifest
+ *  is written once on change, not once per keystroke. */
 export async function setTileText(tileId: string, layerId: string, text: string) {
   tileOf(tileId).text[layerId] = text;
-  await commit([tileId]);
+  await refresh(tileId);
 }
 
 /* ---- writing ---- */

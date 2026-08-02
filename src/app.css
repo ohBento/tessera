@@ -107,11 +107,15 @@ button:disabled {
   border-left: 1px solid var(--line-soft);
 }
 
+/* Without this an img starts Chromium's native picture drag, which paints a
+   ghost copy of the whole tile over the editor while a layer is being moved. */
 .stage img {
   display: block;
   background: var(--row);
   cursor: grab;
   touch-action: none;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .stage img.grabbing {
@@ -163,6 +167,17 @@ button:disabled {
   background: none;
   border: none;
   padding: 3px 0;
+}
+
+.step {
+  padding: 0 5px;
+  background: none;
+  border: none;
+  color: var(--fg-dim);
+}
+
+.step:hover {
+  color: var(--fg);
 }
 
 .scope {
