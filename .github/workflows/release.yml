@@ -25,7 +25,7 @@ jobs:
       - name: Package portable
         run: |
           mkdir portable
-          copy src-tauri\target\release\Tessera.exe portable\
+          copy src-tauri\target\release\tessera.exe portable\Tessera.exe
           copy LICENSE portable\
           copy README.md portable\
           Compress-Archive -Path portable\* -DestinationPath Tessera-portable.zip
