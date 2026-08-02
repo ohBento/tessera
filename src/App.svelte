@@ -9,11 +9,11 @@
     fillMosaic,
     open,
     redo,
-    reorder,
     replaceTile,
     resetTile,
     restoreAll,
     saveToGame,
+    swapTiles,
     undo,
   } from "./lib/state.svelte";
 
@@ -94,7 +94,7 @@
         role="listitem"
         ondragstart={() => (dragFrom = i)}
         ondragover={(e) => e.preventDefault()}
-        ondrop={() => reorder(dragFrom, i)}
+        ondrop={() => swapTiles(dragFrom, i)}
       >
         <button class="tile" onclick={() => onReplace(id)} title={id}>
           <img src={app.preview[id]} alt={id} />

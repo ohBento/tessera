@@ -122,11 +122,14 @@ export async function resetTile(id: string) {
   });
 }
 
-export async function reorder(from: number, to: number) {
-  if (from === to) return;
+/** Swaps two tiles rather than moving one and shifting the rest. The user is
+ *  reproducing a fixed order the game dictates, so a move that shifts a whole
+ *  range would undo positions that were already correct. */
+export async function swapTiles(from: number, to: number) {
+  if (from === to || from < 0) return;
   checkpoint();
-  const [id] = app.manifest.order.splice(from, 1);
-  app.manifest.order.splice(to, 0, id);
+  const order = app.manifest.order;
+  [order[from], order[to]] = [order[to], order[from]];
   await saveManifest(app.dir, $state.snapshot(app.manifest));
 }
 
