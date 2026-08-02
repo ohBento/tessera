@@ -241,34 +241,35 @@ button:disabled {
   color: var(--fg-mid);
 }
 
-.placer .canvas {
+.placer .stage {
   position: relative;
   background: oklch(0.16 0 0);
   overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+}
+
+.placer .stage.grabbing {
+  cursor: grabbing;
 }
 
 .placer img {
+  position: absolute;
   display: block;
-  opacity: 0.45;
   user-select: none;
   -webkit-user-drag: none;
 }
 
-/* The framed area is what lands on the grid; the cell lines show where the
-   cuts between tiles will fall. */
+/* The frame is what lands on the grid: everything outside it is dimmed by the
+   spread shadow, and the cell lines show where the cuts between tiles fall. */
 .placer .frame {
   position: absolute;
-  cursor: grab;
-  touch-action: none;
+  pointer-events: none;
   outline: 1px solid var(--accent);
-  background-color: rgb(255 255 255 / 0.12);
+  box-shadow: 0 0 0 9999px rgb(0 0 0 / 0.6);
   background-image:
-    linear-gradient(to right, rgb(255 255 255 / 0.35) 1px, transparent 1px),
-    linear-gradient(to bottom, rgb(255 255 255 / 0.35) 1px, transparent 1px);
-}
-
-.placer .frame.grabbing {
-  cursor: grabbing;
+    linear-gradient(to right, rgb(255 255 255 / 0.3) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(255 255 255 / 0.3) 1px, transparent 1px);
 }
 
 .hidden-strip {

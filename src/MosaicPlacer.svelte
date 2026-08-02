@@ -3,15 +3,27 @@
   import { COLS, defaultMosaicRect, gridAspect, gridRows } from "./lib/render";
   import { app, applyMosaic, visible } from "./lib/state.svelte";
 
-  const BOX_W = 640;
-  const BOX_H = 420;
+  const STAGE_W = 720;
+  const STAGE_H = 430;
 
   const p = $derived(app.placing!);
   const count = $derived(visible().length);
   const aspect = $derived(gridAspect(count));
-  /** Display scale only — the rectangle itself stays in source pixels. */
-  const scale = $derived(Math.min(BOX_W / p.w, BOX_H / p.h));
-  const cell = $derived({ w: (p.rect.w * scale) / COLS, h: (p.rect.h * scale) / gridRows(count) });
+
+  /* The grid frame is fixed; the picture moves under it. At 60 tiles the grid
+     is 7 by 9, so the frame comes out tall and narrow, not wide. */
+  const frame = $derived({
+    w: Math.min(STAGE_W - 40, (STAGE_H - 20) * aspect),
+    get h() {
+      return this.w / aspect;
+    },
+  });
+  const frameLeft = $derived((STAGE_W - frame.w) / 2);
+  const frameTop = $derived((STAGE_H - frame.h) / 2);
+
+  /** Screen pixels per source pixel: the framed rectangle fills the frame. */
+  const scale = $derived(frame.w / p.rect.w);
+  const cell = $derived({ w: frame.w / COLS, h: frame.h / gridRows(count) });
 
   let drag = $state<{ x: number; y: number; rx: number; ry: number } | null>(null);
 
@@ -20,14 +32,15 @@
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
   }
 
+  /** Dragging moves the picture, so the framed rectangle travels the other way. */
   function onMove(e: PointerEvent) {
     if (!drag) return;
-    p.rect.x = drag.rx + (e.clientX - drag.x) / scale;
-    p.rect.y = drag.ry + (e.clientY - drag.y) / scale;
+    p.rect.x = drag.rx - (e.clientX - drag.x) / scale;
+    p.rect.y = drag.ry - (e.clientY - drag.y) / scale;
   }
 
-  /** Zooms around the centre so the framed subject stays framed. */
-  function setWidth(w: number) {
+  /** Zooms around the frame centre, so whatever is framed stays framed. */
+  function zoomTo(w: number) {
     const next = Math.min(Math.max(w, p.w * 0.05), p.w * 4);
     const h = next / aspect;
     p.rect.x += (p.rect.w - next) / 2;
@@ -36,7 +49,7 @@
     p.rect.h = h;
   }
 
-  const onWheel = (e: WheelEvent) => setWidth(p.rect.w * (e.deltaY > 0 ? 1.08 : 1 / 1.08));
+  const onWheel = (e: WheelEvent) => zoomTo(p.rect.w * (e.deltaY > 0 ? 1.08 : 1 / 1.08));
   const fit = () => (app.placing!.rect = defaultMosaicRect(p.w, p.h, count));
 </script>
 
@@ -50,7 +63,7 @@
         max={p.w * 4}
         step={p.w / 400}
         value={p.rect.w}
-        oninput={(e) => setWidth(+e.currentTarget.value)}
+        oninput={(e) => zoomTo(+e.currentTarget.value)}
       />
     </label>
     <button onclick={fit}>{t("mosaic.fit")}</button>
@@ -59,20 +72,25 @@
   </div>
 
   <div
-    class="canvas"
-    style="width:{Math.round(p.w * scale)}px; height:{Math.round(p.h * scale)}px"
+    class="stage"
+    class:grabbing={!!drag}
+    role="presentation"
+    style="width:{STAGE_W}px; height:{STAGE_H}px"
     onwheel={onWheel}
+    onpointerdown={onDown}
+    onpointermove={onMove}
+    onpointerup={() => (drag = null)}
   >
-    <img src={p.url} alt="" draggable="false" width={Math.round(p.w * scale)} height={Math.round(p.h * scale)} />
+    <img
+      src={p.url}
+      alt=""
+      draggable="false"
+      style="width:{p.w * scale}px; height:{p.h * scale}px;
+             left:{frameLeft - p.rect.x * scale}px; top:{frameTop - p.rect.y * scale}px"
+    />
     <div
       class="frame"
-      class:grabbing={!!drag}
-      role="presentation"
-      onpointerdown={onDown}
-      onpointermove={onMove}
-      onpointerup={() => (drag = null)}
-      style="left:{p.rect.x * scale}px; top:{p.rect.y * scale}px;
-             width:{p.rect.w * scale}px; height:{p.rect.h * scale}px;
+      style="left:{frameLeft}px; top:{frameTop}px; width:{frame.w}px; height:{frame.h}px;
              background-size:{cell.w}px {cell.h}px"
     ></div>
   </div>
