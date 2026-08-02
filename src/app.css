@@ -84,6 +84,145 @@ button:disabled {
   outline-offset: -2px;
 }
 
+.cell.editing {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.work {
+  display: flex;
+  align-items: flex-start;
+}
+
+.work .viewport {
+  flex: 1;
+  min-width: 0;
+}
+
+.editor {
+  display: flex;
+  gap: var(--gap-3);
+  padding: var(--gap-3);
+  background: var(--card);
+  border-left: 1px solid var(--line-soft);
+}
+
+.stage img {
+  display: block;
+  background: var(--row);
+  cursor: grab;
+  touch-action: none;
+}
+
+.stage img.grabbing {
+  cursor: grabbing;
+}
+
+.panel {
+  width: 230px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-2);
+}
+
+.panel .row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap-1);
+}
+
+.layers {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.layers li {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-1);
+  background: var(--row);
+  border-radius: var(--r-chip);
+  padding: 2px 6px;
+}
+
+.layers li.sel {
+  outline: 1px solid var(--accent);
+}
+
+.layers .pick {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 3px 0;
+}
+
+.scope {
+  font-size: var(--step--1);
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: var(--r-pill);
+  padding: 1px 6px;
+}
+
+.scope.local {
+  color: var(--fg-dim);
+  background: none;
+}
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-1);
+  border-top: 1px solid var(--line-soft);
+  padding-top: var(--gap-2);
+}
+
+.fields label {
+  display: grid;
+  grid-template-columns: 84px 1fr;
+  align-items: center;
+  gap: var(--gap-2);
+  font-size: var(--step--1);
+  color: var(--fg-mid);
+}
+
+.fields input,
+.fields select {
+  min-width: 0;
+  font: inherit;
+  color: var(--fg);
+  background: var(--row);
+  border: 1px solid var(--line);
+  border-radius: var(--r-chip);
+  padding: 3px 6px;
+}
+
+.hidden-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gap-2);
+  margin-top: var(--gap-3);
+  padding-top: var(--gap-2);
+  border-top: 1px solid var(--line-soft);
+}
+
+.chip {
+  font-family: var(--mono);
+  font-size: var(--step--1);
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+}
+
 .tile {
   display: block;
   width: 100%;

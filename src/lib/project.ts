@@ -11,19 +11,7 @@ import {
 } from "@tauri-apps/plugin-fs";
 import { documentDir, join } from "@tauri-apps/api/path";
 
-/** Crop rectangle in source-image pixels. One tile = one rectangle of one asset,
- *  which is why a mosaic needs no mode of its own: it is 60 crops of one image. */
-export type Crop = { x: number; y: number; w: number; h: number };
-export type Tile = { asset: string; crop: Crop } | null;
-
-export type Manifest = {
-  version: 1;
-  /** Tile ids in the order the game shows them. Reordering only touches this. */
-  order: string[];
-  tiles: Record<string, Tile>;
-};
-
-export const emptyManifest = (): Manifest => ({ version: 1, order: [], tiles: {} });
+import { emptyManifest, emptyTile, migrate, type Manifest, type Tile } from "./model";
 
 export async function defaultDir() {
   return join(await documentDir(), "Black Desert", "FaceTexture");
@@ -48,13 +36,15 @@ export const tilePath = (dir: string, id: string) => join(dir, `${id}.bmp`);
 export async function loadManifest(dir: string, ids: string[]): Promise<Manifest> {
   let m = emptyManifest();
   try {
-    m = JSON.parse(await readTextFile(await manifestPath(dir))) as Manifest;
+    m = migrate(JSON.parse(await readTextFile(await manifestPath(dir))));
   } catch {
     // no project yet, or unreadable — start clean rather than block the folder
   }
   // Characters get created and deleted between sessions; the folder wins.
   m.order = [...m.order.filter((id) => ids.includes(id)), ...ids.filter((id) => !m.order.includes(id))];
+  m.hidden = m.hidden.filter((id) => ids.includes(id));
   for (const id of Object.keys(m.tiles)) if (!ids.includes(id)) delete m.tiles[id];
+  for (const id of ids) m.tiles[id] ??= emptyTile();
   return m;
 }
 
@@ -62,7 +52,9 @@ export async function loadManifest(dir: string, ids: string[]): Promise<Manifest
  *  purpose: undo must never change what is already on disk. */
 const appliedPath = async (dir: string) => join(await projectDir(dir), "applied.json");
 
-export async function loadApplied(dir: string): Promise<Manifest["tiles"]> {
+export type Applied = Record<string, Tile>;
+
+export async function loadApplied(dir: string): Promise<Applied> {
   try {
     return JSON.parse(await readTextFile(await appliedPath(dir)));
   } catch {
@@ -70,7 +62,7 @@ export async function loadApplied(dir: string): Promise<Manifest["tiles"]> {
   }
 }
 
-export async function saveApplied(dir: string, tiles: Manifest["tiles"]) {
+export async function saveApplied(dir: string, tiles: Applied) {
   await mkdir(await projectDir(dir), { recursive: true });
   await writeTextFile(await appliedPath(dir), JSON.stringify(tiles));
 }
