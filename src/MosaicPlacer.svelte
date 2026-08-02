@@ -55,6 +55,13 @@
     zoomTo(p.rect.w * (e.deltaY > 0 ? 1.08 : 1 / 1.08));
   }
 
+  /* The slider reads as zoom, but the stored value is the width of the framed
+     rectangle — a wider rectangle shows more picture, i.e. less zoom. Mirror it
+     around the range so dragging right zooms in. */
+  const zoomMin = $derived(p.w * 0.05);
+  const zoomMax = $derived(p.w * 4);
+  const mirror = (v: number) => zoomMin + zoomMax - v;
+
   const close = () => (app.placing = null);
   const fit = () => (app.placing!.rect = defaultMosaicRect(p.w, p.h, count));
 </script>
@@ -67,11 +74,11 @@
     <label class="zoom">{t("mosaic.zoom")}
       <input
         type="range"
-        min={p.w * 0.05}
-        max={p.w * 4}
+        min={zoomMin}
+        max={zoomMax}
         step={p.w / 400}
-        value={p.rect.w}
-        oninput={(e) => zoomTo(+e.currentTarget.value)}
+        value={mirror(p.rect.w)}
+        oninput={(e) => zoomTo(mirror(+e.currentTarget.value))}
       />
     </label>
     <button onclick={fit}>{t("mosaic.fit")}</button>
