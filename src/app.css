@@ -206,11 +206,13 @@ button:disabled {
   gap: var(--gap-2);
 }
 
-/* Two per row so every button ends up the same width, whatever its label. */
+/* Two per row so every button ends up the same width, whatever its label.
+   Same gap value as the vertical one .panel/.fields use between rows, so the
+   spacing reads as one consistent grid rather than tighter horizontally. */
 .panel .row {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: var(--gap-1);
+  gap: var(--gap-2);
 }
 
 /* Fixed floor so a row that happens to wrap onto two lines doesn't stand out
@@ -340,7 +342,7 @@ button:disabled {
 .slider {
   display: flex;
   align-items: center;
-  gap: var(--gap-1);
+  gap: var(--gap-2);
 }
 
 .slider input[type="range"] {
@@ -385,13 +387,14 @@ button:disabled {
   padding: 0 6px;
 }
 
-.fields .row {
+/* The name row is the one exception to the 2-column grid: a stretchy input
+   plus two fixed-width icon buttons, which columns cannot express. Needs the
+   .panel prefix to outrank `.panel .row` above, which is more specific than a
+   bare .name-row and would otherwise keep it a grid. */
+.panel .row.name-row {
   display: flex;
-  gap: var(--gap-1);
-}
-
-.name-row {
   align-items: center;
+  gap: var(--gap-2);
 }
 
 .name-row label {
