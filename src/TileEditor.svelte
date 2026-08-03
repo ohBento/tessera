@@ -244,7 +244,7 @@
         </div>
 
         <div class="row">
-          <button onclick={resetLayer}>{t("layer.resetAll")}</button>
+          <button class:full={layer.kind !== "image"} onclick={resetLayer}>{t("layer.resetAll")}</button>
           {#if layer.kind === "image"}
             <button onclick={swapImage}>{t("layer.swapImage")}</button>
           {/if}

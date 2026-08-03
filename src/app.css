@@ -220,6 +220,13 @@ button:disabled {
   min-height: 34px;
 }
 
+/* A lone button in an otherwise 2-column row (e.g. "Reset all" with no
+   "Swap picture" next to it on a text layer) spans both columns instead of
+   sitting in just the first, half-width. */
+.panel .row button.full {
+  grid-column: 1 / -1;
+}
+
 /* Fixed height rather than padding alone — a monospace badge inside otherwise
    has different vertical metrics than the label text and the pill visibly
    changes height depending on content. */
@@ -311,14 +318,14 @@ button:disabled {
   background: none;
 }
 
-/* Same gap as .panel's own top-level rows — mismatched values here made the
-   spacing between field rows visibly tighter than everywhere else. */
+/* Same gap as .panel's own top-level rows. No padding-top: .panel already
+   inserts that same gap before this element as a flex sibling, and adding it
+   again here doubled the visual gap right above the border. */
 .fields {
   display: flex;
   flex-direction: column;
   gap: var(--gap-2);
   border-top: 1px solid var(--line-soft);
-  padding-top: var(--gap-2);
 }
 
 .fields label {
@@ -391,12 +398,16 @@ button:disabled {
   flex: 1;
 }
 
+/* Matches the 22px field height next to it (.name-row pairs this with the
+   rename input) — padding alone made it a few px taller than the input. */
 .icon-toggle {
   flex: none;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 5px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
   color: var(--fg-dim);
 }
 
