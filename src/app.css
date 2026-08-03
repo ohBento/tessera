@@ -311,10 +311,12 @@ button:disabled {
   background: none;
 }
 
+/* Same gap as .panel's own top-level rows — mismatched values here made the
+   spacing between field rows visibly tighter than everywhere else. */
 .fields {
   display: flex;
   flex-direction: column;
-  gap: var(--gap-1);
+  gap: var(--gap-2);
   border-top: 1px solid var(--line-soft);
   padding-top: var(--gap-2);
 }
@@ -360,15 +362,20 @@ button:disabled {
   fill: currentColor;
 }
 
+/* Same fixed height as .pill, for the same reason: padding alone lets font
+   metrics (a select's arrow, a color swatch) push some fields taller than
+   others sitting right next to them. */
 .fields input,
 .fields select {
   min-width: 0;
+  height: 22px;
+  line-height: 1;
   font: inherit;
   color: var(--fg);
   background: var(--row);
   border: 1px solid var(--line);
   border-radius: var(--r-chip);
-  padding: 3px 6px;
+  padding: 0 6px;
 }
 
 .fields .row {
