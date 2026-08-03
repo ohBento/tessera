@@ -5,8 +5,11 @@
     DEFAULT_IMAGE_SCALE,
     DEFAULT_TEXT_SIZE,
     isDetached,
+    isGradient,
     layerLabel,
+    newGradient,
     resetTransform,
+    type Gradient,
     type TextLayer,
   } from "./lib/model";
   import { previewUrl } from "./lib/render";
@@ -97,6 +100,29 @@
     commit();
   }
 
+  function toggleColorGradient() {
+    if (!layer || layer.kind !== "text") return;
+    checkpointEdit();
+    layer.color = isGradient(layer.color) ? "#ffffff" : newGradient();
+    commit();
+  }
+
+  function setGlow(value: number) {
+    if (!layer) return;
+    if (value > 0 && !layer.glowColor) {
+      layer.glowColor = "#ffffff";
+      layer.glowOpacity = 1;
+    }
+    layer.glow = value;
+  }
+
+  function resetGlow() {
+    if (!layer) return;
+    checkpointEdit();
+    layer.glow = 0;
+    commit();
+  }
+
   function resetSize() {
     if (!layer) return;
     checkpointEdit();
@@ -144,6 +170,18 @@
   <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
     <path d="M13.5 8A5.5 5.5 0 1 1 9.7 2.68a.75.75 0 1 1-.4 1.446A4 4 0 1 0 12 8a.75.75 0 0 1 1.5 0Z" />
     <path d="M9 1.75a.75.75 0 0 1 .75-.75H12.5a.75.75 0 0 1 .75.75V4.5a.75.75 0 0 1-1.5 0V3.56L10.28 5.03a.75.75 0 1 1-1.06-1.06L10.69 2.5H9.75A.75.75 0 0 1 9 1.75Z" />
+  </svg>
+{/snippet}
+
+{#snippet gradientIcon()}
+  <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+    <defs>
+      <linearGradient id="g-icon" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0" stop-color="currentColor" stop-opacity="0.15" />
+        <stop offset="1" stop-color="currentColor" />
+      </linearGradient>
+    </defs>
+    <rect x="1" y="4" width="14" height="8" rx="2" fill="url(#g-icon)" />
   </svg>
 {/snippet}
 
@@ -285,7 +323,53 @@
               <button class="slider-reset" onclick={resetSize} title={t("field.resetOne")}>{@render resetIcon()}</button>
             </span>
           </label>
-          <label>{t("field.color")}<input type="color" bind:value={layer.color} onchange={commit} /></label>
+          <div class="row name-row">
+            {#if isGradient(layer.color)}
+              <label class="grow">{t("field.color")}
+                <span class="slider">
+                  <input type="color" bind:value={(layer.color as Gradient).from} onchange={commit} />
+                  <input type="color" bind:value={(layer.color as Gradient).to} onchange={commit} />
+                </span>
+              </label>
+            {:else}
+              <label class="grow">{t("field.color")}<input type="color" bind:value={layer.color} onchange={commit} /></label>
+            {/if}
+            <button
+              class="icon-toggle"
+              class:on={isGradient(layer.color)}
+              onclick={toggleColorGradient}
+              title={t("field.gradient")}
+            >
+              {@render gradientIcon()}
+            </button>
+          </div>
+          {#if isGradient(layer.color)}
+            <label>{t("field.angle")}
+              <span class="slider">
+                <input
+                  type="range"
+                  min="0"
+                  max="360"
+                  step="1"
+                  disabled={!!(layer.color as Gradient).radial}
+                  bind:value={(layer.color as Gradient).angle}
+                  onchange={commit}
+                />
+                <button
+                  class="slider-reset"
+                  onclick={() => { checkpointEdit(); (layer.color as Gradient).angle = 0; commit(); }}
+                  title={t("field.resetOne")}
+                >{@render resetIcon()}</button>
+              </span>
+            </label>
+            <label>{t("field.radial")}
+              <input
+                type="checkbox"
+                checked={!!(layer.color as Gradient).radial}
+                onchange={(e) => { (layer.color as Gradient).radial = e.currentTarget.checked; commit(); }}
+              />
+            </label>
+          {/if}
           <label>{t("field.strokeWidth")}
             <span class="slider">
               <input type="range" min="0" max="0.03" step="0.001" bind:value={layer.strokeWidth} onchange={commit} />
@@ -305,6 +389,44 @@
             <span class="slider">
               <input type="range" min="0.02" max="2" step="0.01" bind:value={layer.scale} onchange={commit} />
               <button class="slider-reset" onclick={resetSize} title={t("field.resetOne")}>{@render resetIcon()}</button>
+            </span>
+          </label>
+        {/if}
+
+        <label>{t("field.glow")}
+          <span class="slider">
+            <input
+              type="range"
+              min="0"
+              max="0.08"
+              step="0.002"
+              value={layer.glow ?? 0}
+              oninput={(e) => setGlow(+e.currentTarget.value)}
+              onchange={commit}
+            />
+            <button class="slider-reset" onclick={resetGlow} title={t("field.resetOne")}>{@render resetIcon()}</button>
+          </span>
+        </label>
+        {#if layer.glow}
+          <label>{t("field.glowColor")}
+            <input type="color" value={layer.glowColor ?? "#ffffff"} oninput={(e) => (layer.glowColor = e.currentTarget.value)} onchange={commit} />
+          </label>
+          <label>{t("field.glowOpacity")}
+            <span class="slider">
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value={layer.glowOpacity ?? 1}
+                oninput={(e) => (layer.glowOpacity = +e.currentTarget.value)}
+                onchange={commit}
+              />
+              <button
+                class="slider-reset"
+                onclick={() => { checkpointEdit(); layer.glowOpacity = 1; commit(); }}
+                title={t("field.resetOne")}
+              >{@render resetIcon()}</button>
             </span>
           </label>
         {/if}

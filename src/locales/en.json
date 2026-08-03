@@ -79,5 +79,11 @@
   "layer.flipY": "Flip vertical",
   "layer.deleteLocked": "Locked — unlock to delete",
   "layer.resetAll": "Reset all",
-  "field.resetOne": "Reset"
+  "field.resetOne": "Reset",
+  "field.gradient": "Gradient",
+  "field.angle": "Angle",
+  "field.radial": "Radial",
+  "field.glow": "Glow",
+  "field.glowColor": "Glow colour",
+  "field.glowOpacity": "Glow strength"
 }

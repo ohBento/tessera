@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { COLS, coverCrop, defaultMosaicRect, mosaicCrops, splitRect } from "./render";
+import { COLS, coverCrop, defaultMosaicRect, gradientLine, mosaicCrops, splitRect } from "./render";
 import { TILE_H, TILE_W } from "./bmp";
+import { isGradient } from "./model";
 
 describe("coverCrop", () => {
   it("keeps the full width when the source is wider than the target", () => {
@@ -66,5 +67,38 @@ describe("mosaicCrops", () => {
     const last = crops[59];
     expect(rows).toBe(9);
     expect(last.y + last.h).toBeLessThanOrEqual(1500 + 1e-9);
+  });
+});
+
+describe("gradientLine", () => {
+  it("runs left to right at 0 degrees", () => {
+    const { x1, y1, x2, y2 } = gradientLine(0, 100, 40);
+    expect(x1).toBeCloseTo(-50);
+    expect(y1).toBeCloseTo(0);
+    expect(x2).toBeCloseTo(50);
+    expect(y2).toBeCloseTo(0);
+  });
+
+  it("runs top to bottom at 90 degrees", () => {
+    const { x1, y1, x2, y2 } = gradientLine(90, 100, 40);
+    expect(x1).toBeCloseTo(0);
+    expect(y1).toBeCloseTo(-20);
+    expect(x2).toBeCloseTo(0);
+    expect(y2).toBeCloseTo(20);
+  });
+
+  it("is centred on the origin regardless of angle", () => {
+    for (const angle of [0, 37, 90, 180, 271]) {
+      const { x1, y1, x2, y2 } = gradientLine(angle, 80, 50);
+      expect((x1 + x2) / 2).toBeCloseTo(0);
+      expect((y1 + y2) / 2).toBeCloseTo(0);
+    }
+  });
+});
+
+describe("isGradient", () => {
+  it("tells a plain colour from a gradient object", () => {
+    expect(isGradient("#ffffff")).toBe(false);
+    expect(isGradient({ from: "#fff", to: "#000", angle: 0 })).toBe(true);
   });
 });

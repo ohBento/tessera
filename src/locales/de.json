@@ -79,5 +79,11 @@
   "layer.flipY": "Vertikal spiegeln",
   "layer.deleteLocked": "Gesperrt — zum Löschen erst entsperren",
   "layer.resetAll": "Alle zurücksetzen",
-  "field.resetOne": "Zurücksetzen"
+  "field.resetOne": "Zurücksetzen",
+  "field.gradient": "Verlauf",
+  "field.angle": "Winkel",
+  "field.radial": "Radial",
+  "field.glow": "Glühen",
+  "field.glowColor": "Glühfarbe",
+  "field.glowOpacity": "Glühstärke"
 }

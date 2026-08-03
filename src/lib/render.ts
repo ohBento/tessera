@@ -1,5 +1,5 @@
 import { encodeBmp32, TILE_H, TILE_W } from "./bmp";
-import { layerText, type Crop, type Effective, type Layer } from "./model";
+import { isGradient, layerText, type Crop, type Effective, type Layer, type Paint } from "./model";
 import { loadAsset } from "./project";
 
 export const COLS = 7;
@@ -40,6 +40,98 @@ export const mosaicCrops = (sw: number, sh: number, count: number) =>
 export const tileCover = (img: { width: number; height: number }) =>
   coverCrop(img.width, img.height, TILE_W / TILE_H);
 
+/** Endpoints of a gradient line through the centre of a bw x bh box at the
+ *  given angle (degrees, 0 = left to right). Kept pure and separate from
+ *  CanvasGradient construction so the angle math is testable without a
+ *  canvas. */
+export function gradientLine(angle: number, bw: number, bh: number) {
+  const rad = (angle * Math.PI) / 180;
+  const dx = (Math.cos(rad) * bw) / 2;
+  const dy = (Math.sin(rad) * bh) / 2;
+  return { x1: -dx, y1: -dy, x2: dx, y2: dy };
+}
+
+/** Resolves a solid colour or a Gradient into a CanvasGradient sized to a
+ *  bounding box centred on the current transform origin. Called after the
+ *  layer's own translate/rotate, so (0,0) is already the layer's centre. */
+function resolvePaint(
+  ctx: OffscreenCanvasRenderingContext2D,
+  paint: Paint,
+  bw: number,
+  bh: number,
+): string | CanvasGradient {
+  if (!isGradient(paint)) return paint;
+  let grad: CanvasGradient;
+  if (paint.radial) {
+    grad = ctx.createRadialGradient(0, 0, 0, 0, 0, Math.max(bw, bh) / 2);
+  } else {
+    const { x1, y1, x2, y2 } = gradientLine(paint.angle, bw, bh);
+    grad = ctx.createLinearGradient(x1, y1, x2, y2);
+  }
+  grad.addColorStop(0, paint.from);
+  grad.addColorStop(1, paint.to);
+  return grad;
+}
+
+/** Draws the layer's silhouette in a single flat colour, alpha preserved —
+ *  used to build the glow halo. For images, the drawn picture is recoloured
+ *  via "source-in" since an image's own colours are not what a glow should be
+ *  shaped from. */
+function drawSilhouette(
+  ctx: OffscreenCanvasRenderingContext2D,
+  layer: Layer,
+  img: ImageBitmap | null,
+  text: string,
+  w: number,
+  color: string,
+) {
+  if (layer.kind === "image" && img) {
+    ctx.scale(layer.flipX ? -1 : 1, layer.flipY ? -1 : 1);
+    const dw = layer.scale * w;
+    const dh = (dw * img.height) / img.width;
+    ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
+    ctx.globalCompositeOperation = "source-in";
+    ctx.fillStyle = color;
+    ctx.fillRect(-dw / 2, -dh / 2, dw, dh);
+  } else if (layer.kind === "text") {
+    ctx.font = `${layer.size * w}px "${layer.font}"`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = color;
+    ctx.fillText(text, 0, 0);
+  }
+}
+
+/** Glow is a blurred, independently-opaque halo — Canvas2D's own shadow API
+ *  ties shadow alpha to the shape's fill alpha, which cannot express "faint
+ *  glow behind a fully opaque layer". Built as two extra offscreen passes
+ *  instead: silhouette, then blur, then composited under the real layer. */
+function paintGlow(
+  main: OffscreenCanvasRenderingContext2D,
+  layer: Layer,
+  img: ImageBitmap | null,
+  text: string,
+  w: number,
+  h: number,
+) {
+  if (!layer.glow) return;
+  const shape = new OffscreenCanvas(w, h);
+  const sctx = shape.getContext("2d")!;
+  sctx.setTransform(main.getTransform());
+  drawSilhouette(sctx, layer, img, text, w, layer.glowColor || "#ffffff");
+
+  const blurred = new OffscreenCanvas(w, h);
+  const bctx = blurred.getContext("2d")!;
+  bctx.filter = `blur(${layer.glow * w}px)`;
+  bctx.drawImage(shape, 0, 0);
+
+  main.save();
+  main.setTransform(1, 0, 0, 1, 0, 0);
+  main.globalAlpha = layer.glowOpacity ?? 1;
+  main.drawImage(blurred, 0, 0);
+  main.restore();
+}
+
 async function paintLayer(
   ctx: OffscreenCanvasRenderingContext2D,
   dir: string,
@@ -49,21 +141,25 @@ async function paintLayer(
   w: number,
   h: number,
 ) {
+  const img = layer.kind === "image" ? await loadAsset(dir, layer.asset) : null;
+  const text = layer.kind === "text" ? layerText(eff.text, layer, tileId) : "";
+
   ctx.save();
-  ctx.globalAlpha = layer.opacity;
-  ctx.globalCompositeOperation = layer.blend;
-  ctx.filter = layer.filter || "none";
   ctx.translate(layer.x * w, layer.y * h);
   ctx.rotate((layer.rotation * Math.PI) / 180);
 
-  if (layer.kind === "image") {
-    const img = await loadAsset(dir, layer.asset);
+  paintGlow(ctx, layer, img, text, w, h);
+
+  ctx.globalAlpha = layer.opacity;
+  ctx.globalCompositeOperation = layer.blend;
+  ctx.filter = layer.filter || "none";
+
+  if (layer.kind === "image" && img) {
     ctx.scale(layer.flipX ? -1 : 1, layer.flipY ? -1 : 1);
     const dw = layer.scale * w;
     const dh = (dw * img.height) / img.width;
     ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
-  } else {
-    const text = layerText(eff.text, layer, tileId);
+  } else if (layer.kind === "text") {
     ctx.font = `${layer.size * w}px "${layer.font}"`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
@@ -77,7 +173,8 @@ async function paintLayer(
       ctx.lineJoin = "round";
       ctx.strokeText(text, 0, 0);
     }
-    ctx.fillStyle = layer.color;
+    const metrics = ctx.measureText(text);
+    ctx.fillStyle = resolvePaint(ctx, layer.color, metrics.width, layer.size * w);
     ctx.fillText(text, 0, 0);
   }
   ctx.restore();

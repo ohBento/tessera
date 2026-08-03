@@ -5,6 +5,22 @@ export type Crop = { x: number; y: number; w: number; h: number };
  *  different crops, which is why it needs no mode of its own. */
 export type Base = { asset: string; crop: Crop } | null;
 
+/** Two stops and a direction. Deliberately not a multi-stop editor: a stop
+ *  list needs its own drag UI, and two colours cover what this tool needs. */
+export type Gradient = {
+  from: string;
+  to: string;
+  angle: number; // degrees, 0 = left to right, ignored when radial
+  radial?: boolean; // from the centre outwards instead of directional
+};
+
+/** Anywhere a colour can be picked, a gradient is allowed instead. */
+export type Paint = string | Gradient;
+
+export const isGradient = (paint: Paint): paint is Gradient => typeof paint !== "string";
+
+export const newGradient = (): Gradient => ({ from: "#ffffff", to: "#000000", angle: 0 });
+
 /** Geometry is stored as fractions of the tile, never pixels: the tile size is
  *  configurable, and px values would break every layout the moment it changes. */
 type Common = {
@@ -18,6 +34,11 @@ type Common = {
   /* Optional so manifests written before these existed still load unchanged. */
   name?: string;
   locked?: boolean;
+  /* Glow is a shadow with no offset but its own alpha, which Canvas2D's shadow
+   * API cannot express — it is composited as a separate pass instead. */
+  glow?: number; // blur radius as a fraction of tile width, 0 or absent = off
+  glowColor?: string;
+  glowOpacity?: number; // 0..1, independent of the layer's own opacity
 };
 
 export type ImageLayer = Common & {
@@ -34,7 +55,7 @@ export type TextLayer = Common & {
   text: string; // {{id}} expands to the tile's numeric id
   font: string;
   size: number;
-  color: string;
+  color: Paint;
   strokeColor: string;
   strokeWidth: number;
   shadow: number;
