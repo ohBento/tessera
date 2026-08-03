@@ -213,16 +213,21 @@ button:disabled {
   gap: var(--gap-1);
 }
 
+/* Fixed height rather than padding alone — a monospace badge inside otherwise
+   has different vertical metrics than the label text and the pill visibly
+   changes height depending on content. */
 .pill {
   display: inline-flex;
   align-items: center;
+  height: 22px;
   gap: var(--gap-2);
   margin-top: var(--gap-2);
-  padding: 3px 4px 3px 10px;
+  padding: 0 4px 0 10px;
   background: var(--row);
   border: 1px solid var(--line-soft);
   border-radius: var(--r-pill);
   font-size: var(--step--1);
+  line-height: 1;
   color: var(--fg-mid);
 }
 
@@ -231,9 +236,13 @@ button:disabled {
 }
 
 .pill .numeric {
-  padding: 1px 8px;
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 8px;
   background: var(--card);
   border-radius: var(--r-pill);
+  line-height: 1;
   color: var(--fg);
 }
 
@@ -352,6 +361,17 @@ button:disabled {
 .icon-toggle.on {
   color: var(--accent);
   border-color: var(--accent);
+}
+
+.icon-toggle.danger:hover:not(:disabled) {
+  color: var(--flag);
+  border-color: var(--flag);
+}
+
+.icon-toggle:disabled {
+  color: var(--fg-dim);
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Flip buttons: same idiom as .icon-toggle.on, but plain text buttons. */

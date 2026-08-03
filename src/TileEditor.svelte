@@ -197,6 +197,16 @@
               </svg>
             {/if}
           </button>
+          <button
+            class="icon-toggle danger"
+            onclick={() => deleteLayer(id, layer.id)}
+            disabled={!!layer.locked}
+            title={layer.locked ? t("layer.deleteLocked") : t("layer.delete")}
+          >
+            <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+              <path d="M6 2h4a1 1 0 0 1 1 1v1h3v1.5H2V4h3V3a1 1 0 0 1 1-1Zm-1.5 4h7l-.6 8.1a1 1 0 0 1-1 .9H6.1a1 1 0 0 1-1-.9L4.5 6Z" />
+            </svg>
+          </button>
         </div>
 
         <div class="row">
@@ -268,7 +278,6 @@
           <input placeholder="blur(2px) contrast(1.2)" bind:value={layer.filter} onchange={commit} />
         </label>
 
-        <button onclick={() => deleteLayer(id, layer.id)}>{t("layer.delete")}</button>
       </div>
     {/if}
   </div>

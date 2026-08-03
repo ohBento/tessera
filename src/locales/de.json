@@ -77,5 +77,6 @@
   "layer.unlock": "Entsperren",
   "layer.resetTransform": "Größe/Rotation/Deckkraft zurücksetzen",
   "layer.flipX": "Horizontal spiegeln",
-  "layer.flipY": "Vertikal spiegeln"
+  "layer.flipY": "Vertikal spiegeln",
+  "layer.deleteLocked": "Gesperrt — zum Löschen erst entsperren"
 }

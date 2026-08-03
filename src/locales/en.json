@@ -77,5 +77,6 @@
   "layer.unlock": "Unlock",
   "layer.resetTransform": "Reset size/rotation/opacity",
   "layer.flipX": "Flip horizontal",
-  "layer.flipY": "Flip vertical"
+  "layer.flipY": "Flip vertical",
+  "layer.deleteLocked": "Locked — unlock to delete"
 }
