@@ -200,7 +200,7 @@ button:disabled {
 }
 
 .panel {
-  width: 230px;
+  width: 300px;
   display: flex;
   flex-direction: column;
   gap: var(--gap-2);
@@ -211,6 +211,13 @@ button:disabled {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--gap-1);
+}
+
+/* Fixed floor so a row that happens to wrap onto two lines doesn't stand out
+   next to every single-line row above and below it. */
+.panel .row button,
+.panel .row > label {
+  min-height: 34px;
 }
 
 /* Fixed height rather than padding alone — a monospace badge inside otherwise
@@ -319,6 +326,38 @@ button:disabled {
   gap: var(--gap-2);
   font-size: var(--step--1);
   color: var(--fg-mid);
+}
+
+.slider {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-1);
+}
+
+.slider input[type="range"] {
+  flex: 1;
+  min-width: 0;
+}
+
+.slider-reset {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--fg-dim);
+  background: none;
+  border: none;
+}
+
+.slider-reset:hover {
+  color: var(--accent);
+}
+
+.slider-reset svg {
+  fill: currentColor;
 }
 
 .fields input,

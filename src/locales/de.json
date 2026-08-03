@@ -75,8 +75,9 @@
   "field.rename": "Ebene umbenennen",
   "layer.lock": "Sperren",
   "layer.unlock": "Entsperren",
-  "layer.resetTransform": "Größe/Rotation/Deckkraft zurücksetzen",
   "layer.flipX": "Horizontal spiegeln",
   "layer.flipY": "Vertikal spiegeln",
-  "layer.deleteLocked": "Gesperrt — zum Löschen erst entsperren"
+  "layer.deleteLocked": "Gesperrt — zum Löschen erst entsperren",
+  "layer.resetAll": "Alle zurücksetzen",
+  "field.resetOne": "Zurücksetzen"
 }

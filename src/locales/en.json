@@ -75,8 +75,9 @@
   "field.rename": "Rename layer",
   "layer.lock": "Lock",
   "layer.unlock": "Unlock",
-  "layer.resetTransform": "Reset size/rotation/opacity",
   "layer.flipX": "Flip horizontal",
   "layer.flipY": "Flip vertical",
-  "layer.deleteLocked": "Locked — unlock to delete"
+  "layer.deleteLocked": "Locked — unlock to delete",
+  "layer.resetAll": "Reset all",
+  "field.resetOne": "Reset"
 }

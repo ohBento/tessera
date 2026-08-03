@@ -1,7 +1,14 @@
 <script lang="ts">
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { TILE_H, TILE_W } from "./lib/bmp";
-  import { isDetached, layerLabel, resetTransform, type TextLayer } from "./lib/model";
+  import {
+    DEFAULT_IMAGE_SCALE,
+    DEFAULT_TEXT_SIZE,
+    isDetached,
+    layerLabel,
+    resetTransform,
+    type TextLayer,
+  } from "./lib/model";
   import { previewUrl } from "./lib/render";
   import { t } from "./lib/i18n.svelte";
   import {
@@ -90,6 +97,26 @@
     commit();
   }
 
+  function resetSize() {
+    if (!layer) return;
+    checkpointEdit();
+    if (layer.kind === "image") layer.scale = DEFAULT_IMAGE_SCALE;
+    else layer.size = DEFAULT_TEXT_SIZE;
+    commit();
+  }
+
+  function resetField(field: "rotation" | "opacity" | "strokeWidth" | "shadow", value: number) {
+    if (!layer) return;
+    checkpointEdit();
+    if (field === "strokeWidth" || field === "shadow") {
+      if (layer.kind !== "text") return;
+      layer[field] = value;
+    } else {
+      layer[field] = value;
+    }
+    commit();
+  }
+
   async function pickImageLayer(asShared: boolean) {
     const picked = await openDialog({
       filters: [{ name: t("image.pick"), extensions: ["png", "jpg", "jpeg", "webp", "gif", "bmp", "avif", "svg"] }],
@@ -112,6 +139,13 @@
     if (typeof picked === "string") await swapLayerImage(id, layer.id, picked);
   }
 </script>
+
+{#snippet resetIcon()}
+  <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+    <path d="M13.5 8A5.5 5.5 0 1 1 9.7 2.68a.75.75 0 1 1-.4 1.446A4 4 0 1 0 12 8a.75.75 0 0 1 1.5 0Z" />
+    <path d="M9 1.75a.75.75 0 0 1 .75-.75H12.5a.75.75 0 0 1 .75.75V4.5a.75.75 0 0 1-1.5 0V3.56L10.28 5.03a.75.75 0 1 1-1.06-1.06L10.69 2.5H9.75A.75.75 0 0 1 9 1.75Z" />
+  </svg>
+{/snippet}
 
 <div class="editor">
   <div class="stage">
@@ -210,7 +244,7 @@
         </div>
 
         <div class="row">
-          <button onclick={resetLayer}>{t("layer.resetTransform")}</button>
+          <button onclick={resetLayer}>{t("layer.resetAll")}</button>
           {#if layer.kind === "image"}
             <button onclick={swapImage}>{t("layer.swapImage")}</button>
           {/if}
@@ -246,28 +280,46 @@
             </select>
           </label>
           <label>{t("field.size")}
-            <input type="range" min="0.02" max="0.4" step="0.005" bind:value={layer.size} onchange={commit} />
+            <span class="slider">
+              <input type="range" min="0.02" max="0.4" step="0.005" bind:value={layer.size} onchange={commit} />
+              <button class="slider-reset" onclick={resetSize} title={t("field.resetOne")}>{@render resetIcon()}</button>
+            </span>
           </label>
           <label>{t("field.color")}<input type="color" bind:value={layer.color} onchange={commit} /></label>
           <label>{t("field.strokeWidth")}
-            <input type="range" min="0" max="0.03" step="0.001" bind:value={layer.strokeWidth} onchange={commit} />
+            <span class="slider">
+              <input type="range" min="0" max="0.03" step="0.001" bind:value={layer.strokeWidth} onchange={commit} />
+              <button class="slider-reset" onclick={() => resetField("strokeWidth", 0)} title={t("field.resetOne")}>{@render resetIcon()}</button>
+            </span>
           </label>
           <label>{t("field.strokeColor")}<input type="color" bind:value={layer.strokeColor} onchange={commit} /></label>
           <label>{t("field.shadow")}
-            <input type="range" min="0" max="0.1" step="0.002" bind:value={layer.shadow} onchange={commit} />
+            <span class="slider">
+              <input type="range" min="0" max="0.1" step="0.002" bind:value={layer.shadow} onchange={commit} />
+              <button class="slider-reset" onclick={() => resetField("shadow", 0)} title={t("field.resetOne")}>{@render resetIcon()}</button>
+            </span>
           </label>
           <label>{t("field.shadowColor")}<input type="color" bind:value={layer.shadowColor} onchange={commit} /></label>
         {:else}
           <label>{t("field.scale")}
-            <input type="range" min="0.02" max="2" step="0.01" bind:value={layer.scale} onchange={commit} />
+            <span class="slider">
+              <input type="range" min="0.02" max="2" step="0.01" bind:value={layer.scale} onchange={commit} />
+              <button class="slider-reset" onclick={resetSize} title={t("field.resetOne")}>{@render resetIcon()}</button>
+            </span>
           </label>
         {/if}
 
         <label>{t("field.rotation")}
-          <input type="range" min="-180" max="180" step="1" bind:value={layer.rotation} onchange={commit} />
+          <span class="slider">
+            <input type="range" min="-180" max="180" step="1" bind:value={layer.rotation} onchange={commit} />
+            <button class="slider-reset" onclick={() => resetField("rotation", 0)} title={t("field.resetOne")}>{@render resetIcon()}</button>
+          </span>
         </label>
         <label>{t("field.opacity")}
-          <input type="range" min="0" max="1" step="0.01" bind:value={layer.opacity} onchange={commit} />
+          <span class="slider">
+            <input type="range" min="0" max="1" step="0.01" bind:value={layer.opacity} onchange={commit} />
+            <button class="slider-reset" onclick={() => resetField("opacity", 1)} title={t("field.resetOne")}>{@render resetIcon()}</button>
+          </span>
         </label>
         <label>{t("field.blend")}
           <select bind:value={layer.blend} onchange={commit}>
