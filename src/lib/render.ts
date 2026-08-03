@@ -58,6 +58,7 @@ async function paintLayer(
 
   if (layer.kind === "image") {
     const img = await loadAsset(dir, layer.asset);
+    ctx.scale(layer.flipX ? -1 : 1, layer.flipY ? -1 : 1);
     const dw = layer.scale * w;
     const dh = (dw * img.height) / img.width;
     ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);

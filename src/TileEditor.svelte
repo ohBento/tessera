@@ -1,7 +1,7 @@
 <script lang="ts">
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { TILE_H, TILE_W } from "./lib/bmp";
-  import { isDetached, layerLabel, type TextLayer } from "./lib/model";
+  import { isDetached, layerLabel, resetTransform, type TextLayer } from "./lib/model";
   import { previewUrl } from "./lib/render";
   import { t } from "./lib/i18n.svelte";
   import {
@@ -69,6 +69,27 @@
 
   const commit = () => layer && afterEdit(id, layer.id);
 
+  function resetLayer() {
+    if (!layer) return;
+    checkpointEdit();
+    resetTransform(layer);
+    commit();
+  }
+
+  function toggleLock() {
+    if (!layer) return;
+    checkpointEdit();
+    layer.locked = !layer.locked;
+    commit();
+  }
+
+  function flip(axis: "flipX" | "flipY") {
+    if (!layer || layer.kind !== "image") return;
+    checkpointEdit();
+    layer[axis] = !layer[axis];
+    commit();
+  }
+
   async function pickImageLayer(asShared: boolean) {
     const picked = await openDialog({
       filters: [{ name: t("image.pick"), extensions: ["png", "jpg", "jpeg", "webp", "gif", "bmp", "avif", "svg"] }],
@@ -118,7 +139,7 @@
       <button onclick={() => toggleHidden(id)}>
         {app.manifest.hidden.includes(id) ? t("tile.show") : t("tile.hide")}
       </button>
-      <button onclick={() => (app.editing = "")}>{t("editor.close")}</button>
+      <button onclick={() => (app.editing = "")}>{t("tile.closeEditor")}</button>
     </div>
 
     <div class="row">
@@ -136,7 +157,6 @@
       {#each [...eff.layers].reverse() as l (l.id)}
         <li class:sel={l.id === app.selectedLayer}>
           <button class="pick" onclick={() => (app.selectedLayer = l.id)}>{layerLabel(l)}</button>
-          {#if l.locked}<span class="dim" title={t("layer.locked")}>■</span>{/if}
           {#if app.manifest.shared.some((s) => s.id === l.id)}
             <span class="scope" class:local={isDetached(app.manifest, id, l.id)}>
               {isDetached(app.manifest, id, l.id) ? t("layer.scope.local") : t("layer.scope.all")}
@@ -150,25 +170,47 @@
 
     {#if layer}
       <div class="fields">
-        <label>{t("field.name")}
-          <input
-            value={layer.name ?? ""}
-            placeholder={layerLabel(layer)}
-            onfocus={checkpointEdit}
-            oninput={(e) => (layer.name = e.currentTarget.value)}
-            onchange={commit}
-          />
-        </label>
-        <label>{t("field.locked")}
-          <input
-            type="checkbox"
-            checked={!!layer.locked}
-            onchange={(e) => { layer.locked = e.currentTarget.checked; commit(); }}
-          />
-        </label>
+        <div class="row name-row">
+          <label class="grow">{t("field.rename")}
+            <input
+              value={layer.name ?? ""}
+              placeholder={layerLabel(layer)}
+              onfocus={checkpointEdit}
+              oninput={(e) => (layer.name = e.currentTarget.value)}
+              onchange={commit}
+            />
+          </label>
+          <button
+            class="icon-toggle"
+            class:on={!!layer.locked}
+            onclick={toggleLock}
+            aria-pressed={!!layer.locked}
+            title={layer.locked ? t("layer.unlock") : t("layer.lock")}
+          >
+            {#if layer.locked}
+              <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+                <path d="M4 7V5a4 4 0 1 1 8 0v2h.5A1.5 1.5 0 0 1 14 8.5v5A1.5 1.5 0 0 1 12.5 15h-9A1.5 1.5 0 0 1 2 13.5v-5A1.5 1.5 0 0 1 3.5 7H4Zm1.5 0h5V5a2.5 2.5 0 0 0-5 0v2Z" />
+              </svg>
+            {:else}
+              <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+                <path d="M11.5 7V5a2.5 2.5 0 0 0-4.975-.3.75.75 0 1 1-1.487-.2A4 4 0 0 1 13 5v2h-.5a1.5 1.5 0 0 1 2 1.5v5A1.5 1.5 0 0 1 12.5 15h-9A1.5 1.5 0 0 1 2 13.5v-5A1.5 1.5 0 0 1 3.5 7h8Z" />
+              </svg>
+            {/if}
+          </button>
+        </div>
+
+        <div class="row">
+          <button onclick={resetLayer}>{t("layer.resetTransform")}</button>
+          {#if layer.kind === "image"}
+            <button onclick={swapImage}>{t("layer.swapImage")}</button>
+          {/if}
+        </div>
 
         {#if layer.kind === "image"}
-          <button onclick={swapImage}>{t("layer.swapImage")}</button>
+          <div class="row">
+            <button class:on={!!layer.flipX} onclick={() => flip("flipX")}>{t("layer.flipX")}</button>
+            <button class:on={!!layer.flipY} onclick={() => flip("flipY")}>{t("layer.flipY")}</button>
+          </div>
         {/if}
 
         {#if shared}

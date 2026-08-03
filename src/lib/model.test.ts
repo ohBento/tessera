@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_IMAGE_SCALE,
+  DEFAULT_TEXT_SIZE,
   effectiveTile,
   emptyManifest,
   emptyTile,
   isDetached,
   layerText,
   migrate,
+  newImageLayer,
   newTextLayer,
+  resetTransform,
   resolveLayers,
   type Manifest,
   type TextLayer,
@@ -85,5 +89,37 @@ describe("migrate", () => {
   it("survives a null tile and unreadable input", () => {
     expect(migrate({ version: 1, order: ["a"], tiles: { a: null } }).tiles.a.base).toBeNull();
     expect(migrate(null).version).toBe(2);
+  });
+});
+
+describe("resetTransform", () => {
+  it("resets rotation, opacity and size but leaves position and effects alone", () => {
+    const layer = newImageLayer("x.png");
+    layer.x = 0.1;
+    layer.y = 0.9;
+    layer.rotation = 45;
+    layer.opacity = 0.4;
+    layer.scale = 1.5;
+    layer.flipX = true;
+    layer.filter = "blur(2px)";
+
+    resetTransform(layer);
+
+    expect(layer.rotation).toBe(0);
+    expect(layer.opacity).toBe(1);
+    expect(layer.scale).toBe(DEFAULT_IMAGE_SCALE);
+    expect(layer.flipX).toBe(false);
+    // Untouched on purpose — a reset that also discards effects or moves the
+    // layer back to centre would be a bigger surprise than the fix it offers.
+    expect(layer.x).toBe(0.1);
+    expect(layer.y).toBe(0.9);
+    expect(layer.filter).toBe("blur(2px)");
+  });
+
+  it("resets text size the same way", () => {
+    const layer = newTextLayer();
+    layer.size = 0.3;
+    resetTransform(layer);
+    expect(layer.size).toBe(DEFAULT_TEXT_SIZE);
   });
 });

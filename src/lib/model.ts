@@ -20,7 +20,14 @@ type Common = {
   locked?: boolean;
 };
 
-export type ImageLayer = Common & { kind: "image"; asset: string; scale: number };
+export type ImageLayer = Common & {
+  kind: "image";
+  asset: string;
+  scale: number;
+  /* Optional so manifests saved before flipping existed still load unchanged. */
+  flipX?: boolean;
+  flipY?: boolean;
+};
 
 export type TextLayer = Common & {
   kind: "text";
@@ -82,12 +89,31 @@ const common = (id = newId()): Common => ({
   filter: "",
 });
 
+export const DEFAULT_IMAGE_SCALE = 0.3;
+export const DEFAULT_TEXT_SIZE = 0.08;
+
 export const newImageLayer = (asset: string): ImageLayer => ({
   ...common(),
   kind: "image",
   asset,
-  scale: 0.3,
+  scale: DEFAULT_IMAGE_SCALE,
+  flipX: false,
+  flipY: false,
 });
+
+/** Resets size, rotation and opacity to their defaults but keeps position and
+ *  every effect — those are rarely what a user wants to lose by mistake. */
+export function resetTransform(layer: Layer) {
+  layer.rotation = 0;
+  layer.opacity = 1;
+  if (layer.kind === "image") {
+    layer.scale = DEFAULT_IMAGE_SCALE;
+    layer.flipX = false;
+    layer.flipY = false;
+  } else {
+    layer.size = DEFAULT_TEXT_SIZE;
+  }
+}
 
 export const newTextLayer = (): TextLayer => ({
   ...common(),

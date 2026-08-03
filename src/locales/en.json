@@ -10,7 +10,6 @@
   "tile.show": "Show",
   "hidden.title.one": "{{count}} hidden tile",
   "hidden.title.other": "{{count}} hidden tiles",
-  "editor.close": "Close",
   "layer.addImage": "Add image",
   "layer.addText": "Add text",
   "layer.addImageShared": "Add image to all",
@@ -51,9 +50,6 @@
   "busy.save": "Writing…",
   "busy.restore": "Restoring…",
   "image.pick": "Images",
-  "field.name": "Name",
-  "field.locked": "Locked",
-  "layer.locked": "Locked",
   "layer.up": "Move up",
   "layer.down": "Move down",
   "layer.swapImage": "Swap picture",
@@ -74,5 +70,12 @@
   "busy.snapshot": "Working on looks…",
   "busy.export": "Exporting…",
   "update.available": "Version {{version}} is out",
-  "update.open": "Open release page"
+  "update.open": "Open release page",
+  "tile.closeEditor": "Close editor",
+  "field.rename": "Rename layer",
+  "layer.lock": "Lock",
+  "layer.unlock": "Unlock",
+  "layer.resetTransform": "Reset size/rotation/opacity",
+  "layer.flipX": "Flip horizontal",
+  "layer.flipY": "Flip vertical"
 }

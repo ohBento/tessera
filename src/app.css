@@ -11,6 +11,13 @@ body {
   scrollbar-color: var(--line) transparent;
 }
 
+/* Range and checkbox inputs pick up the OS accent otherwise, which clashes
+   with the teal palette everywhere else. */
+input[type="range"],
+input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -314,6 +321,44 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: var(--r-chip);
   padding: 3px 6px;
+}
+
+.fields .row {
+  display: flex;
+  gap: var(--gap-1);
+}
+
+.name-row {
+  align-items: center;
+}
+
+.name-row label {
+  flex: 1;
+}
+
+.icon-toggle {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px;
+  color: var(--fg-dim);
+}
+
+.icon-toggle svg {
+  fill: currentColor;
+}
+
+.icon-toggle.on {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Flip buttons: same idiom as .icon-toggle.on, but plain text buttons. */
+.fields .row button.on {
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  border-color: var(--accent);
 }
 
 .placer {
