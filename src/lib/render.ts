@@ -63,7 +63,7 @@ function resolvePaint(
   if (!isGradient(paint)) return paint;
   let grad: CanvasGradient;
   if (paint.radial) {
-    grad = ctx.createRadialGradient(0, 0, 0, 0, 0, Math.max(bw, bh) / 2);
+    grad = ctx.createRadialGradient(0, 0, 0, 0, 0, (Math.max(bw, bh) / 2) * (paint.radius ?? 1));
   } else {
     const { x1, y1, x2, y2 } = gradientLine(paint.angle, bw, bh);
     grad = ctx.createLinearGradient(x1, y1, x2, y2);
@@ -114,7 +114,7 @@ function drawSilhouette(
   text: string,
   w: number,
   h: number,
-  color: string,
+  color: Paint,
 ) {
   if (layer.kind === "image" && img) {
     ctx.scale(layer.flipX ? -1 : 1, layer.flipY ? -1 : 1);
@@ -122,16 +122,17 @@ function drawSilhouette(
     const dh = (dw * img.height) / img.width;
     ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
     ctx.globalCompositeOperation = "source-in";
-    ctx.fillStyle = color;
+    ctx.fillStyle = resolvePaint(ctx, color, dw, dh);
     ctx.fillRect(-dw / 2, -dh / 2, dw, dh);
   } else if (layer.kind === "text") {
     ctx.font = `${layer.size * w}px "${layer.font}"`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillStyle = color;
+    const metrics = ctx.measureText(text);
+    ctx.fillStyle = resolvePaint(ctx, color, metrics.width, layer.size * w);
     ctx.fillText(text, 0, 0);
   } else if (layer.kind === "shape") {
-    ctx.fillStyle = color;
+    ctx.fillStyle = resolvePaint(ctx, color, layer.w * w, layer.h * h);
     ctx.fill(shapePath(layer, w, h));
   }
 }

@@ -12,6 +12,7 @@ export type Gradient = {
   to: string;
   angle: number; // degrees, 0 = left to right, ignored when radial
   radial?: boolean; // from the centre outwards instead of directional
+  radius?: number; // radial only: multiplier on the default reach, 1 = default
 };
 
 /** Anywhere a colour can be picked, a gradient is allowed instead. */
@@ -37,7 +38,7 @@ type Common = {
   /* Glow is a shadow with no offset but its own alpha, which Canvas2D's shadow
    * API cannot express — it is composited as a separate pass instead. */
   glow?: number; // blur radius as a fraction of tile width, 0 or absent = off
-  glowColor?: string;
+  glowColor?: Paint;
   glowOpacity?: number; // 0..1, independent of the layer's own opacity
 };
 

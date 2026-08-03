@@ -200,7 +200,7 @@ button:disabled {
 }
 
 .panel {
-  width: 300px;
+  width: 420px;
   display: flex;
   flex-direction: column;
   gap: var(--gap-2);
@@ -213,6 +213,16 @@ button:disabled {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--gap-2);
+}
+
+.panel .row-3 {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
+.row-label {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--fg-dim);
 }
 
 /* Fixed floor so a row that happens to wrap onto two lines doesn't stand out
@@ -236,7 +246,7 @@ button:disabled {
 .pill {
   display: inline-flex;
   align-items: center;
-  height: 22px;
+  height: 26px;
   gap: var(--gap-2);
   margin-top: var(--gap-2);
   padding: 0 4px 0 10px;
@@ -331,6 +341,26 @@ button:disabled {
   border-top: 1px solid var(--line-soft);
 }
 
+/* Groups related fields (Glow, Outline, Shadow...) so a slider labelled just
+   "Size" or "Color" reads unambiguously from the heading above it, instead of
+   every field needing its own "Glow size" / "Shadow color" full name. */
+.section-title {
+  margin: var(--gap-2) 0 0;
+  font-size: var(--step--1);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  border-top: 1px solid var(--line-soft);
+  padding-top: var(--gap-2);
+}
+
+.section-title:first-child {
+  margin-top: 0;
+  border-top: none;
+  padding-top: 0;
+}
+
 .fields label {
   display: grid;
   grid-template-columns: 84px 1fr;
@@ -378,7 +408,7 @@ button:disabled {
 .fields input,
 .fields select {
   min-width: 0;
-  height: 22px;
+  height: 26px;
   line-height: 1;
   font: inherit;
   color: var(--fg);
@@ -409,8 +439,8 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
   padding: 0;
   color: var(--fg-dim);
 }

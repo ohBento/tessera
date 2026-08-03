@@ -11,8 +11,8 @@
     newGradient,
     resetTransform,
     type Gradient,
+    type Paint,
     type ShapeKind,
-    type ShapeLayer,
     type TextLayer,
   } from "./lib/model";
   import { previewUrl } from "./lib/render";
@@ -105,19 +105,6 @@
     commit();
   }
 
-  function toggleColorGradient() {
-    if (!layer || layer.kind !== "text") return;
-    checkpointEdit();
-    layer.color = isGradient(layer.color) ? "#ffffff" : newGradient();
-    commit();
-  }
-
-  function toggleFillGradient() {
-    if (!layer || layer.kind !== "shape") return;
-    checkpointEdit();
-    layer.fill = isGradient(layer.fill) ? "#ffffff" : newGradient();
-    commit();
-  }
 
   function setGlow(value: number) {
     if (!layer) return;
@@ -192,6 +179,160 @@
   </svg>
 {/snippet}
 
+{#snippet sectionTitle(text: string)}
+  <h4 class="section-title">{text}</h4>
+{/snippet}
+
+{#snippet paintEditor(get: () => Paint, set: (v: Paint) => void, label: string)}
+  <div class="row name-row">
+    {#if isGradient(get())}
+      <label class="grow">{label}
+        <span class="slider">
+          <input
+            type="color"
+            value={(get() as Gradient).from}
+            oninput={(e) => { (get() as Gradient).from = e.currentTarget.value; }}
+            onchange={commit}
+          />
+          <input
+            type="color"
+            value={(get() as Gradient).to}
+            oninput={(e) => { (get() as Gradient).to = e.currentTarget.value; }}
+            onchange={commit}
+          />
+        </span>
+      </label>
+    {:else}
+      <label class="grow">{label}
+        <input type="color" value={get()} oninput={(e) => set(e.currentTarget.value)} onchange={commit} />
+      </label>
+    {/if}
+    <button
+      class="icon-toggle"
+      class:on={isGradient(get())}
+      onclick={() => { checkpointEdit(); set(isGradient(get()) ? "#ffffff" : newGradient()); commit(); }}
+      title={t("field.gradient")}
+    >
+      {@render gradientIcon()}
+    </button>
+  </div>
+  {#if isGradient(get())}
+    <label>{t("field.angle")}
+      <span class="slider">
+        <input
+          type="range"
+          min="0"
+          max="360"
+          step="1"
+          disabled={!!(get() as Gradient).radial}
+          value={(get() as Gradient).angle}
+          oninput={(e) => { (get() as Gradient).angle = +e.currentTarget.value; }}
+          onchange={commit}
+        />
+        <button
+          class="slider-reset"
+          onclick={() => { checkpointEdit(); (get() as Gradient).angle = 0; commit(); }}
+          title={t("field.resetOne")}
+        >{@render resetIcon()}</button>
+      </span>
+    </label>
+    <label>{t("field.radial")}
+      <input
+        type="checkbox"
+        checked={!!(get() as Gradient).radial}
+        onchange={(e) => { checkpointEdit(); (get() as Gradient).radial = e.currentTarget.checked; commit(); }}
+      />
+    </label>
+    {#if (get() as Gradient).radial}
+      <label>{t("field.radius")}
+        <span class="slider">
+          <input
+            type="range"
+            min="0.2"
+            max="3"
+            step="0.05"
+            value={(get() as Gradient).radius ?? 1}
+            oninput={(e) => { (get() as Gradient).radius = +e.currentTarget.value; }}
+            onchange={commit}
+          />
+          <button
+            class="slider-reset"
+            onclick={() => { checkpointEdit(); (get() as Gradient).radius = 1; commit(); }}
+            title={t("field.resetOne")}
+          >{@render resetIcon()}</button>
+        </span>
+      </label>
+    {/if}
+  {/if}
+{/snippet}
+
+{#snippet glowSection()}
+  {@render sectionTitle(t("section.glow"))}
+  <label>{t("field.size")}
+    <span class="slider">
+      <input
+        type="range"
+        min="0"
+        max="0.08"
+        step="0.002"
+        value={layer!.glow ?? 0}
+        oninput={(e) => setGlow(+e.currentTarget.value)}
+        onchange={commit}
+      />
+      <button class="slider-reset" onclick={resetGlow} title={t("field.resetOne")}>{@render resetIcon()}</button>
+    </span>
+  </label>
+  {#if layer!.glow}
+    {@render paintEditor(() => layer!.glowColor ?? "#ffffff", (v: Paint) => (layer!.glowColor = v), t("field.color"))}
+    <label>{t("field.opacity")}
+      <span class="slider">
+        <input
+          type="range"
+          min="0"
+          max="1"
+          step="0.01"
+          value={layer!.glowOpacity ?? 1}
+          oninput={(e) => (layer!.glowOpacity = +e.currentTarget.value)}
+          onchange={commit}
+        />
+        <button
+          class="slider-reset"
+          onclick={() => { checkpointEdit(); layer!.glowOpacity = 1; commit(); }}
+          title={t("field.resetOne")}
+        >{@render resetIcon()}</button>
+      </span>
+    </label>
+  {/if}
+{/snippet}
+
+{#snippet effectsSection()}
+  {@render sectionTitle(t("section.effects"))}
+  <label>{t("field.blend")}
+    <select bind:value={layer!.blend} onchange={commit}>
+      {#each BLENDS as b}<option value={b}>{b}</option>{/each}
+    </select>
+  </label>
+  <label>{t("field.filter")}
+    <input placeholder="blur(2px) contrast(1.2)" bind:value={layer!.filter} onchange={commit} />
+  </label>
+{/snippet}
+
+{#snippet transformSection()}
+  {@render sectionTitle(t("section.transform"))}
+  <label>{t("field.rotation")}
+    <span class="slider">
+      <input type="range" min="-180" max="180" step="1" bind:value={layer!.rotation} onchange={commit} />
+      <button class="slider-reset" onclick={() => resetField("rotation", 0)} title={t("field.resetOne")}>{@render resetIcon()}</button>
+    </span>
+  </label>
+  <label>{t("field.opacity")}
+    <span class="slider">
+      <input type="range" min="0" max="1" step="0.01" bind:value={layer!.opacity} onchange={commit} />
+      <button class="slider-reset" onclick={() => resetField("opacity", 1)} title={t("field.resetOne")}>{@render resetIcon()}</button>
+    </span>
+  </label>
+{/snippet}
+
 {#snippet gradientIcon()}
   <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
     <defs>
@@ -241,19 +382,17 @@
       <button onclick={() => pickImageLayer(true)}>{t("layer.addImageShared")}</button>
       <button onclick={() => addTextLayer(true)}>{t("layer.addTextShared")}</button>
     </div>
-    <div class="row">
-      <select onchange={(e) => { addShapeLayer(e.currentTarget.value as ShapeKind, false); e.currentTarget.value = ""; }}>
-        <option value="" disabled selected>{t("layer.addShape")}</option>
-        <option value="rect">{t("shape.rect")}</option>
-        <option value="ellipse">{t("shape.ellipse")}</option>
-        <option value="polygon">{t("shape.polygon")}</option>
-      </select>
-      <select onchange={(e) => { addShapeLayer(e.currentTarget.value as ShapeKind, true); e.currentTarget.value = ""; }}>
-        <option value="" disabled selected>{t("layer.addShapeShared")}</option>
-        <option value="rect">{t("shape.rect")}</option>
-        <option value="ellipse">{t("shape.ellipse")}</option>
-        <option value="polygon">{t("shape.polygon")}</option>
-      </select>
+    <p class="row-label">{t("layer.addShape")}</p>
+    <div class="row row-3">
+      <button onclick={() => addShapeLayer("rect", false)}>{t("shape.rect")}</button>
+      <button onclick={() => addShapeLayer("ellipse", false)}>{t("shape.ellipse")}</button>
+      <button onclick={() => addShapeLayer("polygon", false)}>{t("shape.polygon")}</button>
+    </div>
+    <p class="row-label">{t("layer.addShapeShared")}</p>
+    <div class="row row-3">
+      <button onclick={() => addShapeLayer("rect", true)}>{t("shape.rect")}</button>
+      <button onclick={() => addShapeLayer("ellipse", true)}>{t("shape.ellipse")}</button>
+      <button onclick={() => addShapeLayer("polygon", true)}>{t("shape.polygon")}</button>
     </div>
 
     <ul class="layers">
@@ -337,6 +476,7 @@
         {/if}
 
         {#if layer.kind === "text"}
+          {@render sectionTitle(t("section.content"))}
           <label>{t("field.text")}
             <input
               value={app.manifest.tiles[id]?.text[layer.id] ?? (layer as TextLayer).text}
@@ -350,80 +490,50 @@
               {#each app.fonts as font}<option value={font}>{font}</option>{/each}
             </select>
           </label>
+
+          {@render sectionTitle(t("section.transform"))}
           <label>{t("field.size")}
             <span class="slider">
               <input type="range" min="0.02" max="0.4" step="0.005" bind:value={layer.size} onchange={commit} />
               <button class="slider-reset" onclick={resetSize} title={t("field.resetOne")}>{@render resetIcon()}</button>
             </span>
           </label>
-          <div class="row name-row">
-            {#if isGradient(layer.color)}
-              <label class="grow">{t("field.color")}
-                <span class="slider">
-                  <input type="color" bind:value={(layer.color as Gradient).from} onchange={commit} />
-                  <input type="color" bind:value={(layer.color as Gradient).to} onchange={commit} />
-                </span>
-              </label>
-            {:else}
-              <label class="grow">{t("field.color")}<input type="color" bind:value={layer.color} onchange={commit} /></label>
-            {/if}
-            <button
-              class="icon-toggle"
-              class:on={isGradient(layer.color)}
-              onclick={toggleColorGradient}
-              title={t("field.gradient")}
-            >
-              {@render gradientIcon()}
-            </button>
-          </div>
-          {#if isGradient(layer.color)}
-            <label>{t("field.angle")}
-              <span class="slider">
-                <input
-                  type="range"
-                  min="0"
-                  max="360"
-                  step="1"
-                  disabled={!!(layer.color as Gradient).radial}
-                  bind:value={(layer.color as Gradient).angle}
-                  onchange={commit}
-                />
-                <button
-                  class="slider-reset"
-                  onclick={() => { checkpointEdit(); (layer.color as Gradient).angle = 0; commit(); }}
-                  title={t("field.resetOne")}
-                >{@render resetIcon()}</button>
-              </span>
-            </label>
-            <label>{t("field.radial")}
-              <input
-                type="checkbox"
-                checked={!!(layer.color as Gradient).radial}
-                onchange={(e) => { (layer.color as Gradient).radial = e.currentTarget.checked; commit(); }}
-              />
-            </label>
-          {/if}
-          <label>{t("field.strokeWidth")}
+          {@render transformSection()}
+
+          {@render sectionTitle(t("section.color"))}
+          {@render paintEditor(() => layer.color, (v: Paint) => (layer.color = v), t("field.color"))}
+
+          {@render sectionTitle(t("section.outline"))}
+          <label>{t("field.width")}
             <span class="slider">
               <input type="range" min="0" max="0.03" step="0.001" bind:value={layer.strokeWidth} onchange={commit} />
               <button class="slider-reset" onclick={() => resetField("strokeWidth", 0)} title={t("field.resetOne")}>{@render resetIcon()}</button>
             </span>
           </label>
-          <label>{t("field.strokeColor")}<input type="color" bind:value={layer.strokeColor} onchange={commit} /></label>
-          <label>{t("field.shadow")}
+          <label>{t("field.color")}<input type="color" bind:value={layer.strokeColor} onchange={commit} /></label>
+
+          {@render sectionTitle(t("section.shadow"))}
+          <label>{t("field.size")}
             <span class="slider">
               <input type="range" min="0" max="0.1" step="0.002" bind:value={layer.shadow} onchange={commit} />
               <button class="slider-reset" onclick={() => resetField("shadow", 0)} title={t("field.resetOne")}>{@render resetIcon()}</button>
             </span>
           </label>
-          <label>{t("field.shadowColor")}<input type="color" bind:value={layer.shadowColor} onchange={commit} /></label>
+          <label>{t("field.color")}<input type="color" bind:value={layer.shadowColor} onchange={commit} /></label>
+
+          {@render glowSection()}
+          {@render effectsSection()}
         {:else if layer.kind === "image"}
-          <label>{t("field.scale")}
+          {@render sectionTitle(t("section.transform"))}
+          <label>{t("field.size")}
             <span class="slider">
               <input type="range" min="0.02" max="2" step="0.01" bind:value={layer.scale} onchange={commit} />
               <button class="slider-reset" onclick={resetSize} title={t("field.resetOne")}>{@render resetIcon()}</button>
             </span>
           </label>
+          {@render transformSection()}
+
+          {@render sectionTitle(t("section.mask"))}
           <label>{t("field.mask")}
             <select
               value={layer.maskId ?? ""}
@@ -435,8 +545,12 @@
               {/each}
             </select>
           </label>
+
+          {@render glowSection()}
+          {@render effectsSection()}
         {:else if layer.kind === "shape"}
-          <label>{t("field.shapeType")}
+          {@render sectionTitle(t("section.shape"))}
+          <label>{t("field.type")}
             <select bind:value={layer.shape} onchange={commit}>
               <option value="rect">{t("shape.rect")}</option>
               <option value="ellipse">{t("shape.ellipse")}</option>
@@ -470,120 +584,24 @@
               </span>
             </label>
           {/if}
-          <div class="row name-row">
-            {#if isGradient(layer.fill)}
-              <label class="grow">{t("field.fill")}
-                <span class="slider">
-                  <input type="color" bind:value={(layer.fill as Gradient).from} onchange={commit} />
-                  <input type="color" bind:value={(layer.fill as Gradient).to} onchange={commit} />
-                </span>
-              </label>
-            {:else}
-              <label class="grow">{t("field.fill")}<input type="color" bind:value={layer.fill} onchange={commit} /></label>
-            {/if}
-            <button
-              class="icon-toggle"
-              class:on={isGradient(layer.fill)}
-              onclick={toggleFillGradient}
-              title={t("field.gradient")}
-            >
-              {@render gradientIcon()}
-            </button>
-          </div>
-          {#if isGradient(layer.fill)}
-            <label>{t("field.angle")}
-              <span class="slider">
-                <input
-                  type="range"
-                  min="0"
-                  max="360"
-                  step="1"
-                  disabled={!!(layer.fill as Gradient).radial}
-                  bind:value={(layer.fill as Gradient).angle}
-                  onchange={commit}
-                />
-                <button
-                  class="slider-reset"
-                  onclick={() => { checkpointEdit(); (layer.fill as Gradient).angle = 0; commit(); }}
-                  title={t("field.resetOne")}
-                >{@render resetIcon()}</button>
-              </span>
-            </label>
-            <label>{t("field.radial")}
-              <input
-                type="checkbox"
-                checked={!!(layer.fill as Gradient).radial}
-                onchange={(e) => { (layer.fill as Gradient).radial = e.currentTarget.checked; commit(); }}
-              />
-            </label>
-          {/if}
-          <label>{t("field.borderWidth")}
+
+          {@render transformSection()}
+
+          {@render sectionTitle(t("section.color"))}
+          {@render paintEditor(() => layer.fill, (v: Paint) => (layer.fill = v), t("field.color"))}
+
+          {@render sectionTitle(t("section.outline"))}
+          <label>{t("field.width")}
             <span class="slider">
               <input type="range" min="0" max="0.03" step="0.001" bind:value={layer.borderWidth} onchange={commit} />
               <button class="slider-reset" onclick={() => resetField("borderWidth", 0)} title={t("field.resetOne")}>{@render resetIcon()}</button>
             </span>
           </label>
-          <label>{t("field.borderColor")}<input type="color" bind:value={layer.borderColor} onchange={commit} /></label>
-        {/if}
+          <label>{t("field.color")}<input type="color" bind:value={layer.borderColor} onchange={commit} /></label>
 
-        <label>{t("field.glow")}
-          <span class="slider">
-            <input
-              type="range"
-              min="0"
-              max="0.08"
-              step="0.002"
-              value={layer.glow ?? 0}
-              oninput={(e) => setGlow(+e.currentTarget.value)}
-              onchange={commit}
-            />
-            <button class="slider-reset" onclick={resetGlow} title={t("field.resetOne")}>{@render resetIcon()}</button>
-          </span>
-        </label>
-        {#if layer.glow}
-          <label>{t("field.glowColor")}
-            <input type="color" value={layer.glowColor ?? "#ffffff"} oninput={(e) => (layer.glowColor = e.currentTarget.value)} onchange={commit} />
-          </label>
-          <label>{t("field.glowOpacity")}
-            <span class="slider">
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-                value={layer.glowOpacity ?? 1}
-                oninput={(e) => (layer.glowOpacity = +e.currentTarget.value)}
-                onchange={commit}
-              />
-              <button
-                class="slider-reset"
-                onclick={() => { checkpointEdit(); layer.glowOpacity = 1; commit(); }}
-                title={t("field.resetOne")}
-              >{@render resetIcon()}</button>
-            </span>
-          </label>
+          {@render glowSection()}
+          {@render effectsSection()}
         {/if}
-
-        <label>{t("field.rotation")}
-          <span class="slider">
-            <input type="range" min="-180" max="180" step="1" bind:value={layer.rotation} onchange={commit} />
-            <button class="slider-reset" onclick={() => resetField("rotation", 0)} title={t("field.resetOne")}>{@render resetIcon()}</button>
-          </span>
-        </label>
-        <label>{t("field.opacity")}
-          <span class="slider">
-            <input type="range" min="0" max="1" step="0.01" bind:value={layer.opacity} onchange={commit} />
-            <button class="slider-reset" onclick={() => resetField("opacity", 1)} title={t("field.resetOne")}>{@render resetIcon()}</button>
-          </span>
-        </label>
-        <label>{t("field.blend")}
-          <select bind:value={layer.blend} onchange={commit}>
-            {#each BLENDS as b}<option value={b}>{b}</option>{/each}
-          </select>
-        </label>
-        <label>{t("field.filter")}
-          <input placeholder="blur(2px) contrast(1.2)" bind:value={layer.filter} onchange={commit} />
-        </label>
 
       </div>
     {/if}
