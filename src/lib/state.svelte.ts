@@ -6,11 +6,13 @@ import {
   emptyManifest,
   emptyTile,
   newImageLayer,
+  newShapeLayer,
   newTextLayer,
   type Crop,
   type Effective,
   type Layer,
   type Manifest,
+  type ShapeKind,
 } from "./model";
 import { join } from "@tauri-apps/api/path";
 import {
@@ -256,6 +258,26 @@ export async function addTextLayer(shared: boolean) {
   else tileOf(app.editing).layers.push(layer);
   app.selectedLayer = layer.id;
   await commit(shared ? undefined : [app.editing]);
+}
+
+export async function addShapeLayer(shape: ShapeKind, shared: boolean) {
+  checkpoint();
+  const layer = newShapeLayer(shape);
+  if (shared) app.manifest.shared.push(layer);
+  else tileOf(app.editing).layers.push(layer);
+  app.selectedLayer = layer.id;
+  await commit(shared ? undefined : [app.editing]);
+}
+
+/** Deleting a shape that some image is masked to just leaves that reference
+ *  dangling — resolveLayers already treats an unresolvable maskId as "no
+ *  mask", so nothing else needs to change here. */
+export async function setMask(tileId: string, layerId: string, maskId: string) {
+  const layer = editable(tileId, layerId);
+  if (!layer || layer.kind !== "image") return;
+  checkpointEdit();
+  layer.maskId = maskId || undefined;
+  await afterEdit(tileId, layerId);
 }
 
 /** Finds the object to edit: the detached copy on this tile if there is one,

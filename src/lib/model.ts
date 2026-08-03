@@ -48,6 +48,24 @@ export type ImageLayer = Common & {
   /* Optional so manifests saved before flipping existed still load unchanged. */
   flipX?: boolean;
   flipY?: boolean;
+  /* A shape layer's id to clip this image to. A dangling id (the shape got
+   * deleted) simply fails to resolve at render time and the image draws
+   * unclipped — no cleanup pass needed on delete. */
+  maskId?: string;
+};
+
+export type ShapeKind = "rect" | "ellipse" | "polygon";
+
+export type ShapeLayer = Common & {
+  kind: "shape";
+  shape: ShapeKind;
+  w: number; // fraction of tile width
+  h: number; // fraction of tile height
+  cornerRadius: number; // 0..0.5 of min(w,h); rect only
+  sides: number; // polygon only; rotation reuses the common field
+  fill: Paint;
+  borderColor: string;
+  borderWidth: number; // fraction of tile width, 0 = no border
 };
 
 export type TextLayer = Common & {
@@ -62,7 +80,7 @@ export type TextLayer = Common & {
   shadowColor: string;
 };
 
-export type Layer = ImageLayer | TextLayer;
+export type Layer = ImageLayer | TextLayer | ShapeLayer;
 
 export type Tile = {
   base: Base;
@@ -112,6 +130,7 @@ const common = (id = newId()): Common => ({
 
 export const DEFAULT_IMAGE_SCALE = 0.3;
 export const DEFAULT_TEXT_SIZE = 0.08;
+export const DEFAULT_SHAPE_SIZE = 0.3;
 
 export const newImageLayer = (asset: string): ImageLayer => ({
   ...common(),
@@ -120,6 +139,19 @@ export const newImageLayer = (asset: string): ImageLayer => ({
   scale: DEFAULT_IMAGE_SCALE,
   flipX: false,
   flipY: false,
+});
+
+export const newShapeLayer = (shape: ShapeKind): ShapeLayer => ({
+  ...common(),
+  kind: "shape",
+  shape,
+  w: DEFAULT_SHAPE_SIZE,
+  h: DEFAULT_SHAPE_SIZE,
+  cornerRadius: 0,
+  sides: 6,
+  fill: "#ffffff",
+  borderColor: "#000000",
+  borderWidth: 0,
 });
 
 /** Resets size, rotation and opacity to their defaults but keeps position and
@@ -131,6 +163,9 @@ export function resetTransform(layer: Layer) {
     layer.scale = DEFAULT_IMAGE_SCALE;
     layer.flipX = false;
     layer.flipY = false;
+  } else if (layer.kind === "shape") {
+    layer.w = DEFAULT_SHAPE_SIZE;
+    layer.h = DEFAULT_SHAPE_SIZE;
   } else {
     layer.size = DEFAULT_TEXT_SIZE;
   }
@@ -150,8 +185,12 @@ export const newTextLayer = (): TextLayer => ({
   y: 0.9,
 });
 
-export const layerLabel = (l: Layer) =>
-  l.name || (l.kind === "text" ? l.text : l.asset.replace(/\.[^.]+$/, "").slice(0, 8));
+export const layerLabel = (l: Layer) => {
+  if (l.name) return l.name;
+  if (l.kind === "text") return l.text;
+  if (l.kind === "shape") return l.shape;
+  return l.asset.replace(/\.[^.]+$/, "").slice(0, 8);
+};
 
 /** Shared layers first, in their own order, each replaced by a detached copy
  *  where the tile has one. Tile-only layers follow on top. */

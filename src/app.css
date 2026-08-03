@@ -218,6 +218,7 @@ button:disabled {
 /* Fixed floor so a row that happens to wrap onto two lines doesn't stand out
    next to every single-line row above and below it. */
 .panel .row button,
+.panel .row > select,
 .panel .row > label {
   min-height: 34px;
 }

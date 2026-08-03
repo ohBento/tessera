@@ -85,5 +85,20 @@
   "field.radial": "Radial",
   "field.glow": "Glühen",
   "field.glowColor": "Glühfarbe",
-  "field.glowOpacity": "Glühstärke"
+  "field.glowOpacity": "Glühstärke",
+  "layer.addShape": "Form hinzufügen",
+  "layer.addShapeShared": "Form auf alle",
+  "shape.rect": "Rechteck",
+  "shape.ellipse": "Kreis",
+  "shape.polygon": "Vieleck",
+  "field.mask": "Maske",
+  "field.maskNone": "Keine",
+  "field.shapeType": "Form",
+  "field.width": "Breite",
+  "field.height": "Höhe",
+  "field.cornerRadius": "Eckenradius",
+  "field.sides": "Ecken",
+  "field.fill": "Füllung",
+  "field.borderWidth": "Rahmen",
+  "field.borderColor": "Rahmenfarbe"
 }

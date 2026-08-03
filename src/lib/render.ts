@@ -1,5 +1,5 @@
 import { encodeBmp32, TILE_H, TILE_W } from "./bmp";
-import { isGradient, layerText, type Crop, type Effective, type Layer, type Paint } from "./model";
+import { isGradient, layerText, type Crop, type Effective, type Layer, type Paint, type ShapeLayer } from "./model";
 import { loadAsset } from "./project";
 
 export const COLS = 7;
@@ -73,6 +73,36 @@ function resolvePaint(
   return grad;
 }
 
+/** Regular n-gon vertices inscribed in a w x h box, first point straight up.
+ *  Pure and separate from Path2D construction so it is testable without a
+ *  canvas — Path2D does not exist outside a browser. */
+export function polygonPoints(sides: number, w: number, h: number) {
+  const n = Math.max(3, Math.round(sides));
+  return Array.from({ length: n }, (_, i) => {
+    const a = -Math.PI / 2 + (i * 2 * Math.PI) / n;
+    return { x: (Math.cos(a) * w) / 2, y: (Math.sin(a) * h) / 2 };
+  });
+}
+
+/** Path centred on the current transform origin, in tile pixels. */
+function shapePath(layer: ShapeLayer, tileW: number, tileH: number): Path2D {
+  const w = layer.w * tileW;
+  const h = layer.h * tileH;
+  const path = new Path2D();
+  if (layer.shape === "rect") {
+    const r = Math.min(w, h) * Math.min(Math.max(layer.cornerRadius, 0), 0.5);
+    path.roundRect(-w / 2, -h / 2, w, h, r);
+  } else if (layer.shape === "ellipse") {
+    path.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2);
+  } else {
+    const [first, ...rest] = polygonPoints(layer.sides, w, h);
+    path.moveTo(first.x, first.y);
+    for (const p of rest) path.lineTo(p.x, p.y);
+    path.closePath();
+  }
+  return path;
+}
+
 /** Draws the layer's silhouette in a single flat colour, alpha preserved —
  *  used to build the glow halo. For images, the drawn picture is recoloured
  *  via "source-in" since an image's own colours are not what a glow should be
@@ -83,6 +113,7 @@ function drawSilhouette(
   img: ImageBitmap | null,
   text: string,
   w: number,
+  h: number,
   color: string,
 ) {
   if (layer.kind === "image" && img) {
@@ -99,6 +130,9 @@ function drawSilhouette(
     ctx.textBaseline = "middle";
     ctx.fillStyle = color;
     ctx.fillText(text, 0, 0);
+  } else if (layer.kind === "shape") {
+    ctx.fillStyle = color;
+    ctx.fill(shapePath(layer, w, h));
   }
 }
 
@@ -118,7 +152,7 @@ function paintGlow(
   const shape = new OffscreenCanvas(w, h);
   const sctx = shape.getContext("2d")!;
   sctx.setTransform(main.getTransform());
-  drawSilhouette(sctx, layer, img, text, w, layer.glowColor || "#ffffff");
+  drawSilhouette(sctx, layer, img, text, w, h, layer.glowColor || "#ffffff");
 
   const blurred = new OffscreenCanvas(w, h);
   const bctx = blurred.getContext("2d")!;
@@ -143,8 +177,21 @@ async function paintLayer(
 ) {
   const img = layer.kind === "image" ? await loadAsset(dir, layer.asset) : null;
   const text = layer.kind === "text" ? layerText(eff.text, layer, tileId) : "";
+  const mask =
+    layer.kind === "image" && layer.maskId
+      ? (eff.layers.find((l) => l.id === layer.maskId && l.kind === "shape") as ShapeLayer | undefined)
+      : undefined;
 
   ctx.save();
+  if (mask) {
+    // Clip in the mask's own frame, then reset the transform: clip() is
+    // recorded in device space once applied, so it survives the reset while
+    // the image below still gets its own independent position and rotation.
+    ctx.translate(mask.x * w, mask.y * h);
+    ctx.rotate((mask.rotation * Math.PI) / 180);
+    ctx.clip(shapePath(mask, w, h));
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
   ctx.translate(layer.x * w, layer.y * h);
   ctx.rotate((layer.rotation * Math.PI) / 180);
 
@@ -176,6 +223,15 @@ async function paintLayer(
     const metrics = ctx.measureText(text);
     ctx.fillStyle = resolvePaint(ctx, layer.color, metrics.width, layer.size * w);
     ctx.fillText(text, 0, 0);
+  } else if (layer.kind === "shape") {
+    const path = shapePath(layer, w, h);
+    ctx.fillStyle = resolvePaint(ctx, layer.fill, layer.w * w, layer.h * h);
+    ctx.fill(path);
+    if (layer.borderWidth > 0) {
+      ctx.lineWidth = layer.borderWidth * w;
+      ctx.strokeStyle = layer.borderColor;
+      ctx.stroke(path);
+    }
   }
   ctx.restore();
 }

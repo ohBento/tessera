@@ -85,5 +85,20 @@
   "field.radial": "Radial",
   "field.glow": "Glow",
   "field.glowColor": "Glow colour",
-  "field.glowOpacity": "Glow strength"
+  "field.glowOpacity": "Glow strength",
+  "layer.addShape": "Add shape",
+  "layer.addShapeShared": "Add shape to all",
+  "shape.rect": "Rectangle",
+  "shape.ellipse": "Circle",
+  "shape.polygon": "Polygon",
+  "field.mask": "Mask",
+  "field.maskNone": "None",
+  "field.shapeType": "Shape",
+  "field.width": "Width",
+  "field.height": "Height",
+  "field.cornerRadius": "Corner radius",
+  "field.sides": "Sides",
+  "field.fill": "Fill",
+  "field.borderWidth": "Border",
+  "field.borderColor": "Border colour"
 }

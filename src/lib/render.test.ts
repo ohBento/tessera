@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { COLS, coverCrop, defaultMosaicRect, gradientLine, mosaicCrops, splitRect } from "./render";
+import { COLS, coverCrop, defaultMosaicRect, gradientLine, mosaicCrops, polygonPoints, splitRect } from "./render";
 import { TILE_H, TILE_W } from "./bmp";
 import { isGradient } from "./model";
 
@@ -100,5 +100,37 @@ describe("isGradient", () => {
   it("tells a plain colour from a gradient object", () => {
     expect(isGradient("#ffffff")).toBe(false);
     expect(isGradient({ from: "#fff", to: "#000", angle: 0 })).toBe(true);
+  });
+});
+
+describe("polygonPoints", () => {
+  it("starts pointing straight up", () => {
+    const pts = polygonPoints(6, 100, 100);
+    expect(pts[0].x).toBeCloseTo(0);
+    expect(pts[0].y).toBeCloseTo(-50);
+  });
+
+  it("is centred on the origin for any point count", () => {
+    for (const sides of [3, 5, 6, 8, 12]) {
+      const pts = polygonPoints(sides, 80, 50);
+      const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
+      const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
+      expect(cx).toBeCloseTo(0);
+      expect(cy).toBeCloseTo(0);
+    }
+  });
+
+  it("clamps below 3 sides and rounds fractional counts", () => {
+    expect(polygonPoints(2, 10, 10)).toHaveLength(3);
+    expect(polygonPoints(5.6, 10, 10)).toHaveLength(6);
+  });
+
+  it("uses independent width and height radii, not a single circle", () => {
+    // A very wide, short box: the left/right points should be far out,
+    // the top/bottom points should be close in — never a perfect circle.
+    const pts = polygonPoints(4, 200, 20);
+    const xs = pts.map((p) => Math.abs(p.x));
+    const ys = pts.map((p) => Math.abs(p.y));
+    expect(Math.max(...xs)).toBeGreaterThan(Math.max(...ys) * 5);
   });
 });

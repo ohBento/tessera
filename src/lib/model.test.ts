@@ -1,14 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_IMAGE_SCALE,
+  DEFAULT_SHAPE_SIZE,
   DEFAULT_TEXT_SIZE,
   effectiveTile,
   emptyManifest,
   emptyTile,
   isDetached,
+  layerLabel,
   layerText,
   migrate,
   newImageLayer,
+  newShapeLayer,
   newTextLayer,
   resetTransform,
   resolveLayers,
@@ -121,5 +124,37 @@ describe("resetTransform", () => {
     layer.size = 0.3;
     resetTransform(layer);
     expect(layer.size).toBe(DEFAULT_TEXT_SIZE);
+  });
+
+  it("resets a shape's width and height, not just one dimension", () => {
+    const layer = newShapeLayer("rect");
+    layer.w = 0.9;
+    layer.h = 0.1;
+    resetTransform(layer);
+    expect(layer.w).toBe(DEFAULT_SHAPE_SIZE);
+    expect(layer.h).toBe(DEFAULT_SHAPE_SIZE);
+  });
+});
+
+describe("newShapeLayer", () => {
+  it("defaults to a square, uncoloured border and solid white fill", () => {
+    const layer = newShapeLayer("polygon");
+    expect(layer.shape).toBe("polygon");
+    expect(layer.w).toBe(layer.h);
+    expect(layer.cornerRadius).toBe(0);
+    expect(layer.sides).toBe(6);
+    expect(layer.borderWidth).toBe(0);
+  });
+});
+
+describe("layerLabel for shapes", () => {
+  it("falls back to the shape kind when unnamed", () => {
+    expect(layerLabel(newShapeLayer("ellipse"))).toBe("ellipse");
+  });
+
+  it("prefers an explicit name", () => {
+    const layer = newShapeLayer("rect");
+    layer.name = "Frame";
+    expect(layerLabel(layer)).toBe("Frame");
   });
 });
