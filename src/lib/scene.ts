@@ -8,7 +8,7 @@
 import * as fabric from "fabric";
 
 import { TILE_H, TILE_W } from "./bmp";
-import { resolveLayers, type Layer, type Manifest } from "./model";
+import { resolveLayers, type Base, type Layer, type Manifest } from "./model";
 import { COLS } from "./geometry";
 
 export const rowsFor = (count: number) => Math.ceil(count / COLS);
@@ -74,6 +74,48 @@ async function imageObject(
   return img;
 }
 
+/** What fills the tile before any layer: the picture set for it if there is
+ *  one, otherwise the untouched original. A shape or caption with nothing under
+ *  it would otherwise float over the canvas background instead of the face.
+ *
+ *  The `base` path is also how a project migrated from v2 keeps its mosaic:
+ *  that version baked the placement into each tile's crop, and those crops are
+ *  carried over verbatim. */
+async function background(
+  base: Base,
+  tileId: string,
+  deps: SceneDeps,
+  at: { x: number; y: number },
+): Promise<fabric.Object> {
+  const common = {
+    left: at.x,
+    top: at.y,
+    originX: "left" as const,
+    originY: "top" as const,
+    selectable: false,
+    evented: false,
+  };
+  if (base) {
+    const img = await fabric.FabricImage.fromURL(await deps.asset(base.asset));
+    img.set({
+      ...common,
+      cropX: base.crop.x,
+      cropY: base.crop.y,
+      width: base.crop.w,
+      height: base.crop.h,
+      scaleX: TILE_W / base.crop.w,
+      scaleY: TILE_H / base.crop.h,
+    });
+    return img;
+  }
+  const bmp = toCanvas(await deps.original(tileId));
+  return new fabric.FabricImage(bmp, {
+    ...common,
+    scaleX: TILE_W / bmp.width,
+    scaleY: TILE_H / bmp.height,
+  });
+}
+
 /** Only corner handles: the model carries one `scale` per image layer, so a
  *  side handle would offer a non-uniform stretch it cannot store. */
 function makeInteractive(obj: fabric.Object, locked: boolean) {
@@ -99,20 +141,7 @@ export async function buildGrid(
 
   for (const [index, id] of ids.entries()) {
     const at = cellAt(index);
-
-    const bmp = toCanvas(await deps.original(id));
-    canvas.add(
-      new fabric.FabricImage(bmp, {
-        left: at.x,
-        top: at.y,
-        originX: "left",
-        originY: "top",
-        scaleX: TILE_W / bmp.width,
-        scaleY: TILE_H / bmp.height,
-        selectable: false,
-        evented: false,
-      }),
-    );
+    canvas.add(await background(m.tiles[id]?.base ?? null, id, deps, at));
 
     for (const l of resolveLayers(m, id)) {
       if (l.hidden || l.kind !== "image" || l.space === "grid") continue;
@@ -124,10 +153,16 @@ export async function buildGrid(
     }
   }
 
-  /* Grid-space layers are project scope by nature and are placed once, on top
-   * of every tile — drawing them per tile would paint the same pixels COLS*rows
-   * times over. */
-  for (const l of m.shared) {
+  /* Grid-space layers span the whole wall, so they are placed once on top of
+   * everything — drawing them per tile would paint the same pixels COLS*rows
+   * times over.
+   *
+   * ponytail: an overlay's tile set does not restrict its grid-space layers;
+   * they always cover the full wall. Restricting one would mean clipping it to
+   * the union of the assigned cells. Nothing asks for that yet, and the editor
+   * only ever puts grid-space layers in the "all" overlay, so the two agree in
+   * practice. Add the clip when a subset overlay needs one. */
+  for (const l of m.overlays.flatMap((o) => o.layers)) {
     if (l.hidden || l.kind !== "image" || l.space !== "grid") continue;
     const obj = await imageObject(l, deps, { w: grid.w, h: grid.h, x: 0, y: 0 });
     if (interactive) makeInteractive(obj, !!l.locked);

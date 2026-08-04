@@ -9,7 +9,7 @@
     addGridImage,
     app,
     deleteLayer,
-    layers,
+    layerRows,
     moveLayer,
     pickFolder,
     saveToGame,
@@ -19,7 +19,7 @@
   import { layerLabel } from "./lib/model";
 
   // Topmost first, matching what the canvas draws last.
-  const listed = $derived([...layers()].reverse());
+  const listed = $derived([...layerRows()].reverse());
 </script>
 
 <main>
@@ -47,7 +47,7 @@
         <p class="empty">Keine Ebenen.</p>
       {/if}
       <ul>
-        {#each listed as layer (layer.id)}
+        {#each listed as { overlay, layer } (layer.id)}
           <li class:selected={app.selected === layer.id}>
             <button
               class="eye"
@@ -56,8 +56,14 @@
             >
               {layer.hidden ? "○" : "●"}
             </button>
-            <button class="name" class:dimmed={layer.hidden} onclick={() => selectLayer(layer.id)}>
+            <button
+              class="name"
+              class:dimmed={layer.hidden}
+              title="{layerLabel(layer)} — {overlay.name}"
+              onclick={() => selectLayer(layer.id)}
+            >
               {layerLabel(layer)}
+              <span class="overlay">{overlay.name}</span>
             </button>
             <button title="Nach oben" onclick={() => moveLayer(layer.id, true)}>↑</button>
             <button title="Nach unten" onclick={() => moveLayer(layer.id, false)}>↓</button>
@@ -159,6 +165,13 @@
   }
   .dimmed {
     color: #6c777e;
+  }
+  .overlay {
+    display: block;
+    overflow: hidden;
+    color: #6c777e;
+    font-size: 11px;
+    text-overflow: ellipsis;
   }
   .eye {
     border-color: transparent;

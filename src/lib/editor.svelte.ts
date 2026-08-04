@@ -1,10 +1,18 @@
-/* M1 state: the smallest thing that can open a folder, hold a manifest and
- * write it back. state.svelte.ts still drives the old UI and is rewritten in
- * M2 — this exists so the new canvas is not built on top of it in the meantime. */
+/* Editor state: opens a folder, holds a manifest, writes it back. */
 import { open as pickFile } from "@tauri-apps/plugin-dialog";
 
 import { saveTiles } from "./export";
-import { emptyManifest, findLayer, newImageLayer, removeLayerFrom, type Layer, type Manifest } from "./model";
+import {
+  emptyManifest,
+  findLayer,
+  newImageLayer,
+  newOverlay,
+  overlayOf,
+  removeLayerFrom,
+  type Layer,
+  type Manifest,
+  type Overlay,
+} from "./model";
 import { defaultDir, importAsset, listTiles, loadManifest, saveManifest, tauriDeps } from "./project";
 import type { SceneDeps, Tagged } from "./scene";
 
@@ -24,16 +32,31 @@ export const app = $state({
   selected: "",
 });
 
-/* M1 only creates project-scope layers, so the list is manifest.shared. M2
- * generalises this to named overlays and the list follows it there. */
-export const layers = () => app.manifest.shared;
+/** Every overlay layer paired with the overlay it came from — what the layer
+ *  list renders. Tile-local layers are not in here; nothing creates them yet. */
+export const layerRows = () =>
+  app.manifest.overlays.flatMap((o) => o.layers.map((layer) => ({ overlay: o, layer })));
+
+/** The project-wide overlay, created on first use. A grid-space layer covers
+ *  the whole wall, so it only belongs somewhere that covers the whole wall. */
+function allTiles(): Overlay {
+  const existing = app.manifest.overlays.find((o) => o.tiles === "all");
+  if (existing) return existing;
+  app.manifest.overlays.push(newOverlay("Alle Kacheln"));
+  // Read it back out rather than using the value pushed: Svelte hands back a
+  // proxy, and mutating the raw object would not be reactive.
+  return app.manifest.overlays[app.manifest.overlays.length - 1];
+}
+
+/** The array a layer lives in, whichever overlay owns it. */
+const listOf = (id: string) => overlayOf(app.manifest, id)?.layers;
 
 export function selectLayer(id: string) {
   if (app.selected !== id) app.selected = id;
 }
 
 export async function toggleLayerHidden(id: string) {
-  const l = findLayer(layers(), id);
+  const l = findLayer(listOf(id) ?? [], id);
   if (!l) return;
   l.hidden = !l.hidden;
   app.version++;
@@ -41,16 +64,19 @@ export async function toggleLayerHidden(id: string) {
 }
 
 export async function deleteLayer(id: string) {
-  removeLayerFrom(layers(), id);
+  removeLayerFrom(listOf(id), id);
   if (app.selected === id) app.selected = "";
   app.version++;
   await persist();
 }
 
 /** `up` means visually on top, which is the end of the draw order — the list is
- *  shown topmost-first, so the two run in opposite directions. */
+ *  shown topmost-first, so the two run in opposite directions. Movement stays
+ *  inside the layer's own overlay; moving between overlays is reassignment, not
+ *  reordering, and gets its own action. */
 export async function moveLayer(id: string, up: boolean) {
-  const list = layers();
+  const list = listOf(id);
+  if (!list) return;
   const at = list.findIndex((l) => l.id === id);
   const to = at + (up ? 1 : -1);
   if (at < 0 || to < 0 || to >= list.length) return;
@@ -117,7 +143,7 @@ export async function addGridImage() {
     const layer = newImageLayer(await importAsset(app.dir, path));
     layer.space = "grid";
     layer.scale = 1;
-    app.manifest.shared.push(layer);
+    allTiles().layers.push(layer);
     app.version++;
     await persist();
   });
@@ -127,7 +153,7 @@ export async function addGridImage() {
  *  not bump `version`: the canvas already shows this, and rebuilding would
  *  fight the interaction that produced it. */
 export async function applyTransform(obj: Tagged, patch: Pick<Layer, "x" | "y" | "rotation"> & { scale: number }) {
-  const list = obj.space === "grid" ? app.manifest.shared : app.manifest.tiles[obj.tileId]?.layers ?? [];
+  const list = listOf(obj.layerId) ?? app.manifest.tiles[obj.tileId]?.layers ?? [];
   const layer = findLayer(list, obj.layerId);
   if (!layer) return;
   layer.x = patch.x;

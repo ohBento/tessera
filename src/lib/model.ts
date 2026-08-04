@@ -186,29 +186,48 @@ export type Tile = {
   text: Record<string, string>;
 };
 
-/** Where the grid was laid over the source image. Kept so the placement stays
- *  editable instead of being computed once and lost. */
-export type Mosaic = { asset: string; rect: Crop } | null;
+/** A named stack of layers and the tiles it is painted on.
+ *
+ *  This is the whole point of v3. v2 had exactly two possibilities — one shared
+ *  stack on every tile, or a detached copy on one — so "give these five tiles
+ *  the same caption and keep editing it as one thing" could not be expressed at
+ *  all. An overlay is that missing middle, and "shared" turns out to be just an
+ *  overlay whose tile set is everything. */
+export type Overlay = {
+  id: string;
+  name: string;
+  /** Tile ids this is painted on. "all" follows the folder rather than pinning
+   *  a list, so a new character picks it up instead of being silently skipped. */
+  tiles: string[] | "all";
+  layers: Layer[];
+};
+
+export const appliesTo = (o: Overlay, tileId: string) =>
+  o.tiles === "all" || o.tiles.includes(tileId);
 
 export type Manifest = {
-  version: 2;
+  version: 3;
   order: string[];
   hidden: string[];
-  /** Project-scope layers: they exist once and appear on every tile. */
-  shared: Layer[];
+  overlays: Overlay[];
   tiles: Record<string, Tile>;
-  mosaic?: Mosaic;
 };
 
 export const emptyTile = (): Tile => ({ base: null, layers: [], text: {} });
 
 export const emptyManifest = (): Manifest => ({
-  version: 2,
+  version: 3,
   order: [],
   hidden: [],
-  shared: [],
+  overlays: [],
   tiles: {},
-  mosaic: null,
+});
+
+export const newOverlay = (name: string, tiles: string[] | "all" = "all"): Overlay => ({
+  id: newId(),
+  name,
+  tiles,
+  layers: [],
 });
 
 export const newId = () => Math.random().toString(36).slice(2, 10);
@@ -300,16 +319,22 @@ export const layerLabel = (l: Layer) => {
   return l.asset.replace(/\.[^.]+$/, "").slice(0, 8);
 };
 
-/** Shared layers first, in their own order, each replaced by a detached copy
- *  where the tile has one. Tile-only layers follow on top. */
+/** Every overlay that covers this tile, in overlay order then layer order, each
+ *  layer replaced by the tile's detached copy where one exists. Tile-only layers
+ *  follow on top. */
 export function resolveLayers(m: Manifest, id: string): Layer[] {
   const tile = m.tiles[id] ?? emptyTile();
   const local = new Map(tile.layers.map((l) => [l.id, l]));
-  const sharedIds = new Set(m.shared.map((s) => s.id));
-  return [
-    ...m.shared.map((s) => local.get(s.id) ?? s),
-    ...tile.layers.filter((l) => !sharedIds.has(l.id)),
-  ];
+  const inherited: Layer[] = [];
+  const fromOverlay = new Set<string>();
+  for (const o of m.overlays) {
+    if (!appliesTo(o, id)) continue;
+    for (const l of o.layers) {
+      fromOverlay.add(l.id);
+      inherited.push(local.get(l.id) ?? l);
+    }
+  }
+  return [...inherited, ...tile.layers.filter((l) => !fromOverlay.has(l.id))];
 }
 
 /** Exactly what a tile renders to, shared layers folded in. Comparing this
@@ -324,20 +349,53 @@ export const effectiveTile = (m: Manifest, id: string) => ({
 export type Effective = ReturnType<typeof effectiveTile>;
 
 export const isDetached = (m: Manifest, id: string, layerId: string) =>
-  m.shared.some((s) => s.id === layerId) && (m.tiles[id]?.layers.some((l) => l.id === layerId) ?? false);
+  m.overlays.some((o) => appliesTo(o, id) && o.layers.some((l) => l.id === layerId)) &&
+  (m.tiles[id]?.layers.some((l) => l.id === layerId) ?? false);
+
+/** The overlay a layer belongs to, if it is not tile-local. Searches nested
+ *  layers too, so a layer inside a group still resolves to its overlay. */
+export const overlayOf = (m: Manifest, layerId: string) =>
+  m.overlays.find((o) => !!findLayer(o.layers, layerId));
 
 export const layerText = (texts: Record<string, string>, layer: TextLayer, tileId: string) =>
   (texts[layer.id] ?? layer.text).replaceAll("{{id}}", tileId);
 
-/** v1 stored a bare {asset, crop} per tile and knew nothing about layers. */
-export function migrate(raw: unknown): Manifest {
-  const m = raw as Record<string, unknown>;
-  if (!m || typeof m !== "object") return emptyManifest();
-  if (m.version === 2) return { ...emptyManifest(), ...(m as object) } as Manifest;
+type Raw = Record<string, unknown>;
 
+/** v1 stored a bare {asset, crop} per tile and knew nothing about layers. */
+function v1ToV2(m: Raw): Raw {
   const tiles: Record<string, Tile> = {};
   for (const [id, base] of Object.entries((m.tiles ?? {}) as Record<string, Base>)) {
     tiles[id] = { ...emptyTile(), base: base ?? null };
   }
-  return { ...emptyManifest(), order: (m.order as string[]) ?? [], tiles };
+  return { version: 2, order: (m.order as string[]) ?? [], hidden: [], shared: [], tiles };
+}
+
+/** v2 had one project-wide `shared` stack, which is exactly an overlay covering
+ *  everything.
+ *
+ *  Its `mosaic` field is dropped rather than converted. The picture still shows:
+ *  v2 baked the placement into each tile's `base` crop and those are kept
+ *  verbatim, so a migrated project renders identically. What is lost is the
+ *  ability to pick that placement back up and move it — which v3 does not
+ *  restore in the old shape anyway, because a mosaic there is an ordinary image
+ *  layer in grid space. Reconstructing one would need the source image's pixel
+ *  dimensions, and migration must not touch the filesystem. */
+function v2ToV3(m: Raw): Raw {
+  const shared = (m.shared ?? []) as Layer[];
+  return {
+    version: 3,
+    order: (m.order as string[]) ?? [],
+    hidden: (m.hidden as string[]) ?? [],
+    tiles: (m.tiles ?? {}) as Record<string, Tile>,
+    overlays: shared.length ? [{ ...newOverlay("Alle Kacheln"), layers: shared }] : [],
+  };
+}
+
+export function migrate(raw: unknown): Manifest {
+  let m = raw as Raw | null;
+  if (!m || typeof m !== "object") return emptyManifest();
+  if (m.version !== 2 && m.version !== 3) m = v1ToV2(m);
+  if (m.version === 2) m = v2ToV3(m);
+  return { ...emptyManifest(), ...m } as Manifest;
 }

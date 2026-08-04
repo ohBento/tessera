@@ -15,8 +15,10 @@ import {
   nestingShift,
   newGroupLayer,
   newImageLayer,
+  newOverlay,
   newShapeLayer,
   newTextLayer,
+  overlayOf,
   removeLayerFrom,
   resetTransform,
   resolveLayers,
@@ -26,25 +28,41 @@ import {
   type TextLayer,
 } from "./model";
 
-const withShared = (): Manifest => {
+/** Three tiles and one overlay covering all of them — the v2 "shared" case,
+ *  which v3 expresses as an overlay whose tile set is everything. */
+const withOverlay = (tiles: string[] | "all" = "all"): Manifest => {
   const m = emptyManifest();
-  const shared = { ...newTextLayer(), id: "s1", text: "shared" };
-  m.shared = [shared];
-  m.order = ["a", "b"];
-  m.tiles = { a: emptyTile(), b: emptyTile() };
+  m.order = ["a", "b", "c"];
+  m.tiles = { a: emptyTile(), b: emptyTile(), c: emptyTile() };
+  m.overlays = [{ ...newOverlay("Alle", tiles), layers: [{ ...newTextLayer(), id: "s1", text: "shared" }] }];
   return m;
 };
 
+const overlayLayer = (m: Manifest) => m.overlays[0].layers[0] as TextLayer;
+
 describe("resolveLayers", () => {
-  it("puts shared layers on every tile", () => {
-    const m = withShared();
-    expect(resolveLayers(m, "a").map((l) => l.id)).toEqual(["s1"]);
-    expect(resolveLayers(m, "b").map((l) => l.id)).toEqual(["s1"]);
+  it("puts an all-tiles overlay on every tile", () => {
+    const m = withOverlay();
+    for (const id of m.order) expect(resolveLayers(m, id).map((l) => l.id)).toEqual(["s1"]);
   });
 
-  it("lets a detached copy replace the shared one on that tile only", () => {
-    const m = withShared();
-    m.tiles.a.layers.push({ ...(m.shared[0] as TextLayer), text: "local" });
+  it("puts a subset overlay only on the tiles it names", () => {
+    const m = withOverlay(["a", "c"]);
+    expect(resolveLayers(m, "a").map((l) => l.id)).toEqual(["s1"]);
+    expect(resolveLayers(m, "b")).toEqual([]);
+    expect(resolveLayers(m, "c").map((l) => l.id)).toEqual(["s1"]);
+  });
+
+  it("stacks several overlays in their own order", () => {
+    const m = withOverlay();
+    m.overlays.push({ ...newOverlay("Obendrauf", ["b"]), layers: [{ ...newTextLayer(), id: "t2" }] });
+    expect(resolveLayers(m, "a").map((l) => l.id)).toEqual(["s1"]);
+    expect(resolveLayers(m, "b").map((l) => l.id)).toEqual(["s1", "t2"]);
+  });
+
+  it("lets a detached copy replace the overlay's layer on that tile only", () => {
+    const m = withOverlay();
+    m.tiles.a.layers.push({ ...overlayLayer(m), text: "local" });
 
     expect((resolveLayers(m, "a")[0] as TextLayer).text).toBe("local");
     expect((resolveLayers(m, "b")[0] as TextLayer).text).toBe("shared");
@@ -53,18 +71,36 @@ describe("resolveLayers", () => {
     expect(isDetached(m, "b", "s1")).toBe(false);
   });
 
-  it("keeps tile-only layers on top of shared ones", () => {
-    const m = withShared();
+  it("does not count a detached copy on a tile the overlay never covered", () => {
+    const m = withOverlay(["a"]);
+    m.tiles.b.layers.push({ ...overlayLayer(m), text: "orphan" });
+    expect(isDetached(m, "b", "s1")).toBe(false);
+    // It is simply a tile-local layer there, not an override of anything.
+    expect(resolveLayers(m, "b").map((l) => l.id)).toEqual(["s1"]);
+  });
+
+  it("keeps tile-only layers on top of inherited ones", () => {
+    const m = withOverlay();
     m.tiles.a.layers.push({ ...newTextLayer(), id: "own" });
     expect(resolveLayers(m, "a").map((l) => l.id)).toEqual(["s1", "own"]);
   });
 });
 
+describe("overlayOf", () => {
+  it("finds the owning overlay, including for a nested layer", () => {
+    const m = withOverlay();
+    const nested = { ...newTextLayer(), id: "deep" };
+    m.overlays[0].layers.push(newGroupLayer([nested]));
+    expect(overlayOf(m, "deep")?.name).toBe("Alle");
+    expect(overlayOf(m, "nope")).toBeUndefined();
+  });
+});
+
 describe("effectiveTile", () => {
-  it("changes for every tile when a shared layer changes", () => {
-    const m = withShared();
+  it("changes for every covered tile when the overlay's layer changes", () => {
+    const m = withOverlay();
     const before = JSON.stringify(effectiveTile(m, "b"));
-    (m.shared[0] as TextLayer).color = "#ff0000";
+    overlayLayer(m).color = "#ff0000";
     expect(JSON.stringify(effectiveTile(m, "b"))).not.toBe(before);
   });
 });
@@ -82,23 +118,58 @@ describe("layerText", () => {
 });
 
 describe("migrate", () => {
-  it("lifts a v1 manifest into the layered model", () => {
-    const v1 = {
-      version: 1,
-      order: ["a"],
-      tiles: { a: { asset: "x.png", crop: { x: 0, y: 0, w: 10, h: 10 } } },
-    };
-    const m = migrate(v1);
-    expect(m.version).toBe(2);
+  const crop = { x: 0, y: 0, w: 10, h: 10 };
+
+  it("lifts a v1 manifest all the way to v3", () => {
+    const m = migrate({ version: 1, order: ["a"], tiles: { a: { asset: "x.png", crop } } });
+    expect(m.version).toBe(3);
     expect(m.order).toEqual(["a"]);
-    expect(m.tiles.a.base).toEqual({ asset: "x.png", crop: { x: 0, y: 0, w: 10, h: 10 } });
+    expect(m.tiles.a.base).toEqual({ asset: "x.png", crop });
     expect(m.tiles.a.layers).toEqual([]);
-    expect(m.shared).toEqual([]);
+    expect(m.overlays).toEqual([]);
+  });
+
+  it("turns a v2 shared stack into one overlay covering everything", () => {
+    const shared = [{ ...newTextLayer(), id: "s1" }];
+    const m = migrate({ version: 2, order: ["a", "b"], hidden: ["b"], shared, tiles: {} });
+
+    expect(m.version).toBe(3);
+    expect(m.overlays).toHaveLength(1);
+    expect(m.overlays[0].tiles).toBe("all");
+    expect(m.overlays[0].layers.map((l) => l.id)).toEqual(["s1"]);
+    expect(m.hidden).toEqual(["b"]);
+    // The dead v2 fields must not ride along, or they outlive their meaning.
+    expect("shared" in m).toBe(false);
+    expect("mosaic" in m).toBe(false);
+  });
+
+  it("makes no overlay for a v2 project that had no shared layers", () => {
+    expect(migrate({ version: 2, order: [], shared: [], tiles: {} }).overlays).toEqual([]);
+  });
+
+  it("keeps a v2 mosaic visible by carrying its baked crops over", () => {
+    // v2 stored the placement twice: an editable `mosaic` rect and the crop it
+    // had already baked into each tile. Only the latter decides what renders,
+    // so dropping the former loses re-editability, never the picture.
+    const m = migrate({
+      version: 2,
+      order: ["a"],
+      shared: [],
+      mosaic: { asset: "wall.png", rect: { x: 5, y: 5, w: 70, h: 90 } },
+      tiles: { a: { base: { asset: "wall.png", crop }, layers: [], text: {} } },
+    });
+    expect(m.tiles.a.base).toEqual({ asset: "wall.png", crop });
+  });
+
+  it("leaves a v3 manifest alone", () => {
+    const v3 = emptyManifest();
+    v3.overlays = [newOverlay("Schon v3")];
+    expect(migrate(structuredClone(v3))).toEqual(v3);
   });
 
   it("survives a null tile and unreadable input", () => {
     expect(migrate({ version: 1, order: ["a"], tiles: { a: null } }).tiles.a.base).toBeNull();
-    expect(migrate(null).version).toBe(2);
+    expect(migrate(null).version).toBe(3);
   });
 });
 

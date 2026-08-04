@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { TILE_H, TILE_W } from "./bmp";
 import { renderTiles } from "./export";
-import { emptyManifest, emptyTile, newImageLayer, type Manifest } from "./model";
+import { emptyManifest, emptyTile, migrate, newImageLayer, newOverlay, type Manifest } from "./model";
 import { buildGrid, cellAt, gridSize } from "./scene";
 import { testDeps } from "../test/images";
 
@@ -32,7 +32,7 @@ function gridBlock(m: Manifest, x: number, y: number, scale: number) {
   l.x = x;
   l.y = y;
   l.scale = scale;
-  m.shared.push(l);
+  m.overlays.push({ ...newOverlay("Alle"), layers: [l] });
   return l;
 }
 
@@ -66,6 +66,41 @@ describe("export", () => {
     const tiles = await renderTiles(m, testDeps);
 
     expect([...tiles.keys()]).toEqual([m.order[0], m.order[2], m.order[3]]);
+  });
+});
+
+describe("tile base", () => {
+  it("replaces the original when a tile has a picture of its own", async () => {
+    const m = manifest(3);
+    // Whole 200x200 block, so the crop covers the source exactly and the tile
+    // ends up a flat colour — anything else means the crop maths is off.
+    m.tiles[m.order[1]].base = { asset: "block:#00ff00", crop: { x: 0, y: 0, w: 200, h: 200 } };
+
+    const tiles = [...(await renderTiles(m, testDeps)).values()];
+
+    for (const [x, y] of [[2, 2], [TILE_W / 2, TILE_H / 2], [TILE_W - 3, TILE_H - 3]]) {
+      expect(pixel(tiles[1], x, y)).toEqual([0, 255, 0, 255]);
+    }
+    // Its neighbours still show their own originals.
+    expect(pixel(tiles[0], TILE_W / 2, TILE_H / 2)).not.toEqual([0, 255, 0, 255]);
+  });
+
+  it("a v2 mosaic still renders after migration, from the crops it baked", async () => {
+    const v2 = {
+      version: 2,
+      order: ["t0", "t1"],
+      hidden: [],
+      shared: [],
+      mosaic: { asset: "block:#00ff00", rect: { x: 0, y: 0, w: 200, h: 200 } },
+      tiles: {
+        t0: { base: { asset: "block:#00ff00", crop: { x: 0, y: 0, w: 100, h: 200 } }, layers: [], text: {} },
+        t1: { base: { asset: "block:#00ff00", crop: { x: 100, y: 0, w: 100, h: 200 } }, layers: [], text: {} },
+      },
+    };
+    const tiles = [...(await renderTiles(migrate(v2), testDeps)).values()];
+
+    expect(tiles).toHaveLength(2);
+    for (const t of tiles) expect(pixel(t, TILE_W / 2, TILE_H / 2)).toEqual([0, 255, 0, 255]);
   });
 });
 
