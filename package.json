@@ -6,8 +6,6 @@
   "license": "AGPL-3.0-only",
   "scripts": {
     "dev": "vite",
-    "harness": "vite --config vite.harness.config.ts",
-    "layout-check": "vite --config vite.layout.config.ts",
     "build": "svelte-check --tsconfig ./tsconfig.json && vite build",
     "test": "vitest run",
     "tauri": "tauri",

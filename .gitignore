@@ -4,3 +4,6 @@ node_modules
 .env
 .env.*
 !.env.example
+
+# vitest browser mode writes failure screenshots here
+__screenshots__

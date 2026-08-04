@@ -9,7 +9,7 @@ import * as fabric from "fabric";
 
 import { TILE_H, TILE_W } from "./bmp";
 import { resolveLayers, type Layer, type Manifest } from "./model";
-import { COLS } from "./render";
+import { COLS } from "./geometry";
 
 export const rowsFor = (count: number) => Math.ceil(count / COLS);
 
