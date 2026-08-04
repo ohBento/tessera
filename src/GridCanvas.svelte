@@ -1,0 +1,180 @@
+<script lang="ts">
+  /* The wall, as one Fabric canvas. Zooming out shows every portrait; zooming
+   * in on a cell is what "editing a tile" means — there is no separate tile
+   * editor and no separate mosaic placer, because they were only ever different
+   * viewports onto this. */
+  import * as fabric from "fabric";
+  import { onMount } from "svelte";
+
+  import { app, applyTransform, visibleIds } from "./lib/editor.svelte";
+  import { buildGrid, gridSize, readBack, type Tagged } from "./lib/scene";
+
+  let host: HTMLDivElement;
+  let el: HTMLCanvasElement;
+  let canvas: fabric.Canvas | undefined = $state();
+  let zoom = $state(1);
+
+  const MIN_ZOOM = 0.02;
+  const MAX_ZOOM = 8;
+
+  /** Scale and centre the wall so all of it is visible. */
+  function fit() {
+    if (!canvas) return;
+    const grid = gridSize(visibleIds().length);
+    if (!grid.h) return;
+    const z = Math.min(canvas.getWidth() / grid.w, canvas.getHeight() / grid.h) * 0.95;
+    canvas.setViewportTransform([
+      z,
+      0,
+      0,
+      z,
+      (canvas.getWidth() - grid.w * z) / 2,
+      (canvas.getHeight() - grid.h * z) / 2,
+    ]);
+    zoom = z;
+  }
+
+  /* Fabric's dispose() is asynchronous. Building a new canvas on the same
+   * element before the previous one has finished tearing down leaves it in a
+   * state where nothing renders and nothing is reported — so every rebuild
+   * waits on the one before it. */
+  let building: Promise<unknown> = Promise.resolve();
+  let built = -1;
+
+  function rebuild(version: number, deps: typeof app.deps) {
+    building = building.then(async () => {
+      if (!canvas || !deps) return;
+      const first = built < 0;
+      await buildGrid(canvas, $state.snapshot(app.manifest), deps, true);
+      built = version;
+      if (first) fit();
+    });
+    return building;
+  }
+
+  $effect(() => {
+    // Read both so the effect re-runs when either changes.
+    const version = app.version;
+    const deps = app.deps;
+    if (canvas && deps && version !== built) void rebuild(version, deps);
+  });
+
+  onMount(() => {
+    canvas = new fabric.Canvas(el, {
+      backgroundColor: "#101418",
+      preserveObjectStacking: true,
+      // A model with a single `scale` per image cannot store a stretch, so
+      // corner handles must never produce one.
+      uniformScaling: true,
+    });
+
+    const resize = () => {
+      canvas?.setDimensions({ width: host.clientWidth, height: host.clientHeight });
+      canvas?.renderAll();
+    };
+    resize();
+    const ro = new ResizeObserver(resize);
+    ro.observe(host);
+
+    canvas.on("mouse:wheel", (opt) => {
+      const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, canvas!.getZoom() * 0.999 ** opt.e.deltaY));
+      canvas!.zoomToPoint(new fabric.Point(opt.e.offsetX, opt.e.offsetY), next);
+      zoom = next;
+      opt.e.preventDefault();
+      opt.e.stopPropagation();
+    });
+
+    /* Panning: middle button, or space held like every other editor. Left-drag
+     * on empty canvas stays a rubber-band selection. */
+    let panning = false;
+    let last = { x: 0, y: 0 };
+    let spaceHeld = false;
+
+    canvas.on("mouse:down", (opt) => {
+      if (opt.e instanceof MouseEvent && (opt.e.button === 1 || spaceHeld)) {
+        panning = true;
+        canvas!.selection = false;
+        last = { x: opt.e.clientX, y: opt.e.clientY };
+        opt.e.preventDefault();
+      }
+    });
+    canvas.on("mouse:move", (opt) => {
+      if (!panning || !(opt.e instanceof MouseEvent)) return;
+      canvas!.relativePan(new fabric.Point(opt.e.clientX - last.x, opt.e.clientY - last.y));
+      last = { x: opt.e.clientX, y: opt.e.clientY };
+    });
+    canvas.on("mouse:up", () => {
+      panning = false;
+      canvas!.selection = true;
+    });
+
+    canvas.on("object:modified", (opt) => {
+      const obj = opt.target as Tagged | undefined;
+      if (!obj?.layerId) return;
+      const ids = visibleIds();
+      void applyTransform(obj, readBack(obj, ids.length, ids.indexOf(obj.tileId)));
+    });
+
+    const key = (e: KeyboardEvent, down: boolean) => {
+      if (e.code !== "Space") return;
+      // Not while typing into a field, or the space bar stops producing spaces.
+      if (document.activeElement instanceof HTMLInputElement) return;
+      spaceHeld = down;
+      host.style.cursor = down ? "grab" : "";
+      if (down) e.preventDefault();
+    };
+    const onDown = (e: KeyboardEvent) => key(e, true);
+    const onUp = (e: KeyboardEvent) => key(e, false);
+    addEventListener("keydown", onDown);
+    addEventListener("keyup", onUp);
+
+    return () => {
+      ro.disconnect();
+      removeEventListener("keydown", onDown);
+      removeEventListener("keyup", onUp);
+      const dying = canvas;
+      canvas = undefined;
+      void dying?.dispose();
+    };
+  });
+</script>
+
+<div class="host" bind:this={host}>
+  <canvas bind:this={el}></canvas>
+  <div class="hud">
+    {Math.round(zoom * 100)}% &middot; Rad = Zoom &middot; Leertaste oder Mittelklick = Schieben
+    <button onclick={fit}>Einpassen</button>
+  </div>
+</div>
+
+<style>
+  .host {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .hud {
+    position: absolute;
+    left: 8px;
+    bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    background: rgb(0 0 0 / 0.6);
+    color: #cfd6dc;
+    font: 12px/1.4 ui-sans-serif, system-ui, sans-serif;
+    pointer-events: auto;
+  }
+  .hud button {
+    font: inherit;
+    padding: 2px 8px;
+    border: 1px solid #3a444c;
+    border-radius: 3px;
+    background: #1b2228;
+    color: inherit;
+    cursor: pointer;
+  }
+</style>
