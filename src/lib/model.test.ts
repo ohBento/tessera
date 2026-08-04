@@ -18,8 +18,10 @@ import {
   newOverlay,
   newShapeLayer,
   newTextLayer,
+  overlayCovering,
   overlayOf,
   removeLayerFrom,
+  setAssigned,
   resetTransform,
   resolveLayers,
   walkLayers,
@@ -83,6 +85,70 @@ describe("resolveLayers", () => {
     const m = withOverlay();
     m.tiles.a.layers.push({ ...newTextLayer(), id: "own" });
     expect(resolveLayers(m, "a").map((l) => l.id)).toEqual(["s1", "own"]);
+  });
+});
+
+describe("setAssigned", () => {
+  const all = ["a", "b", "c"];
+
+  it("pins the list when a tile is taken away from an all-tiles overlay", () => {
+    const o = newOverlay("x");
+    setAssigned(o, all, ["b"], false);
+    expect(o.tiles).toEqual(["a", "c"]);
+  });
+
+  it("collapses back to all when the last missing tile is added", () => {
+    const o = newOverlay("x", ["a", "c"]);
+    setAssigned(o, all, ["b"], true);
+    // Not ["a","b","c"] — a pinned list would silently skip the next character
+    // the folder gains, while "all" follows it.
+    expect(o.tiles).toBe("all");
+  });
+
+  it("keeps the folder's order rather than the order tiles were clicked", () => {
+    const o = newOverlay("x", []);
+    setAssigned(o, all, ["c", "a"], true);
+    expect(o.tiles).toEqual(["a", "c"]);
+  });
+
+  it("ignores tiles already in or already out", () => {
+    const o = newOverlay("x", ["a"]);
+    setAssigned(o, all, ["a"], true);
+    expect(o.tiles).toEqual(["a"]);
+    setAssigned(o, all, ["b"], false);
+    expect(o.tiles).toEqual(["a"]);
+  });
+
+  it("can empty an overlay completely", () => {
+    const o = newOverlay("x");
+    setAssigned(o, all, all, false);
+    expect(o.tiles).toEqual([]);
+  });
+
+  it("drops tiles the folder no longer has", () => {
+    const o = newOverlay("x", ["a", "gone"]);
+    setAssigned(o, all, ["b"], true);
+    expect(o.tiles).toEqual(["a", "b"]);
+  });
+});
+
+describe("overlayCovering", () => {
+  it("matches the same tiles in any order", () => {
+    const o = newOverlay("x", ["c", "a"]);
+    expect(overlayCovering([o], ["a", "c"])).toBe(o);
+    expect(overlayCovering([o], ["a", "c", "a"])).toBe(o);
+  });
+
+  it("does not match a different set", () => {
+    const o = newOverlay("x", ["a", "c"]);
+    expect(overlayCovering([o], ["a"])).toBeUndefined();
+    expect(overlayCovering([o], ["a", "b", "c"])).toBeUndefined();
+  });
+
+  it("never matches an all-tiles overlay, even against a list naming everything", () => {
+    // The two differ in what happens when a character appears: "all" picks it
+    // up, a list does not. Collapsing them would silently change behaviour.
+    expect(overlayCovering([newOverlay("x")], ["a", "b"])).toBeUndefined();
   });
 });
 

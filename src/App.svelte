@@ -7,7 +7,9 @@
   import GridCanvas from "./GridCanvas.svelte";
   import {
     addGridImage,
+    addImageToSelection,
     app,
+    clearTiles,
     deleteLayer,
     layerRows,
     moveLayer,
@@ -42,6 +44,9 @@
   <header>
     <button onclick={pickFolder} disabled={!!app.busy}>Ordner öffnen</button>
     <button onclick={addGridImage} disabled={!app.dir || !!app.busy}>Bild über das Grid</button>
+    <button onclick={addImageToSelection} disabled={!app.selectedTiles.length || !!app.busy}>
+      Bild auf Auswahl
+    </button>
     <button onclick={undoEdit} disabled={!undoable()} title="Strg+Z">Rückgängig</button>
     <button onclick={redoEdit} disabled={!redoable()} title="Strg+Y">Wiederholen</button>
     <button onclick={saveToGame} disabled={!app.dir || !!app.busy}>Ins Spiel schreiben</button>
@@ -50,8 +55,11 @@
         {app.busy}…
       {:else if app.error}
         {app.error}
+      {:else if app.selectedTiles.length}
+        {app.selectedTiles.length} von {app.manifest.order.length} Kacheln gewählt
+        <button class="link" onclick={clearTiles}>aufheben</button>
       {:else if app.dir}
-        {app.manifest.order.length} Kacheln
+        {app.manifest.order.length} Kacheln &middot; Kachel anklicken zum Wählen, Strg für mehrere
       {/if}
     </span>
   </header>
@@ -133,6 +141,13 @@
   .status {
     margin-left: auto;
     color: #8b979f;
+  }
+  .link {
+    padding: 0 4px;
+    border-color: transparent;
+    background: none;
+    color: #78dcff;
+    text-decoration: underline;
   }
   aside {
     width: 220px;

@@ -6,8 +6,9 @@
   import * as fabric from "fabric";
   import { onMount } from "svelte";
 
-  import { app, applyTransform, selectLayer, visibleIds } from "./lib/editor.svelte";
+  import { app, applyTransform, clearTiles, selectLayer, toggleTile, visibleIds } from "./lib/editor.svelte";
   import { TILE_H, TILE_W } from "./lib/bmp";
+  import { COLS } from "./lib/geometry";
   import { buildGrid, cellAt, gridSize, readBack, type Tagged } from "./lib/scene";
 
   let host: HTMLDivElement;
@@ -62,6 +63,13 @@
     if (canvas && deps && version !== built) void rebuild(version, deps);
   });
 
+  /* The tile highlight is painted in the after:render hook, and Fabric only
+   * renders when something asks it to — so a selection change has to. */
+  $effect(() => {
+    app.selectedTiles.join();
+    canvas?.requestRenderAll();
+  });
+
   /* List selection -> canvas. Also keyed on version, because a rebuild replaces
    * every object and the id alone would not have changed. */
   $effect(() => {
@@ -110,12 +118,26 @@
     let spaceHeld = false;
 
     canvas.on("mouse:down", (opt) => {
-      if (opt.e instanceof MouseEvent && (opt.e.button === 1 || spaceHeld)) {
+      if (!(opt.e instanceof MouseEvent)) return;
+      if (opt.e.button === 1 || spaceHeld) {
         panning = true;
         canvas!.selection = false;
         last = { x: opt.e.clientX, y: opt.e.clientY };
         opt.e.preventDefault();
+        return;
       }
+      // Clicking past every layer picks tiles instead. Backgrounds are inert,
+      // so "no target" means the click landed on bare wall, and the cell is
+      // whichever one the scene coordinate falls in.
+      if (opt.e.button !== 0 || opt.target) return;
+      const p = canvas!.getScenePoint(opt.e);
+      const col = Math.floor(p.x / TILE_W);
+      const row = Math.floor(p.y / TILE_H);
+      const ids = visibleIds();
+      const index = row * COLS + col;
+      const inside = col >= 0 && col < COLS && row >= 0 && index >= 0 && index < ids.length;
+      if (inside) toggleTile(ids[index], opt.e.ctrlKey || opt.e.shiftKey);
+      else clearTiles();
     });
     canvas.on("mouse:move", (opt) => {
       if (!panning || !(opt.e instanceof MouseEvent)) return;
@@ -138,24 +160,29 @@
       const ctx = opt?.ctx ?? canvas?.getContext();
       const vt = canvas?.viewportTransform;
       if (!ctx || !vt) return;
-      const count = visibleIds().length;
-      if (!count) return;
-      const w = TILE_W * vt[0];
-      const h = TILE_H * vt[3];
+      const ids = visibleIds();
+      if (!ids.length) return;
+      const picked = new Set(app.selectedTiles);
+      const w = Math.round(TILE_W * vt[0]);
+      const h = Math.round(TILE_H * vt[3]);
       ctx.save();
       ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
-      ctx.lineWidth = 1;
-      for (let i = 0; i < count; i++) {
+      for (const [i, id] of ids.entries()) {
         const at = cellAt(i);
         // The half-pixel offset puts a 1px line on a pixel rather than
         // straddling two, which otherwise renders as a soft 2px grey smear.
-        ctx.strokeRect(
-          Math.round(at.x * vt[0] + vt[4]) + 0.5,
-          Math.round(at.y * vt[3] + vt[5]) + 0.5,
-          Math.round(w),
-          Math.round(h),
-        );
+        const x = Math.round(at.x * vt[0] + vt[4]) + 0.5;
+        const y = Math.round(at.y * vt[3] + vt[5]) + 0.5;
+        if (picked.has(id)) {
+          ctx.fillStyle = "rgba(120, 220, 255, 0.22)";
+          ctx.fillRect(x, y, w, h);
+          ctx.strokeStyle = "rgba(140, 225, 255, 0.95)";
+          ctx.lineWidth = 2;
+        } else {
+          ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
+          ctx.lineWidth = 1;
+        }
+        ctx.strokeRect(x, y, w, h);
       }
       ctx.restore();
     });

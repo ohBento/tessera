@@ -8,6 +8,7 @@ import {
   findLayer,
   newImageLayer,
   newOverlay,
+  overlayCovering,
   overlayOf,
   removeLayerFrom,
   type Layer,
@@ -31,7 +32,22 @@ export const app = $state({
   version: 0,
   /** Layer picked in the list or on the canvas, "" for none. */
   selected: "",
+  /** Tiles picked on the canvas. What a new overlay gets assigned to. */
+  selectedTiles: [] as string[],
 });
+
+export function toggleTile(id: string, additive: boolean) {
+  const current = app.selectedTiles;
+  if (additive) {
+    app.selectedTiles = current.includes(id) ? current.filter((t) => t !== id) : [...current, id];
+    return;
+  }
+  // A plain click on the only selected tile clears, so there is a way out
+  // without hunting for empty canvas.
+  app.selectedTiles = current.length === 1 && current[0] === id ? [] : [id];
+}
+
+export const clearTiles = () => (app.selectedTiles = []);
 
 /* Reactive so the toolbar can grey the buttons out. */
 const history = $state(emptyHistory<Manifest>());
@@ -166,12 +182,41 @@ export async function pickFolder() {
   if (typeof dir === "string") await openFolder(dir);
 }
 
+const IMAGE_FILTER = { name: "Bilder", extensions: ["png", "jpg", "jpeg", "webp", "bmp"] };
+
+/** The overlay covering exactly these tiles, reusing one if it already exists —
+ *  otherwise picking the same five tiles twice would leave two overlays that
+ *  have to be kept in step by hand. */
+function overlayFor(ids: string[]): Overlay {
+  const existing = overlayCovering(app.manifest.overlays, ids);
+  if (existing) return existing;
+  app.manifest.overlays.push(newOverlay(`${ids.length} Kacheln`, [...ids]));
+  // Read it back out rather than using the value pushed: Svelte hands back a
+  // proxy, and mutating the raw object would not be reactive.
+  return app.manifest.overlays[app.manifest.overlays.length - 1];
+}
+
+/** Adds a picture to every selected tile as one shared layer: editing it later
+ *  changes all of them at once, which is the whole reason overlays exist. */
+export async function addImageToSelection() {
+  if (!app.selectedTiles.length) return;
+  const path = await pickFile({ filters: [IMAGE_FILTER] });
+  if (typeof path !== "string") return;
+  await run("import", async () => {
+    const asset = await importAsset(app.dir, path);
+    await mutate(() => {
+      const overlay = overlayFor(app.selectedTiles);
+      const layer = newImageLayer(asset);
+      overlay.layers.push(layer);
+      app.selected = layer.id;
+    });
+  });
+}
+
 /** Adds a picture spanning the whole wall — what used to be "the mosaic", now
  *  an ordinary layer that happens to live in grid space. */
 export async function addGridImage() {
-  const path = await pickFile({
-    filters: [{ name: "Bilder", extensions: ["png", "jpg", "jpeg", "webp", "bmp"] }],
-  });
+  const path = await pickFile({ filters: [IMAGE_FILTER] });
   if (typeof path !== "string") return;
   await run("import", async () => {
     // The copy into assets/ happens before the checkpoint: it touches the disk,

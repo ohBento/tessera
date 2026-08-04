@@ -205,6 +205,22 @@ export type Overlay = {
 export const appliesTo = (o: Overlay, tileId: string) =>
   o.tiles === "all" || o.tiles.includes(tileId);
 
+/** Adds or removes tiles from an overlay.
+ *
+ *  Taking a tile away from an overlay that covers everything has to pin the
+ *  list first, and adding the last missing tile collapses it back to "all" —
+ *  otherwise an overlay that visibly covers the whole wall would still be a
+ *  fixed list, and the next character to appear would silently miss it. */
+export function setAssigned(o: Overlay, allIds: string[], ids: string[], on: boolean) {
+  const current = new Set(o.tiles === "all" ? allIds : o.tiles);
+  for (const id of ids) {
+    if (on) current.add(id);
+    else current.delete(id);
+  }
+  const next = allIds.filter((id) => current.has(id));
+  o.tiles = next.length === allIds.length ? "all" : next;
+}
+
 export type Manifest = {
   version: 3;
   order: string[];
@@ -351,6 +367,19 @@ export type Effective = ReturnType<typeof effectiveTile>;
 export const isDetached = (m: Manifest, id: string, layerId: string) =>
   m.overlays.some((o) => appliesTo(o, id) && o.layers.some((l) => l.id === layerId)) &&
   (m.tiles[id]?.layers.some((l) => l.id === layerId) ?? false);
+
+/** An existing overlay covering exactly these tiles, order irrelevant.
+ *
+ *  Without this, picking the same five tiles twice would leave two overlays
+ *  with identical assignments that then have to be kept in step by hand. An
+ *  "all" overlay never matches a list, even one naming every tile: the two
+ *  differ in what happens when a character is added. */
+export function overlayCovering(overlays: Overlay[], ids: string[]): Overlay | undefined {
+  const wanted = [...new Set(ids)].sort().join(" ");
+  return overlays.find(
+    (o) => o.tiles !== "all" && [...new Set(o.tiles)].sort().join(" ") === wanted,
+  );
+}
 
 /** The overlay a layer belongs to, if it is not tile-local. Searches nested
  *  layers too, so a layer inside a group still resolves to its overlay. */
