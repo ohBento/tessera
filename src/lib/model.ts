@@ -368,6 +368,21 @@ export const isDetached = (m: Manifest, id: string, layerId: string) =>
   m.overlays.some((o) => appliesTo(o, id) && o.layers.some((l) => l.id === layerId)) &&
   (m.tiles[id]?.layers.some((l) => l.id === layerId) ?? false);
 
+/** The tiles that are actually drawn, in grid order. */
+export const visibleTiles = (m: Manifest) => m.order.filter((id) => !m.hidden.includes(id));
+
+/** How many times the canvas draws a layer.
+ *
+ *  A layer in an overlay covering five tiles exists once in the document and
+ *  five times on screen. Anything that changes it has to know which, because
+ *  moving one copy leaves the other four stale until the scene rebuilds. */
+export function instanceCount(m: Manifest, layerId: string, space: "tile" | "grid"): number {
+  if (space === "grid") return 1;
+  const overlay = overlayOf(m, layerId);
+  if (!overlay) return 1; // tile-local: exists on exactly one tile
+  return overlay.tiles === "all" ? visibleTiles(m).length : overlay.tiles.length;
+}
+
 /** An existing overlay covering exactly these tiles, order irrelevant.
  *
  *  Without this, picking the same five tiles twice would leave two overlays

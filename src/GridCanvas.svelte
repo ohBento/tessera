@@ -6,7 +6,15 @@
   import * as fabric from "fabric";
   import { onMount } from "svelte";
 
-  import { app, applyTransform, clearTiles, selectLayer, toggleTile, visibleIds } from "./lib/editor.svelte";
+  import {
+    app,
+    applyTransform,
+    assignedTiles,
+    clearTiles,
+    selectLayer,
+    toggleTile,
+    visibleIds,
+  } from "./lib/editor.svelte";
   import { TILE_H, TILE_W } from "./lib/bmp";
   import { COLS } from "./lib/geometry";
   import { buildGrid, cellAt, gridSize, readBack, type Tagged } from "./lib/scene";
@@ -42,6 +50,11 @@
    * waits on the one before it. */
   let building: Promise<unknown> = Promise.resolve();
   let built = -1;
+  /* Clearing the canvas drops Fabric's active object, which fires
+   * selection:cleared. Letting that reach the model would mean every structural
+   * edit — hide, delete, reorder, assign, undo — silently deselected the layer
+   * being worked on, and the actions that need one would then do nothing. */
+  let rebuilding = false;
 
   function rebuild(version: number, deps: typeof app.deps) {
     building = building.then(async () => {
@@ -50,7 +63,12 @@
       // manifest, so the viewport can be right from the first frame instead of
       // showing the wall at 100% and then visibly snapping down to fit.
       if (built < 0) fit();
-      await buildGrid(canvas, $state.snapshot(app.manifest), deps, true);
+      rebuilding = true;
+      try {
+        await buildGrid(canvas, $state.snapshot(app.manifest), deps, true);
+      } finally {
+        rebuilding = false;
+      }
       built = version;
     });
     return building;
@@ -67,7 +85,19 @@
    * renders when something asks it to — so a selection change has to. */
   $effect(() => {
     app.selectedTiles.join();
+    app.selected;
     canvas?.requestRenderAll();
+  });
+
+  /* In tile mode nothing on the canvas is a hit target, so a click always
+   * reaches the wall underneath — which a full-wall picture would otherwise
+   * swallow entirely. The active object keeps its handles on purpose: it shows
+   * which layer the tiles are about to be assigned to. */
+  $effect(() => {
+    if (!canvas) return;
+    canvas.skipTargetFind = app.mode === "tiles";
+    // A rubber band that can never hit anything is just noise.
+    canvas.selection = app.mode === "layers";
   });
 
   /* List selection -> canvas. Also keyed on version, because a rebuild replaces
@@ -146,7 +176,7 @@
     });
     canvas.on("mouse:up", () => {
       panning = false;
-      canvas!.selection = true;
+      canvas!.selection = app.mode === "layers";
     });
 
     /* Tile boundaries. Drawn straight onto the context after Fabric has
@@ -163,6 +193,10 @@
       const ids = visibleIds();
       if (!ids.length) return;
       const picked = new Set(app.selectedTiles);
+      // Where the selected layer actually lands. Two separate marks on purpose:
+      // "these are chosen" and "the layer already covers these" are different
+      // facts, and assigning is the act of making the second match the first.
+      const assigned = new Set(assignedTiles());
       const w = Math.round(TILE_W * vt[0]);
       const h = Math.round(TILE_H * vt[3]);
       ctx.save();
@@ -173,6 +207,15 @@
         // straddling two, which otherwise renders as a soft 2px grey smear.
         const x = Math.round(at.x * vt[0] + vt[4]) + 0.5;
         const y = Math.round(at.y * vt[3] + vt[5]) + 0.5;
+
+        if (assigned.has(id)) {
+          ctx.setLineDash([6, 4]);
+          ctx.strokeStyle = "rgba(255, 196, 92, 0.95)";
+          ctx.lineWidth = 2;
+          ctx.strokeRect(x + 2, y + 2, w - 4, h - 4);
+          ctx.setLineDash([]);
+        }
+
         if (picked.has(id)) {
           ctx.fillStyle = "rgba(120, 220, 255, 0.22)";
           ctx.fillRect(x, y, w, h);
@@ -187,11 +230,18 @@
       ctx.restore();
     });
 
-    const pickedOnCanvas = (opt: { selected?: fabric.Object[]; target?: fabric.Object }) =>
+    const pickedOnCanvas = (opt: { selected?: fabric.Object[]; target?: fabric.Object }) => {
+      if (rebuilding) return;
       selectLayer(((opt.selected?.[0] ?? opt.target) as Tagged | undefined)?.layerId ?? "");
+    };
     canvas.on("selection:created", pickedOnCanvas);
     canvas.on("selection:updated", pickedOnCanvas);
-    canvas.on("selection:cleared", () => selectLayer(""));
+    /* Only a real click in layer mode clears. Switching to tile mode also makes
+     * Fabric drop its active object, and letting that through would break the
+     * one workflow needing both: pick the layer here, the tiles there, assign. */
+    canvas.on("selection:cleared", () => {
+      if (!rebuilding && app.mode === "layers") selectLayer("");
+    });
 
     canvas.on("object:modified", (opt) => {
       const obj = opt.target as Tagged | undefined;

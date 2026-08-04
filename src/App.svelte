@@ -9,6 +9,7 @@
     addGridImage,
     addImageToSelection,
     app,
+    assignSelection,
     clearTiles,
     deleteLayer,
     layerRows,
@@ -18,15 +19,29 @@
     redoable,
     saveToGame,
     selectLayer,
+    setMode,
     toggleLayerHidden,
     undoEdit,
     undoable,
   } from "./lib/editor.svelte";
   import { layerLabel } from "./lib/model";
 
+  const canAssign = $derived(!!app.selected && app.selectedTiles.length > 0);
+
   function shortcut(e: KeyboardEvent) {
-    if (!e.ctrlKey || e.target instanceof HTMLInputElement) return;
+    if (e.target instanceof HTMLInputElement) return;
     const key = e.key.toLowerCase();
+
+    if (!e.ctrlKey && !e.altKey && !e.metaKey) {
+      // V and M, as in every editor that has a move tool and a marquee.
+      if (key === "v") setMode("layers");
+      else if (key === "m") setMode("tiles");
+      else return;
+      e.preventDefault();
+      return;
+    }
+
+    if (!e.ctrlKey) return;
     // Ctrl+Shift+Z as well as Ctrl+Y — both are in wide use and cost one clause.
     if (key === "z" && !e.shiftKey) void undoEdit();
     else if (key === "y" || (key === "z" && e.shiftKey)) void redoEdit();
@@ -42,11 +57,23 @@
 
 <main>
   <header>
+    <div class="modes" role="group" aria-label="Werkzeug">
+      <button class:active={app.mode === "layers"} onclick={() => setMode("layers")} title="V">
+        Ebenen
+      </button>
+      <button class:active={app.mode === "tiles"} onclick={() => setMode("tiles")} title="M">
+        Kacheln
+      </button>
+    </div>
     <button onclick={pickFolder} disabled={!!app.busy}>Ordner öffnen</button>
     <button onclick={addGridImage} disabled={!app.dir || !!app.busy}>Bild über das Grid</button>
     <button onclick={addImageToSelection} disabled={!app.selectedTiles.length || !!app.busy}>
       Bild auf Auswahl
     </button>
+    <button onclick={() => assignSelection(true)} disabled={!canAssign} title="Gewählte Kacheln zur gewählten Ebene">
+      + zur Ebene
+    </button>
+    <button onclick={() => assignSelection(false)} disabled={!canAssign}>− von Ebene</button>
     <button onclick={undoEdit} disabled={!undoable()} title="Strg+Z">Rückgängig</button>
     <button onclick={redoEdit} disabled={!redoable()} title="Strg+Y">Wiederholen</button>
     <button onclick={saveToGame} disabled={!app.dir || !!app.busy}>Ins Spiel schreiben</button>
@@ -58,8 +85,10 @@
       {:else if app.selectedTiles.length}
         {app.selectedTiles.length} von {app.manifest.order.length} Kacheln gewählt
         <button class="link" onclick={clearTiles}>aufheben</button>
+      {:else if app.dir && app.mode === "tiles"}
+        {app.manifest.order.length} Kacheln &middot; anklicken zum Wählen, Strg für mehrere
       {:else if app.dir}
-        {app.manifest.order.length} Kacheln &middot; Kachel anklicken zum Wählen, Strg für mehrere
+        {app.manifest.order.length} Kacheln &middot; M für Kachelauswahl, V für Ebenen
       {/if}
     </span>
   </header>
@@ -141,6 +170,18 @@
   .status {
     margin-left: auto;
     color: #8b979f;
+  }
+  .modes {
+    display: flex;
+    gap: 2px;
+    margin-right: 6px;
+    padding-right: 8px;
+    border-right: 1px solid #232b31;
+  }
+  .modes button.active {
+    border-color: #78dcff;
+    background: #223039;
+    color: #cdeeff;
   }
   .link {
     padding: 0 4px;

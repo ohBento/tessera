@@ -8,6 +8,7 @@ import {
   emptyTile,
   findLayer,
   findList,
+  instanceCount,
   isDetached,
   layerLabel,
   layerText,
@@ -129,6 +130,31 @@ describe("setAssigned", () => {
     const o = newOverlay("x", ["a", "gone"]);
     setAssigned(o, all, ["b"], true);
     expect(o.tiles).toEqual(["a", "b"]);
+  });
+});
+
+describe("instanceCount", () => {
+  it("counts one copy per tile an overlay covers", () => {
+    const m = withOverlay(["a", "c"]);
+    expect(instanceCount(m, "s1", "tile")).toBe(2);
+  });
+
+  it("follows the folder for an all-tiles overlay, minus hidden tiles", () => {
+    const m = withOverlay();
+    expect(instanceCount(m, "s1", "tile")).toBe(3);
+    m.hidden = ["b"];
+    expect(instanceCount(m, "s1", "tile")).toBe(2);
+  });
+
+  it("counts a grid-space layer once however many tiles it spans", () => {
+    const m = withOverlay();
+    expect(instanceCount(m, "s1", "grid")).toBe(1);
+  });
+
+  it("counts a tile-local layer once", () => {
+    const m = withOverlay();
+    m.tiles.a.layers.push({ ...newTextLayer(), id: "own" });
+    expect(instanceCount(m, "own", "tile")).toBe(1);
   });
 });
 

@@ -5,7 +5,7 @@ import * as fabric from "fabric";
 import { writeFile } from "@tauri-apps/plugin-fs";
 
 import { encodeBmp32, TILE_H, TILE_W } from "./bmp";
-import type { Manifest } from "./model";
+import { visibleTiles, type Manifest } from "./model";
 import { tilePath, vaultOriginal } from "./project";
 import { buildGrid, cellAt, type SceneDeps } from "./scene";
 
@@ -21,7 +21,7 @@ export async function renderTiles(m: Manifest, deps: SceneDeps): Promise<Map<str
   try {
     await buildGrid(canvas, m, deps);
     const ctx = canvas.getElement().getContext("2d")!;
-    const ids = m.order.filter((id) => !m.hidden.includes(id));
+    const ids = visibleTiles(m);
 
     const out = new Map<string, Uint8Array>();
     for (const [index, id] of ids.entries()) {

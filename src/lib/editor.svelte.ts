@@ -6,11 +6,14 @@ import { canRedo, canUndo, checkpoint, emptyHistory, redo, undo } from "./histor
 import {
   emptyManifest,
   findLayer,
+  instanceCount,
   newImageLayer,
   newOverlay,
   overlayCovering,
   overlayOf,
   removeLayerFrom,
+  setAssigned,
+  visibleTiles,
   type Layer,
   type Manifest,
   type Overlay,
@@ -34,7 +37,15 @@ export const app = $state({
   selected: "",
   /** Tiles picked on the canvas. What a new overlay gets assigned to. */
   selectedTiles: [] as string[],
+  /* What a click on the canvas means. A grid-space picture covers the whole
+   * wall, so in layer mode every click lands on it and the tiles underneath are
+   * unreachable — hence a mode rather than a cleverer hit test. */
+  mode: "layers" as "layers" | "tiles",
 });
+
+/* Both selections deliberately survive a mode switch: assigning tiles to a
+ * layer means picking the layer in one mode and the tiles in the other. */
+export const setMode = (mode: typeof app.mode) => (app.mode = mode);
 
 export function toggleTile(id: string, additive: boolean) {
   const current = app.selectedTiles;
@@ -48,6 +59,24 @@ export function toggleTile(id: string, additive: boolean) {
 }
 
 export const clearTiles = () => (app.selectedTiles = []);
+
+/** The tiles the selected layer actually lands on. Drawn on the wall so a
+ *  shared layer's reach is visible instead of being a number in a list. */
+export function assignedTiles(): string[] {
+  if (!app.selected) return [];
+  const overlay = overlayOf(app.manifest, app.selected);
+  if (!overlay) return [];
+  return overlay.tiles === "all" ? visibleIds() : overlay.tiles;
+}
+
+/** Adds the picked tiles to the selected layer's overlay, or takes them out. */
+export async function assignSelection(on: boolean) {
+  const overlay = app.selected ? overlayOf(app.manifest, app.selected) : undefined;
+  if (!overlay || !app.selectedTiles.length) return;
+  // order, not visibleIds: a hidden tile still belongs to the project, and
+  // dropping it here would quietly unassign it the moment it is hidden.
+  await mutate(() => setAssigned(overlay, app.manifest.order, [...app.selectedTiles], on));
+}
 
 /* Reactive so the toolbar can grey the buttons out. */
 const history = $state(emptyHistory<Manifest>());
@@ -72,13 +101,23 @@ async function mutate(fn: () => void, structural = true) {
   await persist();
 }
 
-/** Undo and redo replace the whole manifest, so the scene always rebuilds and
- *  the selection is dropped — the layer it pointed at may no longer exist. */
+const layerExists = (id: string) =>
+  !!id &&
+  (!!overlayOf(app.manifest, id) ||
+    Object.values(app.manifest.tiles).some((t) => !!findLayer(t.layers, id)));
+
+/** Undo and redo replace the whole manifest, so the scene always rebuilds.
+ *
+ *  The chosen layer is kept when the state landed in still has it. Dropping it
+ *  unconditionally looked harmless but was not: assigning tiles needs a chosen
+ *  layer to find the overlay through, so one undo left the assign action doing
+ *  nothing at all, silently. */
 async function travel(step: typeof undo<Manifest>) {
   const there = step(history, plain(app.manifest));
   if (!there) return;
+  const chosen = app.selected;
   app.manifest = there;
-  app.selected = "";
+  app.selected = layerExists(chosen) ? chosen : "";
   app.version++;
   await persist();
 }
@@ -135,7 +174,7 @@ export async function moveLayer(id: string, up: boolean) {
   await mutate(() => ([list[at], list[to]] = [list[to], list[at]]));
 }
 
-export const visibleIds = () => app.manifest.order.filter((id) => !app.manifest.hidden.includes(id));
+export const visibleIds = () => visibleTiles(app.manifest);
 
 async function run(label: string, fn: () => Promise<void>) {
   app.busy = label;
@@ -231,19 +270,24 @@ export async function addGridImage() {
   });
 }
 
-/** Writes a finished drag/scale/rotate back into the model. Deliberately does
- *  not bump `version`: the canvas already shows this, and rebuilding would
- *  fight the interaction that produced it. */
+/** Writes a finished drag/scale/rotate back into the model.
+ *
+ *  A single-instance layer skips the rebuild: Fabric has already moved the very
+ *  object being dragged, so tearing the scene down would redraw what is already
+ *  correct. A shared layer must rebuild, because Fabric moved one copy and the
+ *  others are still sitting at the old position — the model says one thing and
+ *  the canvas shows another until something redraws them. */
 export async function applyTransform(obj: Tagged, patch: Pick<Layer, "x" | "y" | "rotation"> & { scale: number }) {
   const list = listOf(obj.layerId) ?? app.manifest.tiles[obj.tileId]?.layers ?? [];
   const layer = findLayer(list, obj.layerId);
   if (!layer) return;
+  const shared = instanceCount(app.manifest, obj.layerId, obj.space) > 1;
   await mutate(() => {
     layer.x = patch.x;
     layer.y = patch.y;
     layer.rotation = patch.rotation;
     if (layer.kind === "image") layer.scale = patch.scale;
-  }, false);
+  }, shared);
 }
 
 export async function saveToGame() {
