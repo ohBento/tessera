@@ -118,7 +118,13 @@
               onclick={() => selectLayer(layer.id)}
             >
               {layerLabel(layer)}
-              <span class="overlay">{overlay.name}</span>
+              <!-- The assignment, not overlay.name: the name is fixed at
+                   creation, so an overlay made from nine tiles still called
+                   itself "Alle Kacheln" after one was taken away. Renaming
+                   arrives in M4; until then the truth is the tile count. -->
+              <span class="overlay">
+                {overlay.tiles === "all" ? "alle Kacheln" : `${overlay.tiles.length} Kacheln`}
+              </span>
             </button>
             <button title="Nach oben" onclick={() => moveLayer(layer.id, true)}>↑</button>
             <button title="Nach unten" onclick={() => moveLayer(layer.id, false)}>↓</button>

@@ -60,13 +60,18 @@ export function toggleTile(id: string, additive: boolean) {
 
 export const clearTiles = () => (app.selectedTiles = []);
 
-/** The tiles the selected layer actually lands on. Drawn on the wall so a
- *  shared layer's reach is visible instead of being a number in a list. */
+/** The tiles the selected layer lands on, when that is less than everything.
+ *
+ *  An overlay covering the whole wall reports nothing: the mark exists to show
+ *  which subset a layer reaches, and outlining every single cell says nothing
+ *  while drowning out the plain tile guides. Take one tile away and the overlay
+ *  pins to a list, at which point the mark appears and is worth reading. The
+ *  layer list already names the overlay for the "all" case. */
 export function assignedTiles(): string[] {
   if (!app.selected) return [];
   const overlay = overlayOf(app.manifest, app.selected);
-  if (!overlay) return [];
-  return overlay.tiles === "all" ? visibleIds() : overlay.tiles;
+  if (!overlay || overlay.tiles === "all") return [];
+  return overlay.tiles;
 }
 
 /** Adds the picked tiles to the selected layer's overlay, or takes them out. */
