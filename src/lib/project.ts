@@ -13,6 +13,7 @@ import {
 import { documentDir, join } from "@tauri-apps/api/path";
 
 import { emptyManifest, emptyTile, migrate, type Manifest, type Tile } from "./model";
+import type { SceneDeps } from "./scene";
 
 export async function defaultDir() {
   return join(await documentDir(), "Black Desert", "FaceTexture");
@@ -140,6 +141,12 @@ export function assetUrl(dir: string, name: string): Promise<string> {
   }
   return url;
 }
+
+/** The live app's pixel sources, in the shape scene.ts asks for. */
+export const tauriDeps = (dir: string): SceneDeps => ({
+  original: (id) => loadOriginal(dir, id),
+  asset: (name) => assetUrl(dir, name),
+});
 
 /** Copies an untouched original into the vault. Never overwrites what is already there. */
 export async function vaultOriginal(dir: string, id: string) {

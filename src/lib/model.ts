@@ -35,6 +35,12 @@ type Common = {
   name?: string;
   locked?: boolean;
   hidden?: boolean;
+  /* Which coordinate space x/y (and any size) are fractions of. Absent means
+   * "tile", so every manifest written before this loads unchanged. A "grid"
+   * layer spans the whole wall — it is placed once, not per tile, which is why
+   * the mosaic needs no mechanism of its own. Only meaningful on a
+   * project-scope layer: a tile-local one has no grid to span. */
+  space?: "tile" | "grid";
   /* Glow is a shadow with no offset but its own alpha, which Canvas2D's shadow
    * API cannot express — it is composited as a separate pass instead. */
   glow?: number; // blur radius as a fraction of tile width, 0 or absent = off
