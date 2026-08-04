@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Tessera render harness</title>
+    <style>
+      body { margin: 0; padding: 16px; background: #111; color: #ddd; font: 13px system-ui, sans-serif; }
+      h1 { font-size: 16px; margin: 0 0 4px; }
+      #status { color: #7dd3c0; margin: 0 0 16px; }
+      section { border-top: 1px solid #333; padding: 12px 0; }
+      h2 { font-size: 14px; margin: 0 0 2px; }
+      .note { color: #888; margin: 0 0 8px; }
+      .strip { display: flex; gap: 12px; flex-wrap: wrap; }
+      figure { margin: 0; }
+      figcaption { color: #888; text-align: center; margin-top: 4px; }
+      canvas { background: #000; display: block; }
+      .score { font-variant-numeric: tabular-nums; margin: 8px 0 0; }
+      .ok { color: #7dd3c0; }
+      .bad { color: #ff6b6b; }
+    </style>
+  </head>
+  <body>
+    <h1>render.ts (ground truth) vs. Fabric editor canvas</h1>
+    <p id="status">running…</p>
+    <div id="out"></div>
+    <script type="module" src="/src/harness/main.ts"></script>
+  </body>
+</html>

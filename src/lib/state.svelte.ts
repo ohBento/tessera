@@ -5,9 +5,17 @@ import {
   effectiveTile,
   emptyManifest,
   emptyTile,
+  findLayer,
+  findList,
+  groupShift,
+  nestingShift,
+  newGroupLayer,
+  shiftLayer,
   newImageLayer,
   newShapeLayer,
   newTextLayer,
+  removeLayerFrom,
+  walkLayers,
   type Crop,
   type Effective,
   type Layer,
@@ -64,6 +72,10 @@ export const app = $state({
   placing: null as null | { asset: string; url: string; w: number; h: number; rect: Crop },
   /** tile currently open in the editor, "" for none */
   editing: "",
+  /** ctrl-clicked tiles a bulk "add to tile" targets instead of just `editing`.
+   *  Empty (or a single id) means "just the open tile" — nothing new to learn
+   *  for the common case of editing one tile at a time. */
+  selectedTiles: [] as string[],
   selectedLayer: "",
   fonts: [] as string[],
   snapshots: [] as string[],
@@ -85,8 +97,10 @@ export async function ensurePreviewWidth(cellCssWidth: number) {
 
 /** What the game folder currently holds, so "dirty" means "differs from disk". */
 let saved: Applied = {};
-const past: Manifest[] = [];
-const future: Manifest[] = [];
+// $state (not plain arrays) so canUndo()/canRedo() — read directly in markup,
+// not through a $derived — actually re-evaluate when a checkpoint is pushed.
+const past: Manifest[] = $state([]);
+const future: Manifest[] = $state([]);
 
 /** Reactive state is a deep Proxy, and structuredClone refuses to clone those —
  *  that is exactly what $state.snapshot is for. Every copy taken out of state
@@ -110,6 +124,11 @@ function checkpoint() {
   future.length = 0;
 }
 
+/** The true original, which lives in the vault once the game file has been
+ *  overwritten, and is still the live game file otherwise. */
+const originalPath = (id: string) =>
+  app.vaulted.includes(id) ? vaultPath(app.dir, id) : tilePath(app.dir, id);
+
 async function refresh(id: string) {
   const eff = effective(id);
   URL.revokeObjectURL(app.preview[id] ?? "");
@@ -117,10 +136,8 @@ async function refresh(id: string) {
     app.preview[id] = await previewUrl(app.dir, id, eff, app.previewW);
     return;
   }
-  // Untouched: show the true original, which lives in the vault once the game
-  // file has been overwritten.
-  const path = app.vaulted.includes(id) ? await vaultPath(app.dir, id) : await tilePath(app.dir, id);
-  app.preview[id] = URL.createObjectURL(new Blob([await readFile(path)], { type: "image/bmp" }));
+  // Untouched, no layers: show the true original directly, no canvas needed.
+  app.preview[id] = URL.createObjectURL(new Blob([await readFile(await originalPath(id))], { type: "image/bmp" }));
 }
 
 const refreshAll = async () => {
@@ -239,34 +256,70 @@ export async function toggleHidden(id: string) {
 
 const tileOf = (id: string) => (app.manifest.tiles[id] ??= emptyTile());
 
+/** Which tiles a non-shared "add" targets: every ctrl-clicked tile once two or
+ *  more are picked, otherwise just the one open in the editor. */
+export function toggleTileSelect(id: string) {
+  // Starting a multi-select while a tile is already open in the editor pulls
+  // that tile in too — it was "selected" in every sense but the array.
+  if (!app.selectedTiles.length && app.editing && app.editing !== id) app.selectedTiles.push(app.editing);
+  const at = app.selectedTiles.indexOf(id);
+  if (at >= 0) app.selectedTiles.splice(at, 1);
+  else app.selectedTiles.push(id);
+}
+
+const targetTiles = () => (app.selectedTiles.length > 1 ? app.selectedTiles : [app.editing]);
+
+/** Pushes one fresh layer per target tile — never the same object into two
+ *  tiles, or dragging one would drag them all. */
+function addToTiles(make: () => Layer) {
+  const tiles = targetTiles();
+  let lastId = "";
+  for (const tid of tiles) {
+    const layer = make();
+    tileOf(tid).layers.push(layer);
+    lastId = layer.id;
+  }
+  app.selectedLayer = lastId;
+  return tiles;
+}
+
 export async function addImageLayer(sourcePath: string, shared: boolean) {
   await run("layer", async () => {
     checkpoint();
     const asset = await importAsset(app.dir, sourcePath);
-    const layer = newImageLayer(asset);
-    if (shared) app.manifest.shared.push(layer);
-    else tileOf(app.editing).layers.push(layer);
-    app.selectedLayer = layer.id;
-    await commit(shared ? undefined : [app.editing]);
+    if (shared) {
+      const layer = newImageLayer(asset);
+      app.manifest.shared.push(layer);
+      app.selectedLayer = layer.id;
+      await commit();
+    } else {
+      await commit(addToTiles(() => newImageLayer(asset)));
+    }
   });
 }
 
 export async function addTextLayer(shared: boolean) {
   checkpoint();
-  const layer = newTextLayer();
-  if (shared) app.manifest.shared.push(layer);
-  else tileOf(app.editing).layers.push(layer);
-  app.selectedLayer = layer.id;
-  await commit(shared ? undefined : [app.editing]);
+  if (shared) {
+    const layer = newTextLayer();
+    app.manifest.shared.push(layer);
+    app.selectedLayer = layer.id;
+    await commit();
+  } else {
+    await commit(addToTiles(newTextLayer));
+  }
 }
 
 export async function addShapeLayer(shape: ShapeKind, shared: boolean) {
   checkpoint();
-  const layer = newShapeLayer(shape);
-  if (shared) app.manifest.shared.push(layer);
-  else tileOf(app.editing).layers.push(layer);
-  app.selectedLayer = layer.id;
-  await commit(shared ? undefined : [app.editing]);
+  if (shared) {
+    const layer = newShapeLayer(shape);
+    app.manifest.shared.push(layer);
+    app.selectedLayer = layer.id;
+    await commit();
+  } else {
+    await commit(addToTiles(() => newShapeLayer(shape)));
+  }
 }
 
 /** Deleting a shape that some image is masked to just leaves that reference
@@ -274,39 +327,48 @@ export async function addShapeLayer(shape: ShapeKind, shared: boolean) {
  *  mask", so nothing else needs to change here. */
 export async function setMask(tileId: string, layerId: string, maskId: string) {
   const layer = editable(tileId, layerId);
-  if (!layer || layer.kind !== "image") return;
+  if (!layer) return;
   checkpointEdit();
   layer.maskId = maskId || undefined;
   await afterEdit(tileId, layerId);
 }
 
 /** Finds the object to edit: the detached copy on this tile if there is one,
- *  otherwise the shared original — editing that hits every tile. */
+ *  otherwise the shared original — editing that hits every tile. Searches into
+ *  groups, so a nested layer is reachable by id alone. */
 export function editable(tileId: string, layerId: string): Layer | undefined {
   return (
-    app.manifest.tiles[tileId]?.layers.find((l) => l.id === layerId) ??
-    app.manifest.shared.find((s) => s.id === layerId)
+    findLayer(app.manifest.tiles[tileId]?.layers ?? [], layerId) ??
+    findLayer(app.manifest.shared, layerId)
   );
 }
 
-const isShared = (layerId: string) => app.manifest.shared.some((s) => s.id === layerId);
+const isShared = (layerId: string) =>
+  [...walkLayers(app.manifest.shared)].some((s) => s.id === layerId);
 
 /** Live edits skip the undo stack per keystroke; call `checkpointEdit` once when
  *  a drag or a field session starts. */
 export const checkpointEdit = checkpoint;
 
+const hasLocal = (tileId: string, layerId: string) =>
+  !!findLayer(app.manifest.tiles[tileId]?.layers ?? [], layerId);
+
 export async function afterEdit(tileId: string, layerId: string) {
-  await commit(isShared(layerId) && !app.manifest.tiles[tileId]?.layers.some((l) => l.id === layerId)
-    ? undefined
-    : [tileId]);
+  await commit(isShared(layerId) && !hasLocal(tileId, layerId) ? undefined : [tileId]);
 }
 
-/** The list a layer actually lives in — shared layers move among shared ones,
- *  tile-local layers among their own. Moving across scopes is what detach and
- *  reattach are for. */
+/** The array a layer sits in — shared layers move among shared ones, tile-local
+ *  layers among their own, and a grouped layer among its siblings inside the
+ *  group. Moving across scopes is what detach and reattach are for. */
 function ownerList(tileId: string, layerId: string) {
-  const shared = app.manifest.shared;
-  if (shared.some((l) => l.id === layerId)) return { list: shared, shared: true };
+  // Tile-local first, matching editable(): when a shared layer has a detached
+  // copy, editable() hands back the local object while this used to hand back
+  // the shared list. indexOf then missed, and splice(-1, 1) quietly deleted
+  // the last entry of the wrong list — which looked like a group vanishing.
+  const local = findList(tileOf(tileId).layers, layerId);
+  if (local) return { list: local, shared: false };
+  const shared = findList(app.manifest.shared, layerId);
+  if (shared) return { list: shared, shared: true };
   return { list: tileOf(tileId).layers, shared: false };
 }
 
@@ -317,6 +379,76 @@ export async function moveLayer(tileId: string, layerId: string, delta: number) 
   if (at < 0 || to < 0 || to >= list.length) return;
   checkpoint();
   [list[at], list[to]] = [list[to], list[at]];
+  await commit(shared ? undefined : [tileId]);
+}
+
+/** Wraps the given layers in a new group, which takes the position of the
+ *  topmost member so the visual stacking order does not jump. Members are
+ *  pulled out of wherever they were, including out of other groups. */
+export async function groupLayers(tileId: string, layerIds: string[]) {
+  if (layerIds.length < 2) return;
+  checkpoint();
+  const { list, shared } = ownerList(tileId, layerIds[0]);
+  const taken: Layer[] = [];
+  let at = list.length;
+  // In list order, not click order — grouping must not reshuffle the stack.
+  for (const l of [...list]) {
+    if (!layerIds.includes(l.id)) continue;
+    at = Math.min(at, list.indexOf(l));
+    taken.push(l);
+  }
+  const roots = shared ? app.manifest.shared : tileOf(tileId).layers;
+  for (const l of taken) {
+    // Folded in before the layer leaves, so a member pulled out of another
+    // group keeps its place instead of jumping by that group's offset. The new
+    // group sits at the neutral 0.5/0.5, so it adds nothing back.
+    const nested = nestingShift(roots, l.id);
+    if (nested) shiftLayer(l, nested.dx, nested.dy);
+    const owner = ownerList(tileId, l.id).list;
+    const at = owner.indexOf(l);
+    if (at >= 0) owner.splice(at, 1); // splice(-1, 1) would drop a bystander
+  }
+  const group = newGroupLayer(taken);
+  list.splice(Math.min(at, list.length), 0, group);
+  app.selectedLayer = group.id;
+  await commit(shared ? undefined : [tileId]);
+}
+
+/** Moves a layer into a group (or, with a null group, back out to the top
+ *  level). Dropping a group into itself would detach the whole subtree, so it
+ *  is refused. */
+export async function moveIntoGroup(tileId: string, layerId: string, groupId: string | null) {
+  const layer = editable(tileId, layerId);
+  if (!layer || layerId === groupId) return;
+  if (layer.kind === "group" && groupId && findLayer(layer.children, groupId)) return;
+
+  const { list, shared } = ownerList(tileId, layerId);
+  const target = groupId ? editable(tileId, groupId) : undefined;
+  if (groupId && target?.kind !== "group") return;
+
+  const at = list.indexOf(layer);
+  // Never splice on a miss: splice(-1, 1) removes the last entry instead of
+  // nothing, silently destroying an unrelated layer.
+  if (at < 0) return;
+
+  // The layer must stay put on screen. Its own x/y is absolute, so anything
+  // the enclosing groups were adding has to be folded in on the way out and
+  // taken back off on the way in — otherwise it jumps by the group's offset.
+  const roots = shared ? app.manifest.shared : tileOf(tileId).layers;
+  const before = nestingShift(roots, layerId) ?? { dx: 0, dy: 0 };
+  const after = target?.kind === "group"
+    ? (() => {
+        const own = groupShift(target);
+        const up = nestingShift(roots, target.id) ?? { dx: 0, dy: 0 };
+        return { dx: own.dx + up.dx, dy: own.dy + up.dy };
+      })()
+    : { dx: 0, dy: 0 };
+
+  checkpoint();
+  list.splice(at, 1);
+  shiftLayer(layer, before.dx - after.dx, before.dy - after.dy);
+  if (target?.kind === "group") target.children.push(layer);
+  else roots.push(layer);
   await commit(shared ? undefined : [tileId]);
 }
 
@@ -350,17 +482,22 @@ export async function reattachLayer(tileId: string, layerId: string) {
 
 export async function deleteLayer(tileId: string, layerId: string) {
   checkpoint();
-  const shared = app.manifest.shared.findIndex((s) => s.id === layerId);
-  if (shared >= 0) app.manifest.shared.splice(shared, 1);
-  const layers = tileOf(tileId).layers;
-  const at = layers.findIndex((l) => l.id === layerId);
-  if (at >= 0) layers.splice(at, 1);
+  const sharedList = findList(app.manifest.shared, layerId);
+  removeLayerFrom(sharedList, layerId);
+  removeLayerFrom(findList(tileOf(tileId).layers, layerId), layerId);
   if (app.selectedLayer === layerId) app.selectedLayer = "";
-  await commit(shared >= 0 ? undefined : [tileId]);
+  await commit(sharedList ? undefined : [tileId]);
 }
 
 /** Live while typing: updates the preview but does not touch disk. The manifest
- *  is written once on change, not once per keystroke. */
+ *  is written once on change, not once per keystroke.
+ *
+ *  An empty field is stored as an empty override, not by dropping the override:
+ *  dropping it fell back to the layer's own text, so clearing the box made the
+ *  default word reappear and a caption could not be emptied at all. That
+ *  fallback dates from when the default was the literal "{{id}}" placeholder,
+ *  which was the thing being escaped; the default is a plain word now, and
+ *  "leave this tile blank" is the more useful thing to be able to express. */
 export async function setTileText(tileId: string, layerId: string, text: string) {
   tileOf(tileId).text[layerId] = text;
   await refresh(tileId);

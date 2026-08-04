@@ -7,6 +7,7 @@
     "core:default",
     "dialog:allow-open",
     "opener:allow-open-url",
+    "window-state:default",
     "fs:allow-document-read-recursive",
     "fs:allow-document-write-recursive",
     {

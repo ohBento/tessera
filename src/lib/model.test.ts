@@ -6,15 +6,22 @@ import {
   effectiveTile,
   emptyManifest,
   emptyTile,
+  findLayer,
+  findList,
   isDetached,
   layerLabel,
   layerText,
   migrate,
+  nestingShift,
+  newGroupLayer,
   newImageLayer,
   newShapeLayer,
   newTextLayer,
+  removeLayerFrom,
   resetTransform,
   resolveLayers,
+  walkLayers,
+  type Layer,
   type Manifest,
   type TextLayer,
 } from "./model";
@@ -104,7 +111,7 @@ describe("resetTransform", () => {
     layer.opacity = 0.4;
     layer.scale = 1.5;
     layer.flipX = true;
-    layer.filter = "blur(2px)";
+    layer.blend = "multiply";
 
     resetTransform(layer);
 
@@ -116,7 +123,7 @@ describe("resetTransform", () => {
     // layer back to centre would be a bigger surprise than the fix it offers.
     expect(layer.x).toBe(0.1);
     expect(layer.y).toBe(0.9);
-    expect(layer.filter).toBe("blur(2px)");
+    expect(layer.blend).toBe("multiply");
   });
 
   it("resets text size the same way", () => {
@@ -156,5 +163,97 @@ describe("layerLabel for shapes", () => {
     const layer = newShapeLayer("rect");
     layer.name = "Frame";
     expect(layerLabel(layer)).toBe("Frame");
+  });
+});
+
+describe("group traversal", () => {
+  const nested = () => {
+    const deep = { ...newShapeLayer("rect"), id: "deep" };
+    const inner = { ...newGroupLayer([deep]), id: "inner" };
+    const top = { ...newTextLayer(), id: "top" };
+    return { deep, inner, top, layers: [top, inner] };
+  };
+
+  it("walks parents before their children, at any depth", () => {
+    const { layers } = nested();
+    expect([...walkLayers(layers)].map((l) => l.id)).toEqual(["top", "inner", "deep"]);
+  });
+
+  it("finds a layer buried in a group", () => {
+    const { layers, deep } = nested();
+    expect(findLayer(layers, "deep")).toBe(deep);
+    expect(findLayer(layers, "nope")).toBeUndefined();
+  });
+
+  it("returns the array a layer actually sits in, not the root", () => {
+    const { layers, inner } = nested();
+    expect(findList(layers, "deep")).toBe(inner.children);
+    expect(findList(layers, "top")).toBe(layers);
+    expect(findList(layers, "nope")).toBeUndefined();
+  });
+
+  it("deleting a group keeps its members, at the group's own index", () => {
+    const { layers } = nested();
+    removeLayerFrom(layers, "inner");
+    expect(layers.map((l) => l.id)).toEqual(["top", "deep"]);
+  });
+
+  it("deleting a plain layer removes just that layer", () => {
+    const { layers } = nested();
+    removeLayerFrom(layers, "top");
+    expect(layers.map((l) => l.id)).toEqual(["inner"]);
+  });
+
+  it("members keep their rendered position when a displaced group dissolves", () => {
+    // A group's x/y displaces its children on top of their own coordinates, so
+    // dissolving it has to fold that displacement into them — otherwise every
+    // member jumps back by the group's offset the moment the group is gone.
+    const child = { ...newShapeLayer("rect"), id: "child", x: 0.4, y: 0.7 };
+    const group = { ...newGroupLayer([child]), id: "grp", x: 0.65, y: 0.3 };
+    const layers: Layer[] = [group];
+
+    removeLayerFrom(layers, "grp");
+
+    expect(layers.map((l) => l.id)).toEqual(["child"]);
+    expect(layers[0].x).toBeCloseTo(0.4 + 0.15, 10); // 0.65 - 0.5
+    expect(layers[0].y).toBeCloseTo(0.7 - 0.2, 10); // 0.30 - 0.5
+  });
+
+  it("leaves members untouched when the group sits at the neutral position", () => {
+    const child = { ...newShapeLayer("rect"), id: "child", x: 0.4, y: 0.7 };
+    const layers: Layer[] = [{ ...newGroupLayer([child]), id: "grp" }];
+    removeLayerFrom(layers, "grp");
+    expect(layers[0].x).toBeCloseTo(0.4, 10);
+    expect(layers[0].y).toBeCloseTo(0.7, 10);
+  });
+});
+
+describe("nestingShift", () => {
+  it("is undefined for a layer that is not in any group", () => {
+    const layers: Layer[] = [{ ...newShapeLayer("rect"), id: "loose" }];
+    expect(nestingShift(layers, "loose")).toBeUndefined();
+  });
+
+  it("reports the enclosing group's displacement", () => {
+    const child = { ...newShapeLayer("rect"), id: "child" };
+    const layers: Layer[] = [{ ...newGroupLayer([child]), id: "grp", x: 0.65, y: 0.3 }];
+    const shift = nestingShift(layers, "child")!;
+    expect(shift.dx).toBeCloseTo(0.15, 10);
+    expect(shift.dy).toBeCloseTo(-0.2, 10);
+  });
+
+  it("accumulates through nested groups", () => {
+    const child = { ...newShapeLayer("rect"), id: "child" };
+    const inner = { ...newGroupLayer([child]), id: "inner", x: 0.6, y: 0.5 };
+    const outer = { ...newGroupLayer([inner]), id: "outer", x: 0.7, y: 0.4 };
+    const shift = nestingShift([outer], "child")!;
+    expect(shift.dx).toBeCloseTo(0.1 + 0.2, 10);
+    expect(shift.dy).toBeCloseTo(0 - 0.1, 10);
+  });
+});
+
+describe("newTextLayer", () => {
+  it("defaults to a plain word, so clearing the field cannot strand a placeholder", () => {
+    expect(newTextLayer().text).toBe("Text");
   });
 });

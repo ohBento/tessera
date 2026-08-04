@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { COLS, coverCrop, defaultMosaicRect, gradientLine, mosaicCrops, polygonPoints, splitRect } from "./render";
+import { COLS, LINE_HEIGHT, coverCrop, defaultMosaicRect, gradientLine, layerFont, mosaicCrops, polygonPoints, splitRect, textLines } from "./render";
 import { TILE_H, TILE_W } from "./bmp";
-import { isGradient } from "./model";
+import { isGradient, newTextLayer } from "./model";
 
 describe("coverCrop", () => {
   it("keeps the full width when the source is wider than the target", () => {
@@ -93,6 +93,41 @@ describe("gradientLine", () => {
       expect((x1 + x2) / 2).toBeCloseTo(0);
       expect((y1 + y2) / 2).toBeCloseTo(0);
     }
+  });
+});
+
+describe("textLines", () => {
+  it("keeps a single line on the layer's own baseline", () => {
+    expect(textLines("one", 40)).toEqual([{ line: "one", y: 0 }]);
+  });
+
+  it("centres a block of lines on that baseline", () => {
+    // fillText ignores \n entirely, so lines are placed by hand; the block has
+    // to stay centred on y or a caption drifts as lines are added.
+    const rows = textLines("a\nb", 40);
+    expect(rows.map((r) => r.line)).toEqual(["a", "b"]);
+    expect(rows[0].y).toBeCloseTo(-rows[1].y, 10);
+    expect(rows[1].y - rows[0].y).toBeCloseTo(40 * LINE_HEIGHT, 10);
+  });
+
+  it("keeps blank lines, so an empty line still takes space", () => {
+    expect(textLines("a\n\nb", 10)).toHaveLength(3);
+  });
+});
+
+describe("layerFont", () => {
+  const base = { ...newTextLayer(), font: "Segoe UI" };
+
+  it("omits style and weight when neither is set", () => {
+    expect(layerFont(base, 40)).toBe('40px "Segoe UI"');
+  });
+
+  it("puts style before weight, then size and family", () => {
+    // A CSS font shorthand in the wrong order is invalid outright, and a
+    // canvas responds by silently keeping its previous font.
+    expect(layerFont({ ...base, bold: true, italic: true }, 40)).toBe('italic bold 40px "Segoe UI"');
+    expect(layerFont({ ...base, bold: true }, 40)).toBe('bold 40px "Segoe UI"');
+    expect(layerFont({ ...base, italic: true }, 40)).toBe('italic 40px "Segoe UI"');
   });
 });
 

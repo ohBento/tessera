@@ -35,8 +35,15 @@
   let containerW = $state(0);
   let dragging = $state(false);
 
+  /* When the window isn't wide enough for both minimums, minRight wins: the
+     left pane (a scrollable grid) degrades gracefully at any width, but the
+     right pane's fixed-width columns (editor stage + layers + panel) don't —
+     below minRight they visibly overflow instead of just needing a scroll.
+     Forcing the ceiling up to `min` even when total - minRight fell short of
+     it (the previous behaviour) let the grid keep its full minimum while
+     silently starving the editor below its own. */
   const clamp = (px: number, total: number) =>
-    Math.max(min, Math.min(px, max, Math.max(min, total - minRight)));
+    Math.max(0, Math.min(px, max, total - minRight));
 
   /* A width restored from a previous, wider window would push the right pane
      off screen, so re-clamp whenever the container resizes — including once at

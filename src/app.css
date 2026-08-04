@@ -11,6 +11,16 @@ body {
   scrollbar-color: var(--line) transparent;
 }
 
+/* Without this, an element with an explicit width plus padding/border renders
+   wider than that width (content-box adds them on top) — a 56px number input
+   with 1px borders and 4px padding actually painted at 66px, poking past its
+   column and, at narrow widths, behind the pane's scrollbar. */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 /* Range and checkbox inputs pick up the OS accent otherwise, which clashes
    with the teal palette everywhere else. */
 input[type="range"],
@@ -40,9 +50,15 @@ body {
   min-height: 0;
 }
 
+/* scrollbar-gutter reserves the scrollbar's width whether or not it's
+   currently needed — without it, switching to a layer with a shorter field
+   list (image, vs. text's long one) could drop the pane's content just under
+   the viewport height, the scrollbar would disappear, and the extra width it
+   had been eating reflowed the whole row a scrollbar's-width to the right. */
 .split > .pane {
   min-width: 0;
   overflow: auto;
+  scrollbar-gutter: stable;
 }
 
 .split > .pane.grow {
@@ -106,26 +122,23 @@ button:disabled {
 
 .bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--gap-3);
+  gap: var(--gap-2) var(--gap-3);
   padding: var(--gap-2) var(--gap-3);
   background: var(--card);
   border-bottom: 1px solid var(--line-soft);
 }
 
-.bar .path {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--mono);
-  font-size: var(--step--1);
-  color: var(--fg-dim);
-}
-
 .ok {
   color: var(--accent);
+}
+
+/* Pushed to the far end of its bar, clear of the controls it has nothing to do
+   with, but not jammed against the window edge. */
+.bar .pin-right {
+  margin-left: auto;
+  margin-right: var(--gap-2);
 }
 .pending {
   color: var(--duplicate);
@@ -145,65 +158,114 @@ button:disabled {
   min-height: 100%;
 }
 
-/* Scales with the pane the divider leaves it, but stops at 180px per cell —
-   beyond that the tiles are just big, not more useful. Preview resolution
-   follows the measured cell width. */
+/* Fixed cell size instead of stretching to fill the pane — closer to the
+   game's own beauty-album grid, which does not rescale its thumbnails either.
+   A narrower pane scrolls (.split > .pane already does) rather than shrinking
+   every tile. */
 .grid {
   display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 2px;
-  max-width: 1272px;
+  grid-template-columns: repeat(7, 140px);
+  gap: 4px;
   margin-inline: auto;
+  width: max-content;
 }
 
 .cell {
   position: relative;
 }
 
-.cell.editing {
-  outline: 2px solid var(--focus);
-  outline-offset: -2px;
+.cell.multi {
+  outline: 2px solid var(--flag);
+  outline-offset: 1px;
 }
 
+/* Sits outside the tile rather than over it, so the portrait stays fully
+   visible while being edited — an inset ring hid the very edge the mosaic
+   placement is judged by. Declared after .multi and lifted above its
+   neighbours so the open tile still reads as the open one when it is also
+   part of a multi-selection. The 1px offset plus 3px ring fills the grid's
+   4px gap exactly, so nothing overlaps the tile next door. */
+.cell.editing {
+  outline: 3px solid var(--flag);
+  outline-offset: 1px;
+  z-index: 1;
+}
+
+/* Same neutral dark mat as .viewport behind the grid: a tinted surround makes
+   it impossible to judge the portrait's own colour against it, and the two
+   panes sit side by side, so they have to agree. */
 .editor {
   display: flex;
   gap: var(--gap-3);
   padding: var(--gap-3);
-  background: var(--card);
+  padding-right: var(--gap-5);
+  background: oklch(0.16 0 0);
   min-height: 100%;
+}
+
+/* Sticky rather than scrolling with the rest of the row: the canvas is the
+   one thing worth keeping in view while a long field list on the right pushes
+   .pane's scrollbar into play. `top` matches .editor's own top padding so the
+   canvas doesn't jam against the scroll container's edge once pinned. */
+.stage-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-2);
+  flex: none;
+  position: sticky;
+  top: var(--gap-3);
+  align-self: flex-start;
+}
+
+/* Always sits flush against the right edge (margin-left: auto), however much
+   spare room a wide window leaves next to the preview — the options panel
+   trails right after it, so the pair reads as one block pinned to the side.
+   No explicit height: .editor's default align-items:stretch already grows
+   every column to match the tallest one, so a short column's box reaches the
+   canvas's bottom for free (same background colour, so the padding is
+   invisible) and a tall one (a text layer's full field list) just grows past
+   825px, stretching the canvas's own column with it — the whole row scrolls
+   together via .pane's overflow:auto rather than each column getting its own
+   inner scrollbar capped at an arbitrary height. */
+.layers-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-2);
+  width: 260px;
+  flex: none;
+  margin-left: auto;
+}
+
+.layers-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap-2);
+}
+
+.layers-head .section-title {
+  margin: 0;
+  border-top: none;
+  padding-top: 0;
 }
 
 /* Same footprint as a real tile preview, so the pane does not resize on the
    first selection. Kept in step with EDITOR_W/EDITOR_H in TileEditor. */
 .placeholder {
-  width: 312px;
-  height: 402px;
+  width: 640px;
+  height: 825px;
   flex: none;
   background: var(--row);
   border: 1px dashed var(--line);
   border-radius: var(--r-row);
 }
 
-/* Without this an img starts Chromium's native picture drag, which paints a
-   ghost copy of the whole tile over the editor while a layer is being moved. */
-.stage img {
-  display: block;
-  background: var(--row);
-  cursor: grab;
-  touch-action: none;
-  user-select: none;
-  -webkit-user-drag: none;
-}
-
-.stage img.grabbing {
-  cursor: grabbing;
-}
-
 .panel {
-  width: 420px;
+  width: 260px;
   display: flex;
   flex-direction: column;
   gap: var(--gap-2);
+  flex: none;
 }
 
 /* Two per row so every button ends up the same width, whatever its label.
@@ -219,16 +281,33 @@ button:disabled {
   grid-template-columns: 1fr 1fr 1fr;
 }
 
-.row-label {
-  margin: 0;
-  font-size: var(--step--1);
-  color: var(--fg-dim);
+.panel .row-5 {
+  grid-template-columns: repeat(5, 1fr);
 }
 
-/* Fixed floor so a row that happens to wrap onto two lines doesn't stand out
-   next to every single-line row above and below it. */
+.panel .row-3 button,
+.panel .row-5 button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* A fixed floor alone still let a long label (mainly German, which runs
+   longer than English) wrap to two lines in the narrower half-width buttons,
+   growing past every other row's height instead of being capped by it —
+   "Reset all" next to "Swap picture" was the one that actually hit this.
+   Forcing a single line and ellipsizing is what makes every clickable in the
+   panel genuinely the same height, not just usually. Buttons/selects only:
+   .name-row's label wraps a colour swatch after its text, and nowrap+hidden
+   on that compound content would clip the swatch, not just truncate text. */
 .panel .row button,
-.panel .row > select,
+.panel .row > select {
+  min-height: 34px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .panel .row > label {
   min-height: 34px;
 }
@@ -240,38 +319,6 @@ button:disabled {
   grid-column: 1 / -1;
 }
 
-/* Fixed height rather than padding alone — a monospace badge inside otherwise
-   has different vertical metrics than the label text and the pill visibly
-   changes height depending on content. */
-.pill {
-  display: inline-flex;
-  align-items: center;
-  height: 26px;
-  gap: var(--gap-2);
-  margin-top: var(--gap-2);
-  padding: 0 4px 0 10px;
-  background: var(--row);
-  border: 1px solid var(--line-soft);
-  border-radius: var(--r-pill);
-  font-size: var(--step--1);
-  line-height: 1;
-  color: var(--fg-mid);
-}
-
-.pill-label {
-  color: var(--fg-dim);
-}
-
-.pill .numeric {
-  display: inline-flex;
-  align-items: center;
-  height: 16px;
-  padding: 0 8px;
-  background: var(--card);
-  border-radius: var(--r-pill);
-  line-height: 1;
-  color: var(--fg);
-}
 
 .layers {
   list-style: none;
@@ -279,43 +326,144 @@ button:disabled {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--gap-2);
 }
 
+/* Same floor as .panel .row buttons, so the layer pills read as part of the
+   same button rhythm instead of a visibly denser sub-list. */
 .layers li {
   display: flex;
   align-items: center;
   gap: var(--gap-1);
+  min-height: 34px;
   background: var(--row);
+  border: 1px solid var(--line);
   border-radius: var(--r-chip);
-  padding: 2px 6px;
+  padding: 0 6px;
+}
+
+/* Only takes up space while a layer row is actually being dragged — an always
+   visible target would be permanent furniture for an occasional action. */
+.drop-out {
+  display: none;
+  padding: var(--gap-2);
+  border: 1px dashed var(--line);
+  border-radius: var(--r-chip);
+  color: var(--fg-dim);
+  font-size: var(--step--1);
+  text-align: center;
+}
+
+.drop-out.active {
+  display: block;
 }
 
 .layers li.sel {
   outline: 1px solid var(--accent);
 }
 
+/* Dashed marks the *other* members of a drag/multi-selection — the panel's
+   actual edit target (.sel) always gets the solid ring. Without :not(.sel), a
+   layer that was both (the overwhelmingly common case: a plain click sets
+   both at once) rendered dashed, since this rule comes later in the
+   cascade — solid only showed up in the edge cases where the two state pieces
+   briefly disagreed, which read as "sometimes dashed, sometimes solid" with
+   no visible cause. */
+.layers li.picked:not(.sel) {
+  outline: 1px dashed var(--accent);
+}
+
+/* The nested list is a plain li so the markup stays valid; it must not look
+   like a row of its own. */
+.layers li.nest {
+  display: block;
+  padding: 0 0 0 var(--gap-3);
+  min-height: 0;
+  background: none;
+  border: none;
+  border-radius: 0;
+}
+
+.layers .folder {
+  flex: none;
+  display: flex;
+  align-items: center;
+  color: var(--fg-dim);
+}
+
+.layers-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap-2);
+}
+
+.layers-head .section-title {
+  flex: 1;
+}
+
 .layers .pick {
   flex: 1;
   min-width: 0;
+  height: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font: inherit;
+  color: var(--fg);
   text-align: left;
   background: none;
   border: none;
-  padding: 3px 0;
+  padding: 0;
+}
+
+.layers .pick:focus {
+  outline: none;
 }
 
 .step {
-  padding: 0 5px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
   background: none;
   border: none;
   color: var(--fg-dim);
 }
 
-.step:hover {
+.step:hover:not(:disabled) {
   color: var(--fg);
+}
+
+.step.on {
+  color: var(--accent);
+}
+
+.step.danger:hover:not(:disabled) {
+  color: var(--flag);
+}
+
+.step:disabled {
+  color: var(--fg-dim);
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Tighter than the panel's own .step buttons: six of these (down/up/eye/lock/
+   leaveGroup/delete) share a 260px-wide row with the layer's own name, and the
+   name is what needs the room. */
+.layers li .step {
+  padding: 0 1px;
+}
+
+.layers li .step svg {
+  width: 13px;
+  height: 13px;
+}
+
+.step svg {
+  fill: currentColor;
 }
 
 .scope {
@@ -370,15 +518,56 @@ button:disabled {
   color: var(--fg-mid);
 }
 
+/* min-width:0 is the fix, not decoration: .slider sits in a CSS grid's `1fr`
+   column (.fields label), and a grid item's default min-width is `auto` — it
+   refuses to shrink below its content's min-content size. That size is
+   dominated by <input type="range">'s browser-default intrinsic width
+   (~130px), which the range's own `min-width: 0` below cannot override from
+   inside a flex container looking out at its grid ancestor. The result: every
+   slider row rendered ~241px wide regardless of how much space the column
+   actually had, pushing the number field and reset button out past the panel
+   — worse the narrower the window, and confusingly identical width on every
+   row since none of them were responding to the container at all. */
 .slider {
   display: flex;
   align-items: center;
   gap: var(--gap-2);
+  min-width: 0;
 }
 
 .slider input[type="range"] {
   flex: 1;
   min-width: 0;
+}
+
+/* Spinner buttons off: they eat ~15px of a 56px field, which pushed longer
+   values (-180, 0.005) out past the right edge and left the rest visibly
+   off-centre. The slider next to it already does what the spinner would. */
+.slider input[type="number"].num {
+  flex: none;
+  width: 56px;
+  height: 22px;
+  padding: 0 4px;
+  text-align: center;
+  appearance: textfield;
+  font: inherit;
+  font-size: var(--step--1);
+  color: var(--fg);
+  background: var(--row);
+  border: 1px solid var(--line);
+  border-radius: var(--r-chip);
+}
+
+.slider input[type="number"].num::-webkit-inner-spin-button,
+.slider input[type="number"].num::-webkit-outer-spin-button {
+  appearance: none;
+  margin: 0;
+}
+
+.slider .unit {
+  flex: none;
+  font-size: var(--step--1);
+  color: var(--fg-dim);
 }
 
 .slider-reset {
@@ -406,7 +595,8 @@ button:disabled {
    metrics (a select's arrow, a color swatch) push some fields taller than
    others sitting right next to them. */
 .fields input,
-.fields select {
+.fields select,
+.fields textarea {
   min-width: 0;
   height: 26px;
   line-height: 1;
@@ -416,6 +606,15 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: var(--r-chip);
   padding: 0 6px;
+}
+
+/* The caption field holds line breaks, so it needs real rows and room to
+   breathe — the shared 26px height above is sized for single-line controls. */
+.fields textarea.text-field {
+  height: auto;
+  line-height: 1.35;
+  padding: 4px 6px;
+  resize: vertical;
 }
 
 /* The name row is the one exception to the 2-column grid: a stretchy input
@@ -439,8 +638,8 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 30px;
+  height: 30px;
   padding: 0;
   color: var(--fg-dim);
 }

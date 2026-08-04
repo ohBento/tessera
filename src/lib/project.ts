@@ -109,6 +109,26 @@ export function loadAsset(dir: string, name: string): Promise<ImageBitmap> {
   return bmp;
 }
 
+const originals = new Map<string, Promise<ImageBitmap>>();
+
+/** The tile as the game shipped it: the vault copy once one exists, otherwise
+ *  the file still sitting untouched in the game folder. Cacheable because both
+ *  are immutable — saving vaults the pristine file *before* overwriting it, so
+ *  the bytes behind a given id never change. */
+export function loadOriginal(dir: string, id: string): Promise<ImageBitmap> {
+  let bmp = originals.get(id);
+  if (!bmp) {
+    bmp = (async () => {
+      const path = (await exists(await vaultPath(dir, id)))
+        ? await vaultPath(dir, id)
+        : await tilePath(dir, id);
+      return createImageBitmap(new Blob([await readFile(path)], { type: "image/bmp" }));
+    })();
+    originals.set(id, bmp);
+  }
+  return bmp;
+}
+
 const urls = new Map<string, Promise<string>>();
 
 /** For showing an asset in an image element, e.g. while placing the mosaic. */

@@ -9,8 +9,6 @@
   import { languages, locale, setLocale, t } from "./lib/i18n.svelte";
   import {
     app,
-    canRedo,
-    canUndo,
     dirty,
     ensurePreviewWidth,
     exportTo,
@@ -24,6 +22,7 @@
     startMosaic,
     swapTiles,
     toggleHidden,
+    toggleTileSelect,
     undo,
     visible,
   } from "./lib/state.svelte";
@@ -84,18 +83,20 @@
 <svelte:window onkeydown={onKey} />
 
 <div class="bar">
-  <button onclick={pickFolder}>{t("folder.choose")}</button>
-  <span class="path">{app.dir}</span>
-  <span>{t("tiles.count", { count: shown.length })}</span>
+  <button onclick={pickFolder} title={app.dir}>{t("folder.choose")}</button>
+
+  {#if app.selectedTiles.length > 1}
+    <span class="ok">{t("tiles.selected", { count: app.selectedTiles.length })}</span>
+    <button onclick={() => (app.selectedTiles = [])}>{t("tiles.clearSelect")}</button>
+  {/if}
 
   <button onclick={onMosaic} disabled={!shown.length}>{t("mosaic.fill")}</button>
   {#if app.manifest.mosaic}
     <button onclick={() => startMosaic()}>{t("mosaic.adjust")}</button>
   {/if}
-  <button onclick={undo} disabled={!canUndo()}>{t("edit.undo")}</button>
-  <button onclick={redo} disabled={!canRedo()}>{t("edit.redo")}</button>
+  <span>{t("tiles.count", { count: shown.length })}</span>
 
-  <select value={locale.current} onchange={(e) => setLocale(e.currentTarget.value)}>
+  <select class="pin-right" value={locale.current} onchange={(e) => setLocale(e.currentTarget.value)}>
     {#each languages as lang}<option value={lang}>{lang.toUpperCase()}</option>{/each}
   </select>
 </div>
@@ -112,19 +113,16 @@
   <button onclick={saveToGame} disabled={!dirtyIds.size}>{t("save.action")}</button>
   <button onclick={onExportTo}>{t("export.to")}</button>
 
-  {#if app.busy}<span class="dim">{t(`busy.${app.busy}`)}</span>{/if}
-  {#if app.error}<span class="warn">{app.error}</span>{/if}
-</div>
-
-<div class="bar">
   <span class="dim">{t("snapshot.title")}</span>
-  <select bind:value={chosen} onchange={() => chosen && loadSnapshot(chosen)}>
+  <select class:ok={!!chosen} bind:value={chosen} onchange={() => chosen && loadSnapshot(chosen)}>
     <option value="">—</option>
     {#each app.snapshots as name}<option value={name}>{name}</option>{/each}
   </select>
   <button onclick={onSaveSnapshot}>{t("snapshot.save")}</button>
   <button onclick={onRemoveSnapshot} disabled={!chosen}>{t("snapshot.delete")}</button>
 
+  {#if app.busy}<span class="dim">{t(`busy.${app.busy}`)}</span>{/if}
+  {#if app.error}<span class="warn">{app.error}</span>{/if}
   {#if app.update}
     <span class="ok">{t("update.available", { version: app.update })}</span>
     <button onclick={() => openUrl(releasePage)}>{t("update.open")}</button>
@@ -142,13 +140,18 @@
         <div
           class="cell"
           class:editing={app.editing === id}
+          class:multi={app.selectedTiles.includes(id)}
           draggable="true"
           role="listitem"
           ondragstart={() => (dragFrom = i)}
           ondragover={(e) => e.preventDefault()}
           ondrop={() => swapTiles(dragFrom, i)}
         >
-          <button class="tile" onclick={() => (app.editing = id)} title={id}>
+          <button
+            class="tile"
+            onclick={(e) => (e.ctrlKey || e.metaKey ? toggleTileSelect(id) : (app.editing = id))}
+            title={id}
+          >
             <img src={app.preview[id]} alt={id} />
           </button>
         </div>
@@ -171,7 +174,7 @@
     <TileEditor />
   {:else}
     <div class="editor">
-      <div class="stage placeholder"></div>
+      <div class="placeholder"></div>
       <p class="dim">{t("editor.empty")}</p>
     </div>
   {/if}
@@ -179,4 +182,4 @@
 
 <!-- The editor pane is always mounted: opening it on selection made the whole
      layout jump and squeezed the grid mid-click. -->
-<SplitPane left={gridPane} right={editorPane} minRight={790} storageKey="tessera.split" />
+<SplitPane left={gridPane} right={editorPane} minRight={1260} storageKey="tessera.split" />

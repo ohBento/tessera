@@ -1,8 +1,29 @@
 import { encodeBmp32, TILE_H, TILE_W } from "./bmp";
-import { isGradient, layerText, type Crop, type Effective, type Layer, type Paint, type ShapeLayer } from "./model";
-import { loadAsset } from "./project";
+import { findLayer, isGradient, layerText, type Crop, type Effective, type Layer, type Paint, type ShapeLayer, type TextLayer } from "./model";
+import { loadAsset, loadOriginal } from "./project";
 
 export const COLS = 7;
+
+/** Fabric's own Text default. The editor and this path have to agree on it or
+ *  a multi-line caption sits at different heights in the preview and the BMP. */
+export const LINE_HEIGHT = 1.16;
+
+/** fillText draws no line breaks at all — it would render "a\nb" as one run —
+ *  so lines are placed by hand. The block is centred on the layer's y, matching
+ *  Fabric's originY:"center" over the whole text object. */
+export function textLines(text: string, fontPx: number) {
+  const lines = text.split("\n");
+  const step = fontPx * LINE_HEIGHT;
+  const first = -((lines.length - 1) / 2) * step;
+  return lines.map((line, i) => ({ line, y: first + i * step }));
+}
+
+/** CSS font shorthand for a text layer. The order is fixed — style, weight,
+ *  then size and family. Get it wrong and the whole declaration is invalid,
+ *  at which point a canvas silently keeps whatever font it had before rather
+ *  than reporting anything. */
+export const layerFont = (layer: TextLayer, fontPx: number) =>
+  `${layer.italic ? "italic " : ""}${layer.bold ? "bold " : ""}${fontPx}px "${layer.font}"`;
 
 /** Largest rectangle of `aspect` (w/h) that fits inside sw x sh, centred.
  *  Cover-crop rather than stretch — the original tool distorted here. */
@@ -103,6 +124,29 @@ function shapePath(layer: ShapeLayer, tileW: number, tileH: number): Path2D {
   return path;
 }
 
+/** The mask's own alpha shape, drawn under whatever composite operation the
+ *  caller has set. Not drawSilhouette: that one recolours an image by
+ *  switching the context to "source-in", which overrides the caller's
+ *  "destination-in" and repaints the masked layer flat instead of cutting it.
+ *  Text and shapes have no such step, which is why only image masks broke. */
+function drawMaskAlpha(
+  ctx: OffscreenCanvasRenderingContext2D,
+  layer: Layer,
+  img: ImageBitmap | null,
+  text: string,
+  w: number,
+  h: number,
+) {
+  if (layer.kind === "image" && img) {
+    ctx.scale(layer.flipX ? -1 : 1, layer.flipY ? -1 : 1);
+    const dw = layer.scale * w;
+    const dh = (dw * img.height) / img.width;
+    ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
+    return;
+  }
+  drawSilhouette(ctx, layer, img, text, w, h, "#fff");
+}
+
 /** Draws the layer's silhouette in a single flat colour, alpha preserved —
  *  used to build the glow halo. For images, the drawn picture is recoloured
  *  via "source-in" since an image's own colours are not what a glow should be
@@ -125,12 +169,14 @@ function drawSilhouette(
     ctx.fillStyle = resolvePaint(ctx, color, dw, dh);
     ctx.fillRect(-dw / 2, -dh / 2, dw, dh);
   } else if (layer.kind === "text") {
-    ctx.font = `${layer.size * w}px "${layer.font}"`;
-    ctx.textAlign = "center";
+    const fontPx = layer.size * w;
+    ctx.font = layerFont(layer, fontPx);
+    ctx.textAlign = layer.align ?? "center";
     ctx.textBaseline = "middle";
-    const metrics = ctx.measureText(text);
-    ctx.fillStyle = resolvePaint(ctx, color, metrics.width, layer.size * w);
-    ctx.fillText(text, 0, 0);
+    const rows = textLines(text, fontPx);
+    const widest = Math.max(...rows.map((r) => ctx.measureText(r.line).width));
+    ctx.fillStyle = resolvePaint(ctx, color, widest, fontPx);
+    for (const r of rows) ctx.fillText(r.line, 0, r.y);
   } else if (layer.kind === "shape") {
     ctx.fillStyle = resolvePaint(ctx, color, layer.w * w, layer.h * h);
     ctx.fill(shapePath(layer, w, h));
@@ -167,6 +213,99 @@ function paintGlow(
   main.restore();
 }
 
+/** Draws a list of layers in order, skipping hidden ones. Groups recurse
+ *  through here, which is what makes nesting work at any depth. */
+async function paintLayers(
+  ctx: OffscreenCanvasRenderingContext2D,
+  dir: string,
+  tileId: string,
+  eff: Effective,
+  layers: Layer[],
+  w: number,
+  h: number,
+) {
+  for (const layer of layers) {
+    if (layer.hidden) continue;
+    await paintLayer(ctx, dir, tileId, eff, layer, w, h);
+  }
+}
+
+/** A group flattens its children onto their own canvas first, then composites
+ *  that once. Painting them straight onto the parent would apply the group's
+ *  opacity per child, so overlapping half-transparent members would show
+ *  through each other instead of fading as one object. */
+async function paintGroup(
+  ctx: OffscreenCanvasRenderingContext2D,
+  dir: string,
+  tileId: string,
+  eff: Effective,
+  layer: Layer & { kind: "group" },
+  w: number,
+  h: number,
+) {
+  const inner = new OffscreenCanvas(w, h);
+  const ictx = inner.getContext("2d")!;
+  ictx.imageSmoothingQuality = "high";
+  await paintLayers(ictx, dir, tileId, eff, layer.children, w, h);
+
+  ctx.save();
+  ctx.globalAlpha = layer.opacity;
+  ctx.globalCompositeOperation = layer.blend;
+  // Children carry absolute tile coordinates, so the group's own x/y is a
+  // displacement from centre rather than a position — 0.5/0.5 means "unmoved".
+  ctx.translate(w / 2 + (layer.x - 0.5) * w, h / 2 + (layer.y - 0.5) * h);
+  ctx.rotate((layer.rotation * Math.PI) / 180);
+  ctx.drawImage(inner, -w / 2, -h / 2);
+  ctx.restore();
+}
+
+/** Draws just the layer's own picture/glyphs/fill — no transform, no mask, no
+ *  effects. Shared by the normal paint path and the text-mask scratch canvas
+ *  below, which both need exactly this and nothing more. */
+function drawLayerContent(
+  ctx: OffscreenCanvasRenderingContext2D,
+  layer: Layer,
+  img: ImageBitmap | null,
+  text: string,
+  w: number,
+  h: number,
+) {
+  if (layer.kind === "image" && img) {
+    ctx.scale(layer.flipX ? -1 : 1, layer.flipY ? -1 : 1);
+    const dw = layer.scale * w;
+    const dh = (dw * img.height) / img.width;
+    ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
+  } else if (layer.kind === "text") {
+    const fontPx = layer.size * w;
+    ctx.font = layerFont(layer, fontPx);
+    ctx.textAlign = layer.align ?? "center";
+    ctx.textBaseline = "middle";
+    if (layer.shadow > 0) {
+      ctx.shadowBlur = layer.shadow * w;
+      ctx.shadowColor = layer.shadowColor;
+    }
+    const rows = textLines(text, fontPx);
+    if (layer.strokeWidth > 0) {
+      ctx.lineWidth = layer.strokeWidth * w;
+      ctx.strokeStyle = layer.strokeColor;
+      ctx.lineJoin = "round";
+      for (const r of rows) ctx.strokeText(r.line, 0, r.y);
+    }
+    const widest = Math.max(...rows.map((r) => ctx.measureText(r.line).width));
+    ctx.fillStyle = resolvePaint(ctx, layer.color, widest, fontPx);
+    for (const r of rows) ctx.fillText(r.line, 0, r.y);
+  } else if (layer.kind === "shape") {
+    const path = shapePath(layer, w, h);
+    ctx.fillStyle = resolvePaint(ctx, layer.fill, layer.w * w, layer.h * h);
+    ctx.fill(path);
+    if (layer.borderWidth > 0) {
+      ctx.lineWidth = layer.borderWidth * w;
+      ctx.strokeStyle = layer.borderColor;
+      ctx.stroke(path);
+    }
+  }
+}
+
 async function paintLayer(
   ctx: OffscreenCanvasRenderingContext2D,
   dir: string,
@@ -176,12 +315,46 @@ async function paintLayer(
   w: number,
   h: number,
 ) {
+  if (layer.kind === "group") return paintGroup(ctx, dir, tileId, eff, layer, w, h);
+
   const img = layer.kind === "image" ? await loadAsset(dir, layer.asset) : null;
   const text = layer.kind === "text" ? layerText(eff.text, layer, tileId) : "";
-  const mask =
-    layer.kind === "image" && layer.maskId
-      ? (eff.layers.find((l) => l.id === layer.maskId && l.kind === "shape") as ShapeLayer | undefined)
-      : undefined;
+  const maskLayer = layer.maskId ? findLayer(eff.layers, layer.maskId) : undefined;
+
+  if (maskLayer?.kind === "text" || maskLayer?.kind === "image") {
+    // Neither text nor an image has a Path2D to clip against like a shape
+    // does, so this layer is rendered in isolation on its own canvas and then
+    // cut down to the mask's silhouette via destination-in. Doing that on the
+    // shared tile canvas directly would erase everything already painted
+    // underneath it, not just this layer.
+    const scratch = new OffscreenCanvas(w, h);
+    const sctx = scratch.getContext("2d")!;
+    sctx.imageSmoothingQuality = "high";
+    sctx.save();
+    sctx.translate(layer.x * w, layer.y * h);
+    sctx.rotate((layer.rotation * Math.PI) / 180);
+    paintGlow(sctx, layer, img, text, w, h);
+    drawLayerContent(sctx, layer, img, text, w, h);
+    sctx.restore();
+
+    const maskImg = maskLayer.kind === "image" ? await loadAsset(dir, maskLayer.asset) : null;
+    const maskText = maskLayer.kind === "text" ? layerText(eff.text, maskLayer, tileId) : "";
+    sctx.save();
+    sctx.globalCompositeOperation = "destination-in";
+    sctx.translate(maskLayer.x * w, maskLayer.y * h);
+    sctx.rotate((maskLayer.rotation * Math.PI) / 180);
+    drawMaskAlpha(sctx, maskLayer, maskImg, maskText, w, h);
+    sctx.restore();
+
+    ctx.save();
+    ctx.globalAlpha = layer.opacity;
+    ctx.globalCompositeOperation = layer.blend;
+      ctx.drawImage(scratch, 0, 0);
+    ctx.restore();
+    return;
+  }
+
+  const mask = maskLayer?.kind === "shape" ? maskLayer : undefined;
 
   ctx.save();
   if (mask) {
@@ -200,45 +373,16 @@ async function paintLayer(
 
   ctx.globalAlpha = layer.opacity;
   ctx.globalCompositeOperation = layer.blend;
-  ctx.filter = layer.filter || "none";
-
-  if (layer.kind === "image" && img) {
-    ctx.scale(layer.flipX ? -1 : 1, layer.flipY ? -1 : 1);
-    const dw = layer.scale * w;
-    const dh = (dw * img.height) / img.width;
-    ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
-  } else if (layer.kind === "text") {
-    ctx.font = `${layer.size * w}px "${layer.font}"`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    if (layer.shadow > 0) {
-      ctx.shadowBlur = layer.shadow * w;
-      ctx.shadowColor = layer.shadowColor;
-    }
-    if (layer.strokeWidth > 0) {
-      ctx.lineWidth = layer.strokeWidth * w;
-      ctx.strokeStyle = layer.strokeColor;
-      ctx.lineJoin = "round";
-      ctx.strokeText(text, 0, 0);
-    }
-    const metrics = ctx.measureText(text);
-    ctx.fillStyle = resolvePaint(ctx, layer.color, metrics.width, layer.size * w);
-    ctx.fillText(text, 0, 0);
-  } else if (layer.kind === "shape") {
-    const path = shapePath(layer, w, h);
-    ctx.fillStyle = resolvePaint(ctx, layer.fill, layer.w * w, layer.h * h);
-    ctx.fill(path);
-    if (layer.borderWidth > 0) {
-      ctx.lineWidth = layer.borderWidth * w;
-      ctx.strokeStyle = layer.borderColor;
-      ctx.stroke(path);
-    }
-  }
+  drawLayerContent(ctx, layer, img, text, w, h);
   ctx.restore();
 }
 
 /** The single render path. Preview and export differ only in size, so what the
- *  user sees is what the game gets. */
+ *  user sees is what the game gets.
+ *
+ *  A tile with layers but no explicit base picture falls back to its own
+ *  original as the background — without it, a shape or text added straight onto
+ *  an untouched tile had nothing under it and the face vanished. */
 export async function drawTile(dir: string, tileId: string, eff: Effective, w: number, h: number) {
   const canvas = new OffscreenCanvas(w, h);
   const ctx = canvas.getContext("2d")!;
@@ -248,8 +392,10 @@ export async function drawTile(dir: string, tileId: string, eff: Effective, w: n
     const img = await loadAsset(dir, eff.base.asset);
     const c = eff.base.crop;
     ctx.drawImage(img, c.x, c.y, c.w, c.h, 0, 0, w, h);
+  } else if (eff.layers.length) {
+    ctx.drawImage(await loadOriginal(dir, tileId), 0, 0, w, h);
   }
-  for (const layer of eff.layers) await paintLayer(ctx, dir, tileId, eff, layer, w, h);
+  await paintLayers(ctx, dir, tileId, eff, eff.layers, w, h);
   return canvas;
 }
 

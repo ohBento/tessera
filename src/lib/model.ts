@@ -31,15 +31,20 @@ type Common = {
   rotation: number; // degrees
   opacity: number; // 0..1
   blend: GlobalCompositeOperation;
-  filter: string; // CSS filter chain, "" for none
   /* Optional so manifests written before these existed still load unchanged. */
   name?: string;
   locked?: boolean;
+  hidden?: boolean;
   /* Glow is a shadow with no offset but its own alpha, which Canvas2D's shadow
    * API cannot express — it is composited as a separate pass instead. */
   glow?: number; // blur radius as a fraction of tile width, 0 or absent = off
   glowColor?: Paint;
   glowOpacity?: number; // 0..1, independent of the layer's own opacity
+  /* A shape layer's id to clip this layer to. A dangling id (the shape got
+   * deleted) simply fails to resolve at render time and the layer draws
+   * unclipped — no cleanup pass needed on delete. Lives on Common so both
+   * image and text layers can use it. */
+  maskId?: string;
 };
 
 export type ImageLayer = Common & {
@@ -49,10 +54,6 @@ export type ImageLayer = Common & {
   /* Optional so manifests saved before flipping existed still load unchanged. */
   flipX?: boolean;
   flipY?: boolean;
-  /* A shape layer's id to clip this image to. A dangling id (the shape got
-   * deleted) simply fails to resolve at render time and the image draws
-   * unclipped — no cleanup pass needed on delete. */
-  maskId?: string;
 };
 
 export type ShapeKind = "rect" | "ellipse" | "polygon";
@@ -69,11 +70,19 @@ export type ShapeLayer = Common & {
   borderWidth: number; // fraction of tile width, 0 = no border
 };
 
+export type TextAlign = "left" | "center" | "right";
+
 export type TextLayer = Common & {
   kind: "text";
   text: string; // {{id}} expands to the tile's numeric id
   font: string;
   size: number;
+  /* Optional so manifests written before alignment existed still load; absent
+   * means centred, which is what they all rendered as. */
+  align?: TextAlign;
+  /* Likewise absent means off, matching everything written before these. */
+  bold?: boolean;
+  italic?: boolean;
   color: Paint;
   strokeColor: string;
   strokeWidth: number;
@@ -81,7 +90,86 @@ export type TextLayer = Common & {
   shadowColor: string;
 };
 
-export type Layer = ImageLayer | TextLayer | ShapeLayer;
+/** Children keep their own tile-absolute coordinates; the group's x/y is a
+ *  translation applied on top, so moving a group shifts everything inside it
+ *  without rewriting a single child position. Its opacity/blend apply to
+ *  the flattened result, which is what makes it a real group rather than a
+ *  selection: half-transparent overlapping children stop showing through each
+ *  other. */
+export type GroupLayer = Common & {
+  kind: "group";
+  children: Layer[];
+};
+
+export type Layer = ImageLayer | TextLayer | ShapeLayer | GroupLayer;
+
+/** Every layer in the tree, parents before their children. */
+export function* walkLayers(layers: Layer[]): Generator<Layer> {
+  for (const l of layers) {
+    yield l;
+    if (l.kind === "group") yield* walkLayers(l.children);
+  }
+}
+
+export function findLayer(layers: Layer[], id: string): Layer | undefined {
+  for (const l of walkLayers(layers)) if (l.id === id) return l;
+  return undefined;
+}
+
+/** A group's x/y is a displacement applied on top of children that already
+ *  carry absolute coordinates (see paintGroup in render.ts), so a child renders
+ *  at its own x/y plus every enclosing group's displacement. Crossing that
+ *  boundary — grouping, ungrouping, dragging a layer in or out — has to fold
+ *  the displacement in or out, or the layer visibly jumps by exactly that much.
+ *  0.5/0.5 is the neutral position, meaning "no displacement". */
+export const groupShift = (g: GroupLayer) => ({ dx: g.x - 0.5, dy: g.y - 0.5 });
+
+/** Total displacement every group between `layers` and `id` contributes.
+ *  Undefined when the layer is not nested in a group at all. */
+export function nestingShift(layers: Layer[], id: string): { dx: number; dy: number } | undefined {
+  for (const l of layers) {
+    if (l.kind !== "group") continue;
+    const own = groupShift(l);
+    if (l.children.some((c) => c.id === id)) return own;
+    const inner = nestingShift(l.children, id);
+    if (inner) return { dx: inner.dx + own.dx, dy: inner.dy + own.dy };
+  }
+  return undefined;
+}
+
+export function shiftLayer(l: Layer, dx: number, dy: number) {
+  l.x += dx;
+  l.y += dy;
+}
+
+/** Takes a layer out of the list it sits in. A group hands its members back to
+ *  that list at the same index instead of taking them with it: losing a stack
+ *  of layers to one misplaced click on a folder is not a trade anyone makes
+ *  knowingly, and dissolving a group has no other button. Members keep the
+ *  position they were dissolved at, since the group's displacement is folded
+ *  into them on the way out. */
+export function removeLayerFrom(list: Layer[] | undefined, id: string) {
+  if (!list) return;
+  const at = list.findIndex((l) => l.id === id);
+  if (at < 0) return;
+  const [gone] = list.splice(at, 1);
+  if (gone.kind === "group") {
+    const { dx, dy } = groupShift(gone);
+    for (const child of gone.children) shiftLayer(child, dx, dy);
+    list.splice(at, 0, ...gone.children);
+  }
+}
+
+/** The array a layer sits in — the list to splice when moving or removing it. */
+export function findList(layers: Layer[], id: string): Layer[] | undefined {
+  if (layers.some((l) => l.id === id)) return layers;
+  for (const l of layers) {
+    if (l.kind !== "group") continue;
+    const found = findList(l.children, id);
+    if (found) return found;
+  }
+  return undefined;
+}
 
 export type Tile = {
   base: Base;
@@ -126,7 +214,6 @@ const common = (id = newId()): Common => ({
   rotation: 0,
   opacity: 1,
   blend: "source-over",
-  filter: "",
 });
 
 export const DEFAULT_IMAGE_SCALE = 0.3;
@@ -155,6 +242,12 @@ export const newShapeLayer = (shape: ShapeKind): ShapeLayer => ({
   borderWidth: 0,
 });
 
+export const newGroupLayer = (children: Layer[] = []): GroupLayer => ({
+  ...common(),
+  kind: "group",
+  children,
+});
+
 /** Resets size, rotation and opacity to their defaults but keeps position and
  *  every effect — those are rarely what a user wants to lose by mistake. */
 export function resetTransform(layer: Layer) {
@@ -167,7 +260,7 @@ export function resetTransform(layer: Layer) {
   } else if (layer.kind === "shape") {
     layer.w = DEFAULT_SHAPE_SIZE;
     layer.h = DEFAULT_SHAPE_SIZE;
-  } else {
+  } else if (layer.kind === "text") {
     layer.size = DEFAULT_TEXT_SIZE;
   }
 }
@@ -175,9 +268,16 @@ export function resetTransform(layer: Layer) {
 export const newTextLayer = (): TextLayer => ({
   ...common(),
   kind: "text",
-  text: "{{id}}",
+  /* Plain word, not the "{{id}}" placeholder: that default made an emptied
+   * field snap back to literal braces the user then could not clear. The
+   * placeholder still works, it just has to be typed on purpose. */
+  text: "Text",
   font: "Segoe UI",
   size: 0.08,
+  /* New captions start at their anchor and grow to the right. Existing layers
+   * carry no align and keep falling back to "center", so this changes what is
+   * created from now on rather than re-laying-out anyone's finished tiles. */
+  align: "left",
   color: "#ffffff",
   strokeColor: "#000000",
   strokeWidth: 0,
@@ -190,6 +290,7 @@ export const layerLabel = (l: Layer) => {
   if (l.name) return l.name;
   if (l.kind === "text") return l.text;
   if (l.kind === "shape") return l.shape;
+  if (l.kind === "group") return l.kind;
   return l.asset.replace(/\.[^.]+$/, "").slice(0, 8);
 };
 
