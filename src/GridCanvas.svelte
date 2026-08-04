@@ -6,8 +6,9 @@
   import * as fabric from "fabric";
   import { onMount } from "svelte";
 
-  import { app, applyTransform, visibleIds } from "./lib/editor.svelte";
-  import { buildGrid, gridSize, readBack, type Tagged } from "./lib/scene";
+  import { app, applyTransform, selectLayer, visibleIds } from "./lib/editor.svelte";
+  import { TILE_H, TILE_W } from "./lib/bmp";
+  import { buildGrid, cellAt, gridSize, readBack, type Tagged } from "./lib/scene";
 
   let host: HTMLDivElement;
   let el: HTMLCanvasElement;
@@ -44,10 +45,12 @@
   function rebuild(version: number, deps: typeof app.deps) {
     building = building.then(async () => {
       if (!canvas || !deps) return;
-      const first = built < 0;
+      // Fit *before* building, not after: the tile count comes from the
+      // manifest, so the viewport can be right from the first frame instead of
+      // showing the wall at 100% and then visibly snapping down to fit.
+      if (built < 0) fit();
       await buildGrid(canvas, $state.snapshot(app.manifest), deps, true);
       built = version;
-      if (first) fit();
     });
     return building;
   }
@@ -57,6 +60,22 @@
     const version = app.version;
     const deps = app.deps;
     if (canvas && deps && version !== built) void rebuild(version, deps);
+  });
+
+  /* List selection -> canvas. Also keyed on version, because a rebuild replaces
+   * every object and the id alone would not have changed. */
+  $effect(() => {
+    const id = app.selected;
+    app.version;
+    if (!canvas) return;
+    void building.then(() => {
+      if (!canvas) return;
+      if ((canvas.getActiveObject() as Tagged | null)?.layerId === id) return;
+      const obj = id && canvas.getObjects().find((o) => (o as Tagged).layerId === id);
+      if (obj) canvas.setActiveObject(obj);
+      else canvas.discardActiveObject();
+      canvas.requestRenderAll();
+    });
   });
 
   onMount(() => {
@@ -107,6 +126,45 @@
       panning = false;
       canvas!.selection = true;
     });
+
+    /* Tile boundaries. Drawn straight onto the context after Fabric has
+     * finished, in screen coordinates — which keeps them exactly one pixel wide
+     * at any zoom, and keeps them out of the export: this hook lives on the
+     * editor canvas, and export renders through a StaticCanvas that never has
+     * it. Adding them as Fabric objects instead would have put them in the BMP.
+     * Each existing cell is stroked individually rather than drawing full-width
+     * lines, so a ragged last row shows only the tiles that are really there. */
+    canvas.on("after:render", (opt) => {
+      const ctx = opt?.ctx ?? canvas?.getContext();
+      const vt = canvas?.viewportTransform;
+      if (!ctx || !vt) return;
+      const count = visibleIds().length;
+      if (!count) return;
+      const w = TILE_W * vt[0];
+      const h = TILE_H * vt[3];
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
+      ctx.lineWidth = 1;
+      for (let i = 0; i < count; i++) {
+        const at = cellAt(i);
+        // The half-pixel offset puts a 1px line on a pixel rather than
+        // straddling two, which otherwise renders as a soft 2px grey smear.
+        ctx.strokeRect(
+          Math.round(at.x * vt[0] + vt[4]) + 0.5,
+          Math.round(at.y * vt[3] + vt[5]) + 0.5,
+          Math.round(w),
+          Math.round(h),
+        );
+      }
+      ctx.restore();
+    });
+
+    const pickedOnCanvas = (opt: { selected?: fabric.Object[]; target?: fabric.Object }) =>
+      selectLayer(((opt.selected?.[0] ?? opt.target) as Tagged | undefined)?.layerId ?? "");
+    canvas.on("selection:created", pickedOnCanvas);
+    canvas.on("selection:updated", pickedOnCanvas);
+    canvas.on("selection:cleared", () => selectLayer(""));
 
     canvas.on("object:modified", (opt) => {
       const obj = opt.target as Tagged | undefined;

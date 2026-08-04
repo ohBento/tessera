@@ -1,10 +1,25 @@
 <script lang="ts">
   /* M1 shell: deliberately bare. The panel system, the tool strip and the dense
    * token set land in M3 — this exists to exercise the canvas and the export
-   * path end to end, nothing more. The old grid/editor/placer components are
-   * still on disk, no longer reachable, and are deleted in M3. */
+   * path end to end, plus the one thing the first real run proved unusable
+   * without: seeing which layers exist. The old grid/editor/placer components
+   * are still on disk, no longer reachable, and are deleted in M3. */
   import GridCanvas from "./GridCanvas.svelte";
-  import { addGridImage, app, pickFolder, saveToGame } from "./lib/editor.svelte";
+  import {
+    addGridImage,
+    app,
+    deleteLayer,
+    layers,
+    moveLayer,
+    pickFolder,
+    saveToGame,
+    selectLayer,
+    toggleLayerHidden,
+  } from "./lib/editor.svelte";
+  import { layerLabel } from "./lib/model";
+
+  // Topmost first, matching what the canvas draws last.
+  const listed = $derived([...layers()].reverse());
 </script>
 
 <main>
@@ -23,7 +38,35 @@
     </span>
   </header>
 
-  <GridCanvas />
+  <div class="body">
+    <GridCanvas />
+
+    <aside>
+      <h2>Ebenen</h2>
+      {#if !listed.length}
+        <p class="empty">Keine Ebenen.</p>
+      {/if}
+      <ul>
+        {#each listed as layer (layer.id)}
+          <li class:selected={app.selected === layer.id}>
+            <button
+              class="eye"
+              title={layer.hidden ? "Einblenden" : "Ausblenden"}
+              onclick={() => toggleLayerHidden(layer.id)}
+            >
+              {layer.hidden ? "○" : "●"}
+            </button>
+            <button class="name" class:dimmed={layer.hidden} onclick={() => selectLayer(layer.id)}>
+              {layerLabel(layer)}
+            </button>
+            <button title="Nach oben" onclick={() => moveLayer(layer.id, true)}>↑</button>
+            <button title="Nach unten" onclick={() => moveLayer(layer.id, false)}>↓</button>
+            <button title="Löschen" onclick={() => deleteLayer(layer.id)}>×</button>
+          </li>
+        {/each}
+      </ul>
+    </aside>
+  </div>
 </main>
 
 <style>
@@ -38,6 +81,11 @@
     flex-direction: column;
     height: 100vh;
   }
+  .body {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
   header {
     display: flex;
     align-items: center;
@@ -45,7 +93,7 @@
     padding: 6px 8px;
     border-bottom: 1px solid #232b31;
   }
-  header button {
+  button {
     font: inherit;
     padding: 4px 10px;
     border: 1px solid #3a444c;
@@ -54,12 +102,66 @@
     color: inherit;
     cursor: pointer;
   }
-  header button:disabled {
+  button:disabled {
     opacity: 0.45;
     cursor: default;
   }
   .status {
     margin-left: auto;
     color: #8b979f;
+  }
+  aside {
+    width: 220px;
+    flex: none;
+    overflow-y: auto;
+    padding: 8px;
+    border-left: 1px solid #232b31;
+  }
+  h2 {
+    margin: 0 0 6px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #8b979f;
+  }
+  .empty {
+    margin: 0;
+    color: #6c777e;
+  }
+  ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  li {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px;
+    border-radius: 3px;
+  }
+  li.selected {
+    background: #223039;
+  }
+  li button {
+    padding: 2px 5px;
+  }
+  .name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    border-color: transparent;
+    background: none;
+  }
+  .dimmed {
+    color: #6c777e;
+  }
+  .eye {
+    border-color: transparent;
+    background: none;
   }
 </style>

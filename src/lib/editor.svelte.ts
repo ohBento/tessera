@@ -4,7 +4,7 @@
 import { open as pickFile } from "@tauri-apps/plugin-dialog";
 
 import { saveTiles } from "./export";
-import { emptyManifest, findLayer, newImageLayer, type Layer, type Manifest } from "./model";
+import { emptyManifest, findLayer, newImageLayer, removeLayerFrom, type Layer, type Manifest } from "./model";
 import { defaultDir, importAsset, listTiles, loadManifest, saveManifest, tauriDeps } from "./project";
 import type { SceneDeps, Tagged } from "./scene";
 
@@ -20,7 +20,44 @@ export const app = $state({
    * loop the old editor guarded against with a JSON.stringify comparison on
    * every reactive pass. Structural changes bump; transforms do not. */
   version: 0,
+  /** Layer picked in the list or on the canvas, "" for none. */
+  selected: "",
 });
+
+/* M1 only creates project-scope layers, so the list is manifest.shared. M2
+ * generalises this to named overlays and the list follows it there. */
+export const layers = () => app.manifest.shared;
+
+export function selectLayer(id: string) {
+  if (app.selected !== id) app.selected = id;
+}
+
+export async function toggleLayerHidden(id: string) {
+  const l = findLayer(layers(), id);
+  if (!l) return;
+  l.hidden = !l.hidden;
+  app.version++;
+  await persist();
+}
+
+export async function deleteLayer(id: string) {
+  removeLayerFrom(layers(), id);
+  if (app.selected === id) app.selected = "";
+  app.version++;
+  await persist();
+}
+
+/** `up` means visually on top, which is the end of the draw order — the list is
+ *  shown topmost-first, so the two run in opposite directions. */
+export async function moveLayer(id: string, up: boolean) {
+  const list = layers();
+  const at = list.findIndex((l) => l.id === id);
+  const to = at + (up ? 1 : -1);
+  if (at < 0 || to < 0 || to >= list.length) return;
+  [list[at], list[to]] = [list[to], list[at]];
+  app.version++;
+  await persist();
+}
 
 export const visibleIds = () => app.manifest.order.filter((id) => !app.manifest.hidden.includes(id));
 
