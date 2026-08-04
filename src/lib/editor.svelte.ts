@@ -2,6 +2,7 @@
 import { open as pickFile } from "@tauri-apps/plugin-dialog";
 
 import { saveTiles } from "./export";
+import { canRedo, canUndo, checkpoint, emptyHistory, redo, undo } from "./history";
 import {
   emptyManifest,
   findLayer,
@@ -32,6 +33,43 @@ export const app = $state({
   selected: "",
 });
 
+/* Reactive so the toolbar can grey the buttons out. */
+const history = $state(emptyHistory<Manifest>());
+export const undoable = () => canUndo(history);
+export const redoable = () => canRedo(history);
+
+/** Svelte's proxies do not survive the structured clone that Tauri's IPC and
+ *  JSON.stringify perform on them the way a plain object does. */
+const plain = <T>(v: T): T => JSON.parse(JSON.stringify(v));
+
+/** Every edit goes through here: record the state being replaced, change it,
+ *  save. The snapshot is a deep copy on purpose — handing history the live
+ *  manifest would let the next edit rewrite the recorded step in place, and
+ *  undo would restore the present.
+ *
+ *  `structural` is false for a drag: the canvas already shows the result, so
+ *  bumping the version would tear the scene down to redraw what is correct. */
+async function mutate(fn: () => void, structural = true) {
+  checkpoint(history, plain(app.manifest));
+  fn();
+  if (structural) app.version++;
+  await persist();
+}
+
+/** Undo and redo replace the whole manifest, so the scene always rebuilds and
+ *  the selection is dropped — the layer it pointed at may no longer exist. */
+async function travel(step: typeof undo<Manifest>) {
+  const there = step(history, plain(app.manifest));
+  if (!there) return;
+  app.manifest = there;
+  app.selected = "";
+  app.version++;
+  await persist();
+}
+
+export const undoEdit = () => travel(undo);
+export const redoEdit = () => travel(redo);
+
 /** Every overlay layer paired with the overlay it came from — what the layer
  *  list renders. Tile-local layers are not in here; nothing creates them yet. */
 export const layerRows = () =>
@@ -58,16 +96,14 @@ export function selectLayer(id: string) {
 export async function toggleLayerHidden(id: string) {
   const l = findLayer(listOf(id) ?? [], id);
   if (!l) return;
-  l.hidden = !l.hidden;
-  app.version++;
-  await persist();
+  await mutate(() => (l.hidden = !l.hidden));
 }
 
 export async function deleteLayer(id: string) {
-  removeLayerFrom(listOf(id), id);
-  if (app.selected === id) app.selected = "";
-  app.version++;
-  await persist();
+  await mutate(() => {
+    removeLayerFrom(listOf(id), id);
+    if (app.selected === id) app.selected = "";
+  });
 }
 
 /** `up` means visually on top, which is the end of the draw order — the list is
@@ -80,9 +116,7 @@ export async function moveLayer(id: string, up: boolean) {
   const at = list.findIndex((l) => l.id === id);
   const to = at + (up ? 1 : -1);
   if (at < 0 || to < 0 || to >= list.length) return;
-  [list[at], list[to]] = [list[to], list[at]];
-  app.version++;
-  await persist();
+  await mutate(() => ([list[at], list[to]] = [list[to], list[at]]));
 }
 
 export const visibleIds = () => app.manifest.order.filter((id) => !app.manifest.hidden.includes(id));
@@ -98,10 +132,6 @@ async function run(label: string, fn: () => Promise<void>) {
     app.busy = "";
   }
 }
-
-/** Svelte's proxies do not survive the structured clone that Tauri's IPC and
- *  JSON.stringify perform on them the way a plain object does. */
-const plain = <T>(v: T): T => JSON.parse(JSON.stringify(v));
 
 /** Every manifest write goes through here, which makes it the one place a
  *  failed write has to be reported. applyTransform is called from a canvas
@@ -123,6 +153,10 @@ export async function openFolder(dir?: string) {
     app.dir = dir ?? (await defaultDir());
     app.manifest = await loadManifest(app.dir, await listTiles(app.dir));
     app.deps = tauriDeps(app.dir);
+    app.selected = "";
+    // Undo must not reach back into the folder that was open before.
+    history.past.length = 0;
+    history.future.length = 0;
     app.version++;
   });
 }
@@ -140,12 +174,15 @@ export async function addGridImage() {
   });
   if (typeof path !== "string") return;
   await run("import", async () => {
-    const layer = newImageLayer(await importAsset(app.dir, path));
-    layer.space = "grid";
-    layer.scale = 1;
-    allTiles().layers.push(layer);
-    app.version++;
-    await persist();
+    // The copy into assets/ happens before the checkpoint: it touches the disk,
+    // not the document, so undo has nothing to take back there.
+    const asset = await importAsset(app.dir, path);
+    await mutate(() => {
+      const layer = newImageLayer(asset);
+      layer.space = "grid";
+      layer.scale = 1;
+      allTiles().layers.push(layer);
+    });
   });
 }
 
@@ -156,11 +193,12 @@ export async function applyTransform(obj: Tagged, patch: Pick<Layer, "x" | "y" |
   const list = listOf(obj.layerId) ?? app.manifest.tiles[obj.tileId]?.layers ?? [];
   const layer = findLayer(list, obj.layerId);
   if (!layer) return;
-  layer.x = patch.x;
-  layer.y = patch.y;
-  layer.rotation = patch.rotation;
-  if (layer.kind === "image") layer.scale = patch.scale;
-  await persist();
+  await mutate(() => {
+    layer.x = patch.x;
+    layer.y = patch.y;
+    layer.rotation = patch.rotation;
+    if (layer.kind === "image") layer.scale = patch.scale;
+  }, false);
 }
 
 export async function saveToGame() {

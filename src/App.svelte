@@ -12,20 +12,38 @@
     layerRows,
     moveLayer,
     pickFolder,
+    redoEdit,
+    redoable,
     saveToGame,
     selectLayer,
     toggleLayerHidden,
+    undoEdit,
+    undoable,
   } from "./lib/editor.svelte";
   import { layerLabel } from "./lib/model";
+
+  function shortcut(e: KeyboardEvent) {
+    if (!e.ctrlKey || e.target instanceof HTMLInputElement) return;
+    const key = e.key.toLowerCase();
+    // Ctrl+Shift+Z as well as Ctrl+Y — both are in wide use and cost one clause.
+    if (key === "z" && !e.shiftKey) void undoEdit();
+    else if (key === "y" || (key === "z" && e.shiftKey)) void redoEdit();
+    else return;
+    e.preventDefault();
+  }
 
   // Topmost first, matching what the canvas draws last.
   const listed = $derived([...layerRows()].reverse());
 </script>
 
+<svelte:window onkeydown={shortcut} />
+
 <main>
   <header>
     <button onclick={pickFolder} disabled={!!app.busy}>Ordner öffnen</button>
     <button onclick={addGridImage} disabled={!app.dir || !!app.busy}>Bild über das Grid</button>
+    <button onclick={undoEdit} disabled={!undoable()} title="Strg+Z">Rückgängig</button>
+    <button onclick={redoEdit} disabled={!redoable()} title="Strg+Y">Wiederholen</button>
     <button onclick={saveToGame} disabled={!app.dir || !!app.busy}>Ins Spiel schreiben</button>
     <span class="status">
       {#if app.busy}
