@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  assignExactly,
+  coveredTiles,
   DEFAULT_IMAGE_SCALE,
   DEFAULT_SHAPE_SIZE,
   DEFAULT_TEXT_SIZE,
@@ -155,6 +157,40 @@ describe("instanceCount", () => {
     const m = withOverlay();
     m.tiles.a.layers.push({ ...newTextLayer(), id: "own" });
     expect(instanceCount(m, "own", "tile")).toBe(1);
+  });
+});
+
+describe("assignExactly", () => {
+  const all = ["a", "b", "c"];
+
+  it("narrows an all-tiles overlay to just the named ones", () => {
+    const o = newOverlay("x");
+    assignExactly(o, all, ["b"]);
+    expect(o.tiles).toEqual(["b"]);
+  });
+
+  it("collapses to all when the selection is everything", () => {
+    const o = newOverlay("x", ["a"]);
+    assignExactly(o, all, ["c", "b", "a"]);
+    expect(o.tiles).toBe("all");
+  });
+
+  it("keeps folder order and drops unknown ids", () => {
+    const o = newOverlay("x", []);
+    assignExactly(o, all, ["c", "ghost", "a"]);
+    expect(o.tiles).toEqual(["a", "c"]);
+  });
+});
+
+describe("coveredTiles", () => {
+  const all = ["a", "b", "c"];
+
+  it("resolves all against the folder as it stands", () => {
+    expect(coveredTiles(newOverlay("x"), all)).toEqual(all);
+  });
+
+  it("hides ids the folder no longer has", () => {
+    expect(coveredTiles(newOverlay("x", ["a", "gone"]), all)).toEqual(["a"]);
   });
 });
 

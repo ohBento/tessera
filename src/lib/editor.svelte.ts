@@ -4,6 +4,8 @@ import { open as pickFile } from "@tauri-apps/plugin-dialog";
 import { saveTiles } from "./export";
 import { canRedo, canUndo, checkpoint, emptyHistory, redo, undo } from "./history";
 import {
+  assignExactly,
+  coveredTiles,
   emptyManifest,
   findLayer,
   instanceCount,
@@ -74,13 +76,61 @@ export function assignedTiles(): string[] {
   return overlay.tiles;
 }
 
+/* order, not visibleIds: a hidden tile still belongs to the project, and
+ * resolving against the visible ones would quietly unassign it the moment it
+ * is hidden. */
+const selectedOverlay = () => (app.selected ? overlayOf(app.manifest, app.selected) : undefined);
+
+/** A grid-space layer spans the whole wall by construction, and the renderer
+ *  does not clip it to its overlay's tiles. Restricting one would make the
+ *  document claim seven tiles while the picture still covered all of them, so
+ *  the assignment actions are simply not offered for it. Clipping a grid-space
+ *  layer to the union of its assigned cells is the feature that would lift
+ *  this; nothing has needed it yet. */
+function assignable(): boolean {
+  const overlay = selectedOverlay();
+  if (!overlay) return false;
+  return findLayer(overlay.layers, app.selected)?.space !== "grid";
+}
+
+/** Whether adding (or removing) the picked tiles would change anything.
+ *
+ *  Drives the buttons. An action that is offered but cannot do anything is
+ *  indistinguishable from a broken one — adding tiles to an overlay that
+ *  already covers everything looked exactly like a failure. */
+export function canAssign(on: boolean): boolean {
+  const overlay = selectedOverlay();
+  if (!overlay || !app.selectedTiles.length || !assignable()) return false;
+  const covered = new Set(coveredTiles(overlay, app.manifest.order));
+  return app.selectedTiles.some((id) => (on ? !covered.has(id) : covered.has(id)));
+}
+
 /** Adds the picked tiles to the selected layer's overlay, or takes them out. */
 export async function assignSelection(on: boolean) {
-  const overlay = app.selected ? overlayOf(app.manifest, app.selected) : undefined;
-  if (!overlay || !app.selectedTiles.length) return;
-  // order, not visibleIds: a hidden tile still belongs to the project, and
-  // dropping it here would quietly unassign it the moment it is hidden.
+  const overlay = selectedOverlay();
+  if (!overlay || !canAssign(on)) return;
   await mutate(() => setAssigned(overlay, app.manifest.order, [...app.selectedTiles], on));
+}
+
+/** Narrows the overlay to exactly the picked tiles. */
+export function canRestrict(): boolean {
+  const overlay = selectedOverlay();
+  if (!overlay || !app.selectedTiles.length || !assignable()) return false;
+  const covered = coveredTiles(overlay, app.manifest.order);
+  return covered.length !== app.selectedTiles.length || canAssign(true);
+}
+
+/** Why the assignment actions are off, when the reason is not simply "nothing
+ *  picked". A greyed button with no explanation reads as broken. */
+export function assignHint(): string {
+  if (!app.selected || !app.selectedTiles.length || assignable()) return "";
+  return "Grid-Bild deckt immer die ganze Wand — Zuweisen gilt nur für Kachel-Ebenen";
+}
+
+export async function restrictToSelection() {
+  const overlay = selectedOverlay();
+  if (!overlay || !canRestrict()) return;
+  await mutate(() => assignExactly(overlay, app.manifest.order, [...app.selectedTiles]));
 }
 
 /* Reactive so the toolbar can grey the buttons out. */

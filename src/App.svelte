@@ -9,7 +9,10 @@
     addGridImage,
     addImageToSelection,
     app,
+    assignHint,
     assignSelection,
+    canAssign,
+    canRestrict,
     clearTiles,
     deleteLayer,
     layerRows,
@@ -17,6 +20,7 @@
     pickFolder,
     redoEdit,
     redoable,
+    restrictToSelection,
     saveToGame,
     selectLayer,
     setMode,
@@ -25,8 +29,6 @@
     undoable,
   } from "./lib/editor.svelte";
   import { layerLabel } from "./lib/model";
-
-  const canAssign = $derived(!!app.selected && app.selectedTiles.length > 0);
 
   function shortcut(e: KeyboardEvent) {
     if (e.target instanceof HTMLInputElement) return;
@@ -49,8 +51,16 @@
     e.preventDefault();
   }
 
-  // Topmost first, matching what the canvas draws last.
-  const listed = $derived([...layerRows()].reverse());
+  /* Grouped by overlay, topmost first within each. The assignment belongs to
+     the overlay, not to a single layer, so restricting one row moves every row
+     under the same heading — showing the grouping is what makes that legible
+     instead of baffling. */
+  const groups = $derived(
+    [...app.manifest.overlays]
+      .reverse()
+      .map((overlay) => ({ overlay, layers: [...overlay.layers].reverse() }))
+      .filter((g) => g.layers.length),
+  );
 </script>
 
 <svelte:window onkeydown={shortcut} />
@@ -70,10 +80,27 @@
     <button onclick={addImageToSelection} disabled={!app.selectedTiles.length || !!app.busy}>
       Bild auf Auswahl
     </button>
-    <button onclick={() => assignSelection(true)} disabled={!canAssign} title="Gewählte Kacheln zur gewählten Ebene">
+    <button
+      onclick={() => assignSelection(true)}
+      disabled={!canAssign(true)}
+      title="Gewählte Kacheln zur gewählten Ebene hinzufügen"
+    >
       + zur Ebene
     </button>
-    <button onclick={() => assignSelection(false)} disabled={!canAssign}>− von Ebene</button>
+    <button
+      onclick={() => assignSelection(false)}
+      disabled={!canAssign(false)}
+      title="Gewählte Kacheln aus der gewählten Ebene nehmen"
+    >
+      − von Ebene
+    </button>
+    <button
+      onclick={restrictToSelection}
+      disabled={!canRestrict()}
+      title="Ebene nur noch auf den gewählten Kacheln"
+    >
+      nur Auswahl
+    </button>
     <button onclick={undoEdit} disabled={!undoable()} title="Strg+Z">Rückgängig</button>
     <button onclick={redoEdit} disabled={!redoable()} title="Strg+Y">Wiederholen</button>
     <button onclick={saveToGame} disabled={!app.dir || !!app.busy}>Ins Spiel schreiben</button>
@@ -82,6 +109,8 @@
         {app.busy}…
       {:else if app.error}
         {app.error}
+      {:else if assignHint()}
+        {assignHint()}
       {:else if app.selectedTiles.length}
         {app.selectedTiles.length} von {app.manifest.order.length} Kacheln gewählt
         <button class="link" onclick={clearTiles}>aufheben</button>
@@ -98,40 +127,36 @@
 
     <aside>
       <h2>Ebenen</h2>
-      {#if !listed.length}
+      {#if !groups.length}
         <p class="empty">Keine Ebenen.</p>
       {/if}
-      <ul>
-        {#each listed as { overlay, layer } (layer.id)}
-          <li class:selected={app.selected === layer.id}>
-            <button
-              class="eye"
-              title={layer.hidden ? "Einblenden" : "Ausblenden"}
-              onclick={() => toggleLayerHidden(layer.id)}
-            >
-              {layer.hidden ? "○" : "●"}
-            </button>
-            <button
-              class="name"
-              class:dimmed={layer.hidden}
-              title="{layerLabel(layer)} — {overlay.name}"
-              onclick={() => selectLayer(layer.id)}
-            >
-              {layerLabel(layer)}
-              <!-- The assignment, not overlay.name: the name is fixed at
-                   creation, so an overlay made from nine tiles still called
-                   itself "Alle Kacheln" after one was taken away. Renaming
-                   arrives in M4; until then the truth is the tile count. -->
-              <span class="overlay">
-                {overlay.tiles === "all" ? "alle Kacheln" : `${overlay.tiles.length} Kacheln`}
-              </span>
-            </button>
-            <button title="Nach oben" onclick={() => moveLayer(layer.id, true)}>↑</button>
-            <button title="Nach unten" onclick={() => moveLayer(layer.id, false)}>↓</button>
-            <button title="Löschen" onclick={() => deleteLayer(layer.id)}>×</button>
-          </li>
-        {/each}
-      </ul>
+      {#each groups as { overlay, layers } (overlay.id)}
+        <!-- The assignment, not overlay.name: the name is fixed at creation, so
+             an overlay made from every tile still called itself "Alle Kacheln"
+             after one was taken away. Renaming arrives in M4. -->
+        <h3 title={overlay.name}>
+          {overlay.tiles === "all" ? "alle Kacheln" : `${overlay.tiles.length} Kacheln`}
+        </h3>
+        <ul>
+          {#each layers as layer (layer.id)}
+            <li class:selected={app.selected === layer.id}>
+              <button
+                class="eye"
+                title={layer.hidden ? "Einblenden" : "Ausblenden"}
+                onclick={() => toggleLayerHidden(layer.id)}
+              >
+                {layer.hidden ? "○" : "●"}
+              </button>
+              <button class="name" class:dimmed={layer.hidden} onclick={() => selectLayer(layer.id)}>
+                {layerLabel(layer)}{layer.space === "grid" ? " · Grid" : ""}
+              </button>
+              <button title="Nach oben" onclick={() => moveLayer(layer.id, true)}>↑</button>
+              <button title="Nach unten" onclick={() => moveLayer(layer.id, false)}>↓</button>
+              <button title="Löschen" onclick={() => deleteLayer(layer.id)}>×</button>
+            </li>
+          {/each}
+        </ul>
+      {/each}
     </aside>
   </div>
 </main>
@@ -246,12 +271,16 @@
   .dimmed {
     color: #6c777e;
   }
-  .overlay {
-    display: block;
-    overflow: hidden;
-    color: #6c777e;
+  h3 {
+    margin: 10px 0 3px;
+    padding-bottom: 2px;
+    border-bottom: 1px solid #232b31;
+    color: #78dcff;
     font-size: 11px;
-    text-overflow: ellipsis;
+    font-weight: 500;
+  }
+  h3:first-of-type {
+    margin-top: 0;
   }
   .eye {
     border-color: transparent;

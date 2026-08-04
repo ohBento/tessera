@@ -212,14 +212,28 @@ export const appliesTo = (o: Overlay, tileId: string) =>
  *  otherwise an overlay that visibly covers the whole wall would still be a
  *  fixed list, and the next character to appear would silently miss it. */
 export function setAssigned(o: Overlay, allIds: string[], ids: string[], on: boolean) {
-  const current = new Set(o.tiles === "all" ? allIds : o.tiles);
+  const current = new Set(coveredTiles(o, allIds));
   for (const id of ids) {
     if (on) current.add(id);
     else current.delete(id);
   }
-  const next = allIds.filter((id) => current.has(id));
+  assignExactly(o, allIds, [...current]);
+}
+
+/** Replaces the assignment outright: the layer lands on these tiles and no
+ *  others. Adding and removing cannot express this in one step — narrowing an
+ *  overlay from everything to five tiles would mean deselecting the other
+ *  thirty-nine by hand. */
+export function assignExactly(o: Overlay, allIds: string[], ids: string[]) {
+  const wanted = new Set(ids);
+  const next = allIds.filter((id) => wanted.has(id));
   o.tiles = next.length === allIds.length ? "all" : next;
 }
+
+/** The overlay's assignment as a concrete list, resolving "all" against the
+ *  folder as it stands right now. */
+export const coveredTiles = (o: Overlay, allIds: string[]) =>
+  o.tiles === "all" ? [...allIds] : o.tiles.filter((id) => allIds.includes(id));
 
 export type Manifest = {
   version: 3;
