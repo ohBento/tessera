@@ -9,20 +9,11 @@ import * as fabric from "fabric";
 
 import { TILE_H, TILE_W } from "./bmp";
 import { resolveLayers, visibleTiles, type Base, type Layer, type Manifest } from "./model";
-import { COLS } from "./geometry";
-
-export const rowsFor = (count: number) => Math.ceil(count / COLS);
-
-export const gridSize = (count: number) => ({
-  w: COLS * TILE_W,
-  h: rowsFor(count) * TILE_H,
-});
-
-/** Top-left corner of the nth grid slot, in grid pixels. */
-export const cellAt = (index: number) => ({
-  x: (index % COLS) * TILE_W,
-  y: Math.floor(index / COLS) * TILE_H,
-});
+/* cellAt/gridSize/rowsFor live in geometry.ts — pure grid maths that
+ * mosaicBakeCrops also needs — and are re-exported here so every existing
+ * caller of scene.ts keeps working unchanged. */
+export { cellAt, gridSize, rowsFor } from "./geometry";
+import { cellAt, gridSize } from "./geometry";
 
 /** What a Fabric object remembers about where it came from, so a drag can be
  *  written back to the right layer without searching the model for a match. */
@@ -117,12 +108,18 @@ async function background(
 }
 
 /** Only corner handles: the model carries one `scale` per image layer, so a
- *  side handle would offer a non-uniform stretch it cannot store. */
-function makeInteractive(obj: fabric.Object, locked: boolean) {
+ *  side handle would offer a non-uniform stretch it cannot store.
+ *
+ *  `allowRotate` is false for a grid-space image: it gets baked into every
+ *  tile's `base` (see mosaicBakeCrops in geometry.ts), and `Base` has no
+ *  rotation field — a rotated picture would have no crop that reproduces it.
+ *  Disabling the handle here is what stops that state from being reachable at
+ *  all, rather than baking it wrong later. */
+function makeInteractive(obj: fabric.Object, locked: boolean, allowRotate = true) {
   obj.selectable = !locked;
   obj.evented = !locked;
   obj.hasControls = !locked;
-  obj.setControlsVisibility({ ml: false, mr: false, mt: false, mb: false, mtr: true });
+  obj.setControlsVisibility({ ml: false, mr: false, mt: false, mb: false, mtr: allowRotate });
 }
 
 /** Fills `canvas` with the whole wall. Backgrounds are inert; layers are
@@ -165,7 +162,7 @@ export async function buildGrid(
   for (const l of m.overlays.flatMap((o) => o.layers)) {
     if (l.hidden || l.kind !== "image" || l.space !== "grid") continue;
     const obj = await imageObject(l, deps, { w: grid.w, h: grid.h, x: 0, y: 0 });
-    if (interactive) makeInteractive(obj, !!l.locked);
+    if (interactive) makeInteractive(obj, !!l.locked, false);
     else obj.selectable = obj.evented = false;
     Object.assign(obj, { layerId: l.id, tileId: "", space: "grid" });
     canvas.add(obj);

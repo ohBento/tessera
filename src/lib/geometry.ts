@@ -10,6 +10,19 @@ import type { Crop, TextLayer } from "./model";
 
 export const COLS = 7;
 
+export const rowsFor = (count: number) => Math.ceil(count / COLS);
+
+export const gridSize = (count: number) => ({
+  w: COLS * TILE_W,
+  h: rowsFor(count) * TILE_H,
+});
+
+/** Top-left corner of the nth grid slot, in grid pixels. */
+export const cellAt = (index: number) => ({
+  x: (index % COLS) * TILE_W,
+  y: Math.floor(index / COLS) * TILE_H,
+});
+
 /** Fabric's own Text default. Anything laying out multi-line text has to agree
  *  with this or lines sit at different heights than Fabric draws them. */
 export const LINE_HEIGHT = 1.16;
@@ -59,4 +72,48 @@ export function polygonPoints(sides: number, w: number, h: number) {
     const a = -Math.PI / 2 + (i * 2 * Math.PI) / n;
     return { x: (Math.cos(a) * w) / 2, y: (Math.sin(a) * h) / 2 };
   });
+}
+
+/** Which tiles a positioned grid-space picture fully covers, and the crop of
+ *  the picture's own pixels landing on each — the inverse of scene.ts placing
+ *  an image at `layer.x/y` (grid fraction, centre origin) scaled to
+ *  `layer.scale * gridWidth`.
+ *
+ *  A tile's `base` always fills the whole tile — there is no partial-coverage
+ *  crop to fall back on — so a tile the picture only partly overlaps is left
+ *  out rather than stretched or guessed at. Rotation is not a parameter on
+ *  purpose: `Base` has no rotation field, so a rotated picture has no crop that
+ *  could reproduce it, and this signature is what stops a caller from trying. */
+export function mosaicBakeCrops(
+  layer: { x: number; y: number; scale: number },
+  natural: { w: number; h: number },
+  cellCount: number,
+): Map<number, Crop> {
+  const grid = gridSize(cellCount);
+  const dispW = layer.scale * grid.w;
+  const dispH = dispW * (natural.h / natural.w);
+  const imgLeft = layer.x * grid.w - dispW / 2;
+  const imgTop = layer.y * grid.h - dispH / 2;
+  const imgRight = imgLeft + dispW;
+  const imgBottom = imgTop + dispH;
+  const natPerGrid = natural.w / dispW;
+
+  const eps = 0.5; // grid pixels — absorbs float rounding, not a real gap
+  const out = new Map<number, Crop>();
+  for (let i = 0; i < cellCount; i++) {
+    const at = cellAt(i);
+    const fits =
+      imgLeft <= at.x + eps &&
+      imgTop <= at.y + eps &&
+      imgRight >= at.x + TILE_W - eps &&
+      imgBottom >= at.y + TILE_H - eps;
+    if (!fits) continue;
+    out.set(i, {
+      x: (at.x - imgLeft) * natPerGrid,
+      y: (at.y - imgTop) * natPerGrid,
+      w: TILE_W * natPerGrid,
+      h: TILE_H * natPerGrid,
+    });
+  }
+  return out;
 }

@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { LINE_HEIGHT, coverCrop, gradientLine, layerFont, polygonPoints, textLines, tileCover } from "./geometry";
+import {
+  cellAt,
+  coverCrop,
+  gridSize,
+  gradientLine,
+  layerFont,
+  LINE_HEIGHT,
+  mosaicBakeCrops,
+  polygonPoints,
+  textLines,
+  tileCover,
+} from "./geometry";
 import { TILE_H, TILE_W } from "./bmp";
 import { isGradient, newTextLayer } from "./model";
 
@@ -36,6 +47,75 @@ describe("tileCover", () => {
       expect(c.x + c.w).toBeLessThanOrEqual(w + 1e-9);
       expect(c.y + c.h).toBeLessThanOrEqual(h + 1e-9);
     }
+  });
+});
+
+describe("mosaicBakeCrops", () => {
+  // Same proportions as the 7x9 grid itself, so scale 1 spans it exactly —
+  // any other aspect would leave a gap on one axis even at "full" scale.
+  const natural = gridSize(60);
+
+  it("bakes every tile when the picture exactly covers the whole grid", () => {
+    const crops = mosaicBakeCrops({ x: 0.5, y: 0.5, scale: 1 }, natural, 60);
+    expect(crops.size).toBe(60);
+    // Adjacent tiles' crops tile the source without gaps or overlap.
+    const c0 = crops.get(0)!;
+    const c1 = crops.get(1)!;
+    expect(c1.x).toBeCloseTo(c0.x + c0.w, 6);
+    expect(c1.y).toBeCloseTo(c0.y, 6);
+    const c7 = crops.get(7)!; // first tile of the second row
+    expect(c7.x).toBeCloseTo(c0.x, 6);
+    expect(c7.y).toBeCloseTo(c0.y + c0.h, 6);
+  });
+
+  it("matches each tile's own aspect, not the source's", () => {
+    for (const crop of mosaicBakeCrops({ x: 0.5, y: 0.5, scale: 1 }, natural, 60).values()) {
+      expect(crop.w / crop.h).toBeCloseTo(TILE_W / TILE_H, 6);
+    }
+  });
+
+  it("only bakes tiles the picture fully covers, leaving the rest untouched", () => {
+    // Scaled down and shifted so it sits over roughly the top-left quadrant.
+    const crops = mosaicBakeCrops({ x: 0.25, y: 0.22, scale: 0.5 }, natural, 60);
+    expect(crops.size).toBeGreaterThan(0);
+    expect(crops.size).toBeLessThan(60);
+    expect(crops.has(0)).toBe(true); // top-left tile, well inside
+    expect(crops.has(59)).toBe(false); // bottom-right tile, nowhere near it
+  });
+
+  it("bakes nothing when the picture does not fully cover any single tile", () => {
+    const crops = mosaicBakeCrops({ x: 0.5, y: 0.5, scale: 0.05 }, natural, 60);
+    expect(crops.size).toBe(0);
+  });
+
+  it("rejects a real gap even a few pixels short of full coverage", () => {
+    // Sized to exactly span the grid, then nudged 5 grid px off-centre — a real
+    // shortfall, not float noise, and must still be rejected on the far side.
+    const grid = gridSize(60);
+    const shifted = mosaicBakeCrops({ x: 0.5 + 5 / grid.w, y: 0.5, scale: 1 }, natural, 60);
+    expect(shifted.has(0)).toBe(false); // left edge now short by 5px
+    expect(shifted.has(6)).toBe(true); // right edge only more overshot, still fine
+  });
+
+  it("accepts sub-pixel float slack as full coverage", () => {
+    const grid = gridSize(60);
+    const barely = mosaicBakeCrops({ x: 0.5 + 0.001 / grid.w, y: 0.5, scale: 1 }, natural, 60);
+    expect(barely.size).toBe(60);
+  });
+
+  it("reproduces the exact pixels a screen would show — no distortion", () => {
+    // A picture exactly the size of one tile, centred over tile 0's cell.
+    const grid = gridSize(60);
+    const cell = cellAt(0);
+    const centreX = (cell.x + TILE_W / 2) / grid.w;
+    const centreY = (cell.y + TILE_H / 2) / grid.h;
+    const oneTile = { w: 1000, h: (1000 * TILE_H) / TILE_W };
+    const crops = mosaicBakeCrops({ x: centreX, y: centreY, scale: TILE_W / grid.w }, oneTile, 60);
+    const crop = crops.get(0)!;
+    expect(crop.x).toBeCloseTo(0, 6);
+    expect(crop.y).toBeCloseTo(0, 6);
+    expect(crop.w).toBeCloseTo(oneTile.w, 6);
+    expect(crop.h).toBeCloseTo(oneTile.h, 6);
   });
 });
 

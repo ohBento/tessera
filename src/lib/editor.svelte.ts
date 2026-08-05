@@ -2,9 +2,11 @@
 import { open as pickFile } from "@tauri-apps/plugin-dialog";
 
 import { saveTiles } from "./export";
+import { mosaicBakeCrops } from "./geometry";
 import { canRedo, canUndo, checkpoint, emptyHistory, redo, undo } from "./history";
 import {
   assignExactly,
+  bakeMosaicInto,
   coveredTiles,
   emptyManifest,
   findLayer,
@@ -16,11 +18,12 @@ import {
   removeLayerFrom,
   setAssigned,
   visibleTiles,
+  type ImageLayer,
   type Layer,
   type Manifest,
   type Overlay,
 } from "./model";
-import { defaultDir, importAsset, listTiles, loadManifest, saveManifest, tauriDeps } from "./project";
+import { defaultDir, importAsset, listTiles, loadAsset, loadManifest, saveManifest, tauriDeps } from "./project";
 import type { SceneDeps, Tagged } from "./scene";
 
 export const app = $state({
@@ -343,6 +346,40 @@ export async function applyTransform(obj: Tagged, patch: Pick<Layer, "x" | "y" |
     layer.rotation = patch.rotation;
     if (layer.kind === "image") layer.scale = patch.scale;
   }, shared);
+}
+
+/** The currently selected grid-space picture, if that is what is selected —
+ *  what "Anwenden" acts on. */
+function selectedMosaic(): ImageLayer | undefined {
+  const overlay = selectedOverlay();
+  if (!overlay) return undefined;
+  const l = findLayer(overlay.layers, app.selected);
+  return l?.kind === "image" && l.space === "grid" ? l : undefined;
+}
+
+export const canBakeMosaic = () => !!selectedMosaic();
+
+/** Bakes the selected grid-space picture into every tile it fully covers, then
+ *  removes it: a mosaic in place is a background, not a floating object, and
+ *  should not keep sitting on top of other layers or stay draggable once it is
+ *  where it belongs. Re-positioning means adding a new picture and baking
+ *  again — there is deliberately no "unbake". */
+export async function bakeMosaic() {
+  const layer = selectedMosaic();
+  if (!layer) return;
+  await run("bake", async () => {
+    const bmp = await loadAsset(app.dir, layer.asset);
+    const ids = visibleIds();
+    const crops = mosaicBakeCrops(layer, { w: bmp.width, h: bmp.height }, ids.length);
+    if (!crops.size) {
+      app.error = "Bild deckt keine Kachel vollständig ab";
+      return;
+    }
+    await mutate(() => {
+      bakeMosaicInto(app.manifest, layer.id, layer.asset, crops, ids);
+      app.selected = "";
+    });
+  });
 }
 
 export async function saveToGame() {

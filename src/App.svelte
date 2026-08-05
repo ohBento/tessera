@@ -11,11 +11,12 @@
     app,
     assignHint,
     assignSelection,
+    bakeMosaic,
     canAssign,
+    canBakeMosaic,
     canRestrict,
     clearTiles,
     deleteLayer,
-    layerRows,
     moveLayer,
     pickFolder,
     redoEdit,
@@ -77,6 +78,13 @@
     </div>
     <button onclick={pickFolder} disabled={!!app.busy}>Ordner öffnen</button>
     <button onclick={addGridImage} disabled={!app.dir || !!app.busy}>Bild über das Grid</button>
+    <button
+      onclick={bakeMosaic}
+      disabled={!canBakeMosaic() || !!app.busy}
+      title="Backt das gewählte Wandbild in jede vollständig bedeckte Kachel; danach kein Objekt mehr"
+    >
+      Anwenden
+    </button>
     <button onclick={addImageToSelection} disabled={!app.selectedTiles.length || !!app.busy}>
       Bild auf Auswahl
     </button>

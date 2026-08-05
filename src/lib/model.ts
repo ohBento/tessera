@@ -404,9 +404,9 @@ export function instanceCount(m: Manifest, layerId: string, space: "tile" | "gri
  *  "all" overlay never matches a list, even one naming every tile: the two
  *  differ in what happens when a character is added. */
 export function overlayCovering(overlays: Overlay[], ids: string[]): Overlay | undefined {
-  const wanted = [...new Set(ids)].sort().join(" ");
+  const wanted = [...new Set(ids)].sort().join(" ");
   return overlays.find(
-    (o) => o.tiles !== "all" && [...new Set(o.tiles)].sort().join(" ") === wanted,
+    (o) => o.tiles !== "all" && [...new Set(o.tiles)].sort().join(" ") === wanted,
   );
 }
 
@@ -417,6 +417,28 @@ export const overlayOf = (m: Manifest, layerId: string) =>
 
 export const layerText = (texts: Record<string, string>, layer: TextLayer, tileId: string) =>
   (texts[layer.id] ?? layer.text).replaceAll("{{id}}", tileId);
+
+/** Writes baked crops into their tiles' `base` and removes the mosaic layer
+ *  that produced them — a mosaic in place is a background, not a floating
+ *  object, and should not keep sitting on top of other layers once it is
+ *  where it belongs.
+ *
+ *  Pure Manifest surgery, no asset loading or canvas involved, which is what
+ *  lets the whole effect of "Anwenden" be tested without Tauri: only reading
+ *  the picture's natural pixel size (to feed mosaicBakeCrops) needs it. */
+export function bakeMosaicInto(
+  m: Manifest,
+  layerId: string,
+  asset: string,
+  crops: Map<number, Crop>,
+  order: string[],
+) {
+  for (const [index, crop] of crops) {
+    m.tiles[order[index]].base = { asset, crop };
+  }
+  const overlay = overlayOf(m, layerId);
+  if (overlay) removeLayerFrom(overlay.layers, layerId);
+}
 
 type Raw = Record<string, unknown>;
 

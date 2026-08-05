@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assignExactly,
+  bakeMosaicInto,
   coveredTiles,
   DEFAULT_IMAGE_SCALE,
   DEFAULT_SHAPE_SIZE,
@@ -211,6 +212,47 @@ describe("overlayCovering", () => {
     // The two differ in what happens when a character appears: "all" picks it
     // up, a list does not. Collapsing them would silently change behaviour.
     expect(overlayCovering([newOverlay("x")], ["a", "b"])).toBeUndefined();
+  });
+});
+
+describe("bakeMosaicInto", () => {
+  it("writes each crop into its tile's base", () => {
+    const m = emptyManifest();
+    m.order = ["a", "b", "c"];
+    m.tiles = { a: emptyTile(), b: emptyTile(), c: emptyTile() };
+    const layer = newImageLayer("wall.png");
+    layer.space = "grid";
+    m.overlays = [{ ...newOverlay("Alle"), layers: [layer] }];
+
+    const crops = new Map([
+      [0, { x: 0, y: 0, w: 10, h: 10 }],
+      [2, { x: 10, y: 0, w: 10, h: 10 }],
+    ]);
+    bakeMosaicInto(m, layer.id, "wall.png", crops, m.order);
+
+    expect(m.tiles.a.base).toEqual({ asset: "wall.png", crop: crops.get(0) });
+    expect(m.tiles.b.base).toBeNull(); // not in the crop map, left untouched
+    expect(m.tiles.c.base).toEqual({ asset: "wall.png", crop: crops.get(2) });
+  });
+
+  it("removes the mosaic layer from its overlay", () => {
+    const m = emptyManifest();
+    m.order = ["a"];
+    m.tiles = { a: emptyTile() };
+    const layer = newImageLayer("wall.png");
+    const other = { ...newTextLayer(), id: "keep" };
+    m.overlays = [{ ...newOverlay("Alle"), layers: [layer, other] }];
+
+    bakeMosaicInto(m, layer.id, "wall.png", new Map(), m.order);
+
+    expect(m.overlays[0].layers.map((l) => l.id)).toEqual(["keep"]);
+  });
+
+  it("does nothing destructive when the layer is already gone", () => {
+    const m = emptyManifest();
+    m.order = ["a"];
+    m.tiles = { a: emptyTile() };
+    expect(() => bakeMosaicInto(m, "ghost", "wall.png", new Map(), m.order)).not.toThrow();
   });
 });
 
