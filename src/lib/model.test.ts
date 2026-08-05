@@ -19,11 +19,13 @@ import {
   nestingShift,
   newGroupLayer,
   newImageLayer,
+  newLayout,
   newOverlay,
   newShapeLayer,
   newTextLayer,
   overlayCovering,
   overlayOf,
+  overlaysUsingLayout,
   removeLayerFrom,
   setAssigned,
   resetTransform,
@@ -266,6 +268,22 @@ describe("overlayOf", () => {
   });
 });
 
+describe("overlaysUsingLayout", () => {
+  it("finds every overlay carrying a stamp of this layout, and no others", () => {
+    const stamped = { ...newImageLayer("render1.png"), layoutId: "L1" };
+    const other = { ...newImageLayer("render2.png"), layoutId: "L2" };
+    const plain = newImageLayer("hand-picked.png"); // never stamped from any layout
+    const m = emptyManifest();
+    m.overlays = [
+      { ...newOverlay("A"), layers: [stamped] },
+      { ...newOverlay("B"), layers: [other] },
+      { ...newOverlay("C"), layers: [plain] },
+    ];
+    expect(overlaysUsingLayout(m, "L1").map((o) => o.name)).toEqual(["A"]);
+    expect(overlaysUsingLayout(m, "nope")).toEqual([]);
+  });
+});
+
 describe("effectiveTile", () => {
   it("changes for every covered tile when the overlay's layer changes", () => {
     const m = withOverlay();
@@ -290,20 +308,21 @@ describe("layerText", () => {
 describe("migrate", () => {
   const crop = { x: 0, y: 0, w: 10, h: 10 };
 
-  it("lifts a v1 manifest all the way to v3", () => {
+  it("lifts a v1 manifest all the way to v4", () => {
     const m = migrate({ version: 1, order: ["a"], tiles: { a: { asset: "x.png", crop } } });
-    expect(m.version).toBe(3);
+    expect(m.version).toBe(4);
     expect(m.order).toEqual(["a"]);
     expect(m.tiles.a.base).toEqual({ asset: "x.png", crop });
     expect(m.tiles.a.layers).toEqual([]);
     expect(m.overlays).toEqual([]);
+    expect(m.layouts).toEqual([]);
   });
 
   it("turns a v2 shared stack into one overlay covering everything", () => {
     const shared = [{ ...newTextLayer(), id: "s1" }];
     const m = migrate({ version: 2, order: ["a", "b"], hidden: ["b"], shared, tiles: {} });
 
-    expect(m.version).toBe(3);
+    expect(m.version).toBe(4);
     expect(m.overlays).toHaveLength(1);
     expect(m.overlays[0].tiles).toBe("all");
     expect(m.overlays[0].layers.map((l) => l.id)).toEqual(["s1"]);
@@ -331,15 +350,25 @@ describe("migrate", () => {
     expect(m.tiles.a.base).toEqual({ asset: "wall.png", crop });
   });
 
-  it("leaves a v3 manifest alone", () => {
-    const v3 = emptyManifest();
-    v3.overlays = [newOverlay("Schon v3")];
-    expect(migrate(structuredClone(v3))).toEqual(v3);
+  it("adds an empty layouts list to a v3 manifest, changing nothing else", () => {
+    const v3 = { version: 3, order: ["a"], hidden: [], tiles: {}, overlays: [newOverlay("x")] };
+    const m = migrate(structuredClone(v3));
+    expect(m.version).toBe(4);
+    expect(m.layouts).toEqual([]);
+    expect(m.overlays).toEqual(v3.overlays);
+    expect(m.order).toEqual(v3.order);
+  });
+
+  it("leaves a v4 manifest alone", () => {
+    const v4 = emptyManifest();
+    v4.overlays = [newOverlay("Schon v4")];
+    v4.layouts = [newLayout("Ein Layout")];
+    expect(migrate(structuredClone(v4))).toEqual(v4);
   });
 
   it("survives a null tile and unreadable input", () => {
     expect(migrate({ version: 1, order: ["a"], tiles: { a: null } }).tiles.a.base).toBeNull();
-    expect(migrate(null).version).toBe(3);
+    expect(migrate(null).version).toBe(4);
   });
 });
 

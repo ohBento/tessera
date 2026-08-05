@@ -8,7 +8,7 @@
 import * as fabric from "fabric";
 
 import { TILE_H, TILE_W } from "./bmp";
-import { resolveLayers, visibleTiles, type Base, type Layer, type Manifest } from "./model";
+import { resolveLayers, visibleTiles, type Base, type Layer, type Layout, type Manifest } from "./model";
 /* cellAt/gridSize/rowsFor live in geometry.ts — pure grid maths that
  * mosaicBakeCrops also needs — and are re-exported here so every existing
  * caller of scene.ts keeps working unchanged. */
@@ -171,6 +171,33 @@ export async function buildGrid(
   canvas.renderAll();
 }
 
+/** Fills `canvas` with one Layout's own layers, at tile scale (624x804) — the
+ *  document a Layout is always edited as, per scale/mosaicBakeCrops in
+ *  geometry.ts caring only about tile-sized content elsewhere too.
+ *
+ *  Images only for now: text, shapes and groups arrive with the render depth
+ *  work, at which point this gains the same kind-by-kind branches buildGrid's
+ *  tile loop will gain. Until then a non-image layer is silently skipped
+ *  rather than left to throw, so an old layout doc missing that support still
+ *  opens and shows what it can. */
+export async function buildLayout(
+  canvas: fabric.StaticCanvas,
+  layout: Layout,
+  deps: SceneDeps,
+  interactive = false,
+): Promise<void> {
+  canvas.remove(...canvas.getObjects());
+  for (const l of layout.layers) {
+    if (l.hidden || l.kind !== "image") continue;
+    const obj = await imageObject(l, deps, { w: TILE_W, h: TILE_H, x: 0, y: 0 });
+    if (interactive) makeInteractive(obj, !!l.locked);
+    else obj.selectable = obj.evented = false;
+    Object.assign(obj, { layerId: l.id, tileId: "", space: "tile" });
+    canvas.add(obj);
+  }
+  canvas.renderAll();
+}
+
 /** Reads a dragged/scaled/rotated object back out in model terms. The inverse
  *  of the placement in imageObject, and the only place that inverse exists. */
 export function readBack(obj: Tagged, tileCount: number, index: number) {
@@ -182,6 +209,17 @@ export function readBack(obj: Tagged, tileCount: number, index: number) {
     x: ((obj.left ?? 0) - box.x) / box.w,
     y: ((obj.top ?? 0) - box.y) / box.h,
     scale: obj.getScaledWidth() / box.w,
+    rotation: obj.angle ?? 0,
+  };
+}
+
+/** Same inverse as readBack, for a Layout's own canvas — a document with no
+ *  grid index to look a cell up by, always exactly one tile in size. */
+export function readBackLayout(obj: fabric.Object) {
+  return {
+    x: (obj.left ?? 0) / TILE_W,
+    y: (obj.top ?? 0) / TILE_H,
+    scale: obj.getScaledWidth() / TILE_W,
     rotation: obj.angle ?? 0,
   };
 }

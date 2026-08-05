@@ -4,6 +4,7 @@ import { open as pickFile } from "@tauri-apps/plugin-dialog";
 import { saveTiles } from "./export";
 import { mosaicBakeCrops } from "./geometry";
 import { canRedo, canUndo, checkpoint, emptyHistory, redo, undo } from "./history";
+import { renderLayout } from "./layout";
 import {
   assignExactly,
   bakeMosaicInto,
@@ -12,9 +13,11 @@ import {
   findLayer,
   instanceCount,
   newImageLayer,
+  newLayout,
   newOverlay,
   overlayCovering,
   overlayOf,
+  overlaysUsingLayout,
   removeLayerFrom,
   setAssigned,
   visibleTiles,
@@ -23,7 +26,16 @@ import {
   type Manifest,
   type Overlay,
 } from "./model";
-import { defaultDir, importAsset, listTiles, loadAsset, loadManifest, saveManifest, tauriDeps } from "./project";
+import {
+  defaultDir,
+  importAsset,
+  listTiles,
+  loadAsset,
+  loadManifest,
+  saveGeneratedAsset,
+  saveManifest,
+  tauriDeps,
+} from "./project";
 import type { SceneDeps, Tagged } from "./scene";
 
 export const app = $state({
@@ -46,6 +58,14 @@ export const app = $state({
    * wall, so in layer mode every click lands on it and the tiles underneath are
    * unreachable — hence a mode rather than a cleverer hit test. */
   mode: "layers" as "layers" | "tiles",
+  /** Which Layout is open for editing, "" when looking at the wall instead.
+   *  View state only, not persisted — a Layout's own content is. */
+  openLayoutId: "",
+  /** Layer picked inside the open Layout — separate from `selected`, which is
+   *  the wall's own layer picker, because the two documents' layers are
+   *  disjoint and switching documents must not smear one's pick onto the
+   *  other. */
+  layoutSelected: "",
 });
 
 /* Both selections deliberately survive a mode switch: assigning tiles to a
@@ -378,6 +398,159 @@ export async function bakeMosaic() {
     await mutate(() => {
       bakeMosaicInto(app.manifest, layer.id, layer.asset, crops, ids);
       app.selected = "";
+    });
+  });
+}
+
+/* --- Layouts: tile-sized documents composed on their own, then rendered to a
+ * flat picture and stamped onto tiles as an ordinary image layer. Editing one
+ * means editing this document and re-stamping — there is no live link between
+ * a Layout's own layers and what ends up on a tile. --- */
+
+export const layouts = () => app.manifest.layouts;
+export const openLayout = () => app.manifest.layouts.find((l) => l.id === app.openLayoutId);
+
+export async function newLayoutDoc(name: string) {
+  await mutate(() => {
+    const l = newLayout(name.trim() || `Layout ${app.manifest.layouts.length + 1}`);
+    app.manifest.layouts.push(l);
+    app.openLayoutId = l.id;
+    app.layoutSelected = "";
+  });
+}
+
+/* Neither opening nor closing touches app.selectedTiles: the flow this exists
+ * for is picking tiles on the wall, then opening a layout to check or tweak
+ * it, then closing and stamping onto the same picked tiles — clearing the
+ * selection on either transition would break exactly that. */
+export const openLayoutDoc = (id: string) => {
+  app.openLayoutId = id;
+  app.layoutSelected = "";
+};
+export const closeLayoutDoc = () => {
+  app.openLayoutId = "";
+  app.layoutSelected = "";
+};
+
+export async function deleteLayoutDoc(id: string) {
+  await mutate(() => {
+    const at = app.manifest.layouts.findIndex((l) => l.id === id);
+    if (at >= 0) app.manifest.layouts.splice(at, 1);
+    if (app.openLayoutId === id) closeLayoutDoc();
+  });
+}
+
+export function selectLayoutLayer(id: string) {
+  if (app.layoutSelected !== id) app.layoutSelected = id;
+}
+
+export async function toggleLayoutLayerHidden(id: string) {
+  const l = findLayer(openLayout()?.layers ?? [], id);
+  if (!l) return;
+  await mutate(() => (l.hidden = !l.hidden));
+}
+
+export async function deleteLayoutLayer(id: string) {
+  const layout = openLayout();
+  if (!layout) return;
+  await mutate(() => {
+    removeLayerFrom(layout.layers, id);
+    if (app.layoutSelected === id) app.layoutSelected = "";
+  });
+}
+
+/** Same top-first draw order as moveLayer, scoped to the open Layout's own
+ *  flat list instead of an overlay. */
+export async function moveLayoutLayer(id: string, up: boolean) {
+  const list = openLayout()?.layers;
+  if (!list) return;
+  const at = list.findIndex((l) => l.id === id);
+  const to = at + (up ? 1 : -1);
+  if (at < 0 || to < 0 || to >= list.length) return;
+  await mutate(() => ([list[at], list[to]] = [list[to], list[at]]));
+}
+
+export async function addLayoutImage() {
+  const layout = openLayout();
+  if (!layout) return;
+  const path = await pickFile({ filters: [IMAGE_FILTER] });
+  if (typeof path !== "string") return;
+  await run("import", async () => {
+    const asset = await importAsset(app.dir, path);
+    await mutate(() => {
+      const l = newImageLayer(asset);
+      layout.layers.push(l);
+      app.layoutSelected = l.id;
+    });
+  });
+}
+
+/** Writes a finished drag/scale/rotate back into a Layout's own layer. Unlike
+ *  applyTransform on the wall, this always skips the rebuild: nothing inside
+ *  one Layout is ever shared with itself, so there is never a second instance
+ *  left showing a stale position. */
+export async function applyLayoutTransform(
+  layerId: string,
+  patch: Pick<Layer, "x" | "y" | "rotation"> & { scale: number },
+) {
+  const layer = findLayer(openLayout()?.layers ?? [], layerId);
+  if (!layer) return;
+  await mutate(() => {
+    layer.x = patch.x;
+    layer.y = patch.y;
+    layer.rotation = patch.rotation;
+    if (layer.kind === "image") layer.scale = patch.scale;
+  }, false);
+}
+
+export const canStampLayout = () => app.selectedTiles.length > 0;
+
+/** Renders the layout once and drops the result onto the picked tiles as an
+ *  ordinary image layer. Stamping the same tile set again with the same
+ *  layout updates that stamp's picture in place rather than stacking a
+ *  duplicate — overlayFor already reuses the matching overlay, and finding the
+ *  matching layoutId inside it is the rest. */
+export async function stampLayout(layoutId: string) {
+  const layout = app.manifest.layouts.find((l) => l.id === layoutId);
+  if (!layout || !app.deps || !canStampLayout()) return;
+  await run("stamp", async () => {
+    const bytes = await renderLayout(layout, app.deps!);
+    const asset = await saveGeneratedAsset(app.dir, bytes);
+    await mutate(() => {
+      const overlay = overlayFor(app.selectedTiles);
+      const existing = overlay.layers.find(
+        (l): l is ImageLayer => l.kind === "image" && l.layoutId === layoutId,
+      );
+      if (existing) existing.asset = asset;
+      else {
+        const l = newImageLayer(asset);
+        l.layoutId = layoutId;
+        overlay.layers.push(l);
+      }
+    });
+  });
+}
+
+/** How many spots a Layout is currently stamped onto — shown next to it so a
+ *  design nobody uses anymore is visibly safe to delete. */
+export const layoutUsage = (layoutId: string) => overlaysUsingLayout(app.manifest, layoutId).length;
+
+/** Re-renders once and refreshes every existing stamp of this Layout across
+ *  every overlay, so a design used in several places updates everywhere at
+ *  once instead of being re-stamped by hand at each. */
+export async function updateLayoutStamps(layoutId: string) {
+  const layout = app.manifest.layouts.find((l) => l.id === layoutId);
+  const targets = overlaysUsingLayout(app.manifest, layoutId);
+  if (!layout || !app.deps || !targets.length) return;
+  await run("update", async () => {
+    const bytes = await renderLayout(layout, app.deps!);
+    const asset = await saveGeneratedAsset(app.dir, bytes);
+    await mutate(() => {
+      for (const o of overlaysUsingLayout(app.manifest, layoutId)) {
+        for (const l of o.layers) {
+          if (l.kind === "image" && l.layoutId === layoutId) l.asset = asset;
+        }
+      }
     });
   });
 }

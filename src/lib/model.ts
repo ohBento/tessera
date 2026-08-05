@@ -60,6 +60,10 @@ export type ImageLayer = Common & {
   /* Optional so manifests saved before flipping existed still load unchanged. */
   flipX?: boolean;
   flipY?: boolean;
+  /* Set when this picture is a stamp rendered from a Layout, so "Layout
+   * aktualisieren" can find every copy across every overlay and refresh its
+   * asset in one pass. Absent for an ordinarily imported picture. */
+  layoutId?: string;
 };
 
 export type ShapeKind = "rect" | "ellipse" | "polygon";
@@ -235,23 +239,48 @@ export function assignExactly(o: Overlay, allIds: string[], ids: string[]) {
 export const coveredTiles = (o: Overlay, allIds: string[]) =>
   o.tiles === "all" ? [...allIds] : o.tiles.filter((id) => allIds.includes(id));
 
+/** A tile-sized composition, edited on its own — not on the wall — and kept
+ *  around as a reusable document rather than being consumed the moment it is
+ *  used. It is never rendered directly onto a tile; it is only ever rendered
+ *  to a flat picture and *that* is what gets stamped (see ImageLayer.layoutId
+ *  and stampLayout in editor.svelte.ts). That split is deliberate: the layout
+ *  keeps its structure, styles and per-layer editability for as long as you
+ *  want to keep changing it, while what actually sits on a tile is nothing
+ *  more exotic than an ordinary picture, reusing every bit of image-layer
+ *  machinery that already exists. */
+export type Layout = {
+  id: string;
+  name: string;
+  layers: Layer[];
+};
+
+export const newLayout = (name: string): Layout => ({ id: newId(), name, layers: [] });
+
 export type Manifest = {
-  version: 3;
+  version: 4;
   order: string[];
   hidden: string[];
   overlays: Overlay[];
   tiles: Record<string, Tile>;
+  layouts: Layout[];
 };
 
 export const emptyTile = (): Tile => ({ base: null, layers: [], text: {} });
 
 export const emptyManifest = (): Manifest => ({
-  version: 3,
+  version: 4,
   order: [],
   hidden: [],
   overlays: [],
   tiles: {},
+  layouts: [],
 });
+
+/** Every overlay holding a stamp of this layout — what "Layout aktualisieren"
+ *  has to refresh, and what a Layout's own editor shows as "used on N spots". */
+export function overlaysUsingLayout(m: Manifest, layoutId: string): Overlay[] {
+  return m.overlays.filter((o) => o.layers.some((l) => l.kind === "image" && l.layoutId === layoutId));
+}
 
 export const newOverlay = (name: string, tiles: string[] | "all" = "all"): Overlay => ({
   id: newId(),
@@ -472,10 +501,16 @@ function v2ToV3(m: Raw): Raw {
   };
 }
 
+/** v3 had no Layouts at all — nothing to convert, just the field appearing. */
+function v3ToV4(m: Raw): Raw {
+  return { ...m, version: 4, layouts: [] };
+}
+
 export function migrate(raw: unknown): Manifest {
   let m = raw as Raw | null;
   if (!m || typeof m !== "object") return emptyManifest();
-  if (m.version !== 2 && m.version !== 3) m = v1ToV2(m);
+  if (m.version !== 2 && m.version !== 3 && m.version !== 4) m = v1ToV2(m);
   if (m.version === 2) m = v2ToV3(m);
+  if (m.version === 3) m = v3ToV4(m);
   return { ...emptyManifest(), ...m } as Manifest;
 }

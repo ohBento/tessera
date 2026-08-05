@@ -76,22 +76,35 @@ export async function saveManifest(dir: string, m: Manifest) {
   await rename(`${path}.tmp`, path);
 }
 
-/** Copies a picked image into assets/ under its content hash and returns the name. */
-export async function importAsset(dir: string, sourcePath: string): Promise<string> {
-  const bytes = await readFile(sourcePath);
+async function hashBytes(bytes: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
-  const hash = Array.from(new Uint8Array(digest).slice(0, 8))
+  return Array.from(new Uint8Array(digest).slice(0, 8))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
-  const ext = sourcePath.slice(sourcePath.lastIndexOf(".")).toLowerCase() || ".png";
-  const name = `${hash}${ext}`;
+}
 
+/** Writes bytes into assets/ under their content hash, unless a file with that
+ *  name is already there — shared by importAsset (bytes read from a picked
+ *  file) and saveGeneratedAsset (bytes rendered in memory), so the hashing and
+ *  write-once rule live in exactly one place. */
+async function storeAsset(dir: string, bytes: Uint8Array, ext: string): Promise<string> {
+  const name = `${await hashBytes(bytes)}${ext}`;
   const assets = await assetsDir(dir);
   await mkdir(assets, { recursive: true });
   const target = await join(assets, name);
   if (!(await exists(target))) await writeFile(target, bytes);
   return name;
 }
+
+/** Copies a picked image into assets/ under its content hash and returns the name. */
+export async function importAsset(dir: string, sourcePath: string): Promise<string> {
+  const ext = sourcePath.slice(sourcePath.lastIndexOf(".")).toLowerCase() || ".png";
+  return storeAsset(dir, await readFile(sourcePath), ext);
+}
+
+/** Same content-addressed scheme as importAsset, for bytes that were rendered
+ *  in memory (a Layout's stamp) rather than read from a picked file. */
+export const saveGeneratedAsset = (dir: string, bytes: Uint8Array) => storeAsset(dir, bytes, ".png");
 
 /** SVG needs its type spelled out or the blob will not decode at all. */
 const mime = (name: string) => (name.toLowerCase().endsWith(".svg") ? "image/svg+xml" : "");
