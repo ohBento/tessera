@@ -79,7 +79,10 @@ filesystem** — do it between scenarios for a clean slate.
   next to `tessera` rather than inside it. Anything about what is actually on
   screen goes through these: control positions, the viewport transform, which
   object is active, what `scaleX` a drag left behind. `tesseraLayout` is
-  `undefined` whenever no Layout is open.
+  `undefined` whenever no Layout is open. Each is **two** stacked canvases —
+  `lowerCanvasEl`/`getContext()` for the objects, `upperCanvasEl`/`contextTop`
+  for handles and the selection box — and `renderAll()` touches only the first.
+  Reading pixels means saying which.
 - `tessera.readTextFile(path)` — read the manifest back off the mock
   filesystem, at `/mock/Documents/Black Desert/FaceTexture.tessera/manifest.json`.
   Spell the path out: the mock filesystem does not resolve `..`, so building it
@@ -156,6 +159,20 @@ then `drop`.
   `tessera.app` instead; that is the better evidence anyway. When a screenshot
   does work it still lags the DOM by a frame after a click, and the
   coordinate-to-CSS scale changes with the window size.
+- **A pixel probe is worthless until the canvas has a real size.** Mounted in
+  a bare document — a browser test, a component rendered on its own — the stage
+  collapses to about one pixel wide and the wall draws at 0.02% zoom, where
+  every guide and every tile mark is sub-pixel. The probe then reads zero
+  whatever the code does, and an assertion built on it passes against a bug
+  that is plainly visible in the app. Set `setDimensions` and a workable
+  `setViewportTransform` yourself, or check the numbers you are measuring are
+  numbers at all before believing a clean result. This has already produced one
+  green test against a live defect.
+- **`requestRenderAll` will not fire while the pane is hidden** — it waits on
+  an animation frame, the same reason never to await one. Call `renderAll()`
+  directly when a measurement depends on the redraw having happened. A
+  selection set from the console and then measured looks like "the highlight
+  does not draw" otherwise.
 - **Alt does double duty on the Layout canvas.** It suppresses snapping while
   dragging, and it is also Fabric's `centeredKey`: holding it through a handle
   drag makes the scale centred, which quietly doubles every factor you measure.
