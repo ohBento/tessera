@@ -15,10 +15,14 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import App from "./App.svelte";
 import {
+  addLayoutText,
   app,
   canGroupLayers,
   canStampLayout,
   freeCount,
+  history,
+  setLayerField,
+  undoEdit,
   groupLayoutLayers,
   groups,
   layouts,
@@ -29,6 +33,7 @@ import {
   toggleLayoutPick,
 } from "./lib/editor.svelte";
 import { addLayoutImage, assignLayout, newLayoutDoc, openLayout } from "./lib/editor.svelte";
+import { RUN_MS } from "./lib/history";
 import { emptyManifest, findLayer, groupShift } from "./lib/model";
 import { queuePick, resetMockFiles, stashPickedFile } from "./lib/platform";
 
@@ -281,6 +286,44 @@ describe("the Layout editor", () => {
     expect(moved.y + groupShift(second).dy).toBeCloseTo(before.y, 5);
     expect(first.kind === "group" && first.children.map((x) => x.id)).toEqual([b]);
     expect(second.kind === "group" && second.children.map((x) => x.id)).toEqual([c, d, a]);
+  });
+
+  it("spends one undo step on a whole run of typing", async () => {
+    await newLayoutDoc("Tippen");
+    await addLayoutText();
+    const id = openLayout()!.layers[0].id;
+
+    /* Busy-wait, not setTimeout: this test is about a time window, and a
+     * background tab throttles timers to about a second — long enough to end
+     * the very run being measured. */
+    const spin = (ms: number) => {
+      const end = performance.now() + ms;
+      while (performance.now() < end);
+    };
+
+    const before = history.past.length;
+    for (const word of ["M", "Me", "Mei", "Mein"]) {
+      await setLayerField(id, "text", word);
+      spin(30);
+    }
+    expect(history.past.length - before).toBe(1);
+
+    await undoEdit();
+    const back = findLayer(openLayout()!.layers, id);
+    expect(back?.kind === "text" && back.text).toBe("Text");
+  });
+
+  it("starts a new step once the run has gone quiet", async () => {
+    await newLayoutDoc("Pause");
+    await addLayoutText();
+    const id = openLayout()!.layers[0].id;
+
+    const before = history.past.length;
+    await setLayerField(id, "text", "A");
+    const end = performance.now() + RUN_MS + 50;
+    while (performance.now() < end);
+    await setLayerField(id, "text", "AB");
+    expect(history.past.length - before).toBe(2);
   });
 
   it("offers grouping only from two layers up", async () => {

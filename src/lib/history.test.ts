@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import { LIMIT, canRedo, canUndo, checkpoint, emptyHistory, redo, undo, type History } from "./history";
+import {
+  LIMIT,
+  RUN_MS,
+  canRedo,
+  canUndo,
+  checkpoint,
+  emptyHistory,
+  redo,
+  undo,
+  type History,
+} from "./history";
 
 /** Drives the stack the way the editor does: checkpoint the old value, then
  *  replace it. Returns whatever is "on screen" after the run. */
@@ -63,6 +73,58 @@ describe("redo", () => {
     expect(redo(h, now)).toBeUndefined();
     // Undo still reaches the state before that new edit.
     expect(undo(h, now)).toBe("a");
+  });
+});
+
+describe("runs of same-kind edits collapse into one step", () => {
+  /** Typing five characters: five edits, all of the same field. */
+  const typeFive = (h: History<string>) => {
+    for (const [i, s] of ["T", "Te", "Tes", "Test", "Test!"].entries()) {
+      checkpoint(h, i === 0 ? "" : s.slice(0, -1), "field:a:text", 1000 + i * 50);
+    }
+  };
+
+  it("keeps only the state from before the run started", () => {
+    const h = emptyHistory<string>();
+    typeFive(h);
+    expect(h.past).toEqual([""]);
+    // One press takes back the whole word, not one letter.
+    expect(undo(h, "Test!")).toBe("");
+  });
+
+  it("starts a new step after a pause", () => {
+    const h = emptyHistory<string>();
+    checkpoint(h, "a", "field:a:text", 1000);
+    checkpoint(h, "b", "field:a:text", 1000 + RUN_MS + 1);
+    expect(h.past).toEqual(["a", "b"]);
+  });
+
+  it("starts a new step when a different field is touched", () => {
+    const h = emptyHistory<string>();
+    checkpoint(h, "a", "field:a:text", 1000);
+    checkpoint(h, "b", "field:a:size", 1010);
+    expect(h.past).toEqual(["a", "b"]);
+  });
+
+  it("never collapses an edit that gave no key", () => {
+    const h = emptyHistory<string>();
+    checkpoint(h, "a", undefined, 1000);
+    checkpoint(h, "b", undefined, 1001);
+    expect(h.past).toEqual(["a", "b"]);
+  });
+
+  it("ends the run at an undo, so typing after it is its own step", () => {
+    const h = emptyHistory<string>();
+    typeFive(h);
+    expect(undo(h, "Test!")).toBe("");
+    expect(h.past).toEqual([]);
+
+    // Same field, well inside the window — but the run ended at the undo, so
+    // this records a step instead of vanishing into the one just taken back.
+    checkpoint(h, "", "field:a:text", 1300);
+    expect(h.past).toEqual([""]);
+    // And the forked future is dropped, as any new edit does.
+    expect(h.future).toEqual([]);
   });
 });
 

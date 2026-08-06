@@ -49,10 +49,21 @@
   let built = "";
   let rebuilding = false;
 
-  function rebuild(key: string, deps: typeof app.deps) {
+  /* One pending rebuild at a time. A burst of edits — a slider being dragged,
+   * a caption being typed — used to queue one teardown-and-rebuild per event
+   * and then work through all of them, each drawing a state already three
+   * changes out of date. The pending build reads the newest state when it
+   * actually starts, so a burst costs two builds instead of thirty. */
+  let queued = false;
+
+  function rebuild(deps: typeof app.deps) {
+    if (queued) return building;
+    queued = true;
     building = building
       .then(async () => {
+        queued = false;
         const layout = openLayout();
+        const key = `${app.openLayoutId}:${app.version}`;
         if (!canvas || !deps || !layout) return;
         if (!built) fit();
         rebuilding = true;
@@ -76,7 +87,7 @@
   $effect(() => {
     const key = `${app.openLayoutId}:${app.version}`;
     const deps = app.deps;
-    if (canvas && deps && app.openLayoutId && key !== built) void rebuild(key, deps);
+    if (canvas && deps && app.openLayoutId && key !== built) void rebuild(deps);
   });
 
   /** Every canvas object standing for one of these layer ids. A layer inside a

@@ -209,7 +209,7 @@ export const tileText = (tileId: string, layerId: string): string | undefined =>
 export async function setTileText(tileId: string, layerId: string, text: string) {
   const tile = app.manifest.tiles[tileId];
   if (!tile || tile.text[layerId] === text) return;
-  await mutate(() => (tile.text[layerId] = text));
+  await mutate(() => (tile.text[layerId] = text), true, `text:${tileId}:${layerId}`);
 }
 
 /** Drops the override so the tile follows the layer's default again — the only
@@ -223,7 +223,7 @@ export async function clearTileText(tileId: string, layerId: string) {
 export async function renameGroup(groupId: string, name: string) {
   const group = findGroup(groupId);
   if (!group || !name.trim() || group.name === name.trim()) return;
-  await mutate(() => (group.name = name.trim()));
+  await mutate(() => (group.name = name.trim()), true, `rename:${groupId}`);
 }
 
 /** Deleting a group frees its tiles and takes its stamps with them — the
@@ -240,8 +240,11 @@ export async function swapTilePlaces(a: string, b: string) {
   await mutate(() => swapTiles(app.manifest, a, b));
 }
 
-/* Reactive so the toolbar can grey the buttons out. */
-const history = $state(emptyHistory<Manifest>());
+/* Reactive so the toolbar can grey the buttons out. Exported so a test can
+ * assert how many steps an action cost — the difference between "typing a
+ * word is one undo" and "one per letter" is invisible from the outside
+ * otherwise. */
+export const history = $state(emptyHistory<Manifest>());
 export const undoable = () => canUndo(history);
 export const redoable = () => canRedo(history);
 
@@ -256,14 +259,24 @@ const plain = <T>(v: T): T => JSON.parse(JSON.stringify(v));
  *
  *  `structural` is false for a drag: the canvas already shows the result, so
  *  bumping the version would tear the scene down to redraw what is correct. */
-async function mutate(fn: () => void, structural = true) {
+/** Every edit goes through here.
+ *
+ *  `structural` is false for a drag: the canvas already shows the result, so
+ *  bumping the version would tear the scene down to redraw what is correct.
+ *
+ *  `run` names a continuous kind of edit — one field of one layer, say — and
+ *  collapses the whole burst into a single undo step. Dragging a slider fires
+ *  one of these per pointer event; without it, a single drag filled a fifth of
+ *  the two-hundred-step history and could only be taken back one notch at a
+ *  time. */
+async function mutate(fn: () => void, structural = true, run?: string) {
   /* Cleared here rather than left to time out: the status line has one slot,
    * and a note from three actions ago ("12 Kacheln geschrieben") sat there
    * hiding the live selection count and its "aufheben" link until something
    * else happened to overwrite it. Anything a mutation wants to say sets it
    * inside fn, after this. */
   app.error = "";
-  checkpoint(history, plain(app.manifest));
+  checkpoint(history, plain(app.manifest), run);
   fn();
   if (structural) app.version++;
   await persist();
@@ -698,9 +711,15 @@ export type LayerField = keyof TextLayer | keyof ShapeLayer | keyof ImageLayer;
 export async function setLayerField(id: string, key: LayerField, value: unknown) {
   const layer = anyLayer(id) as Record<string, unknown> | undefined;
   if (!layer || layer[key] === value) return;
-  await mutate(() => {
-    layer[key] = value;
-  });
+  await mutate(
+    () => {
+      layer[key] = value;
+    },
+    true,
+    // One run per field per layer: typing a caption is one step, and switching
+    // to a different slider starts a new one.
+    `field:${id}:${key}`,
+  );
 }
 
 /** Writes a finished drag/scale/rotate back into a Layout's own layer. Unlike

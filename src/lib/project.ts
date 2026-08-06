@@ -85,14 +85,25 @@ export async function saveApplied(dir: string, tiles: Applied) {
  *  A queue rather than a lock, because a dropped save is worse than a late
  *  one: every caller still gets its turn, in order. */
 let writing: Promise<void> = Promise.resolve();
+let queuedWrite: { dir: string; m: Manifest } | null = null;
 
 export function saveManifest(dir: string, m: Manifest): Promise<void> {
+  /* Newer state supersedes older: a burst of edits — a slider being dragged —
+   * asks for one save per event, and writing every intermediate stage of a
+   * document that is about to change again is work nobody reads. The last one
+   * contains all of them, so an earlier caller's promise resolving on a later
+   * write is not a compromise. */
+  queuedWrite = { dir, m };
   writing = writing
     .catch(() => {})
     .then(async () => {
-      const path = await manifestPath(dir);
-      await mkdir(await projectDir(dir), { recursive: true });
-      await writeTextFile(`${path}.tmp`, JSON.stringify(m, null, 2));
+      const next = queuedWrite;
+      // Already covered by a later call that ran ahead of this turn.
+      if (!next) return;
+      queuedWrite = null;
+      const path = await manifestPath(next.dir);
+      await mkdir(await projectDir(next.dir), { recursive: true });
+      await writeTextFile(`${path}.tmp`, JSON.stringify(next.m, null, 2));
       await rename(`${path}.tmp`, path);
     });
   return writing;

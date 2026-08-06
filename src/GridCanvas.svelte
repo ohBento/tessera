@@ -84,9 +84,18 @@
    * being worked on, and the actions that need one would then do nothing. */
   let rebuilding = false;
 
-  function rebuild(version: number, deps: typeof app.deps) {
+  /* One pending rebuild at a time; the pending one reads the newest state when
+   * it starts. A burst of edits used to queue one full teardown-and-rebuild
+   * per event, each drawing a state already several changes stale. */
+  let queued = false;
+
+  function rebuild(deps: typeof app.deps) {
+    if (queued) return building;
+    queued = true;
     building = building
       .then(async () => {
+        queued = false;
+        const version = app.version;
         if (!canvas || !deps) return;
         // Fit *before* building, not after: the tile count comes from the
         // manifest, so the viewport can be right from the first frame instead of
@@ -117,7 +126,7 @@
     // Read both so the effect re-runs when either changes.
     const version = app.version;
     const deps = app.deps;
-    if (canvas && deps && version !== built) void rebuild(version, deps);
+    if (canvas && deps && version !== built) void rebuild(deps);
   });
 
   /* The tile highlight is painted in the after:render hook, and Fabric only

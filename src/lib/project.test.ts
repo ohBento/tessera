@@ -60,17 +60,18 @@ describe("saveManifest survives overlapping writes", () => {
    *  Unserialised, the second write clobbers the temp file the first is about
    *  to rename and one of them fails outright — a lost write against a real
    *  disk, not just a message. */
-  it("writes every version in order when three are started at once", async () => {
+  it("lands the newest state and leaves no temp behind when three overlap", async () => {
     files.clear();
+    rename.mockClear();
     const m = (n: number) => ({ ...emptyManifest(), order: [`v${n}`] });
 
     await Promise.all([saveManifest("/d", m(1)), saveManifest("/d", m(2)), saveManifest("/d", m(3))]);
 
-    expect(rename).toHaveBeenCalledTimes(3);
-    // Last one in wins, and nothing threw on the way.
     expect(files.get("/d/../FaceTexture.tessera/manifest.json")).toContain("v3");
-    // No temp file left behind.
     expect([...files.keys()].some((k) => k.endsWith(".tmp"))).toBe(false);
+    // Superseded rather than all written: the last state contains the others,
+    // and writing each stage of a document still being edited helps nobody.
+    expect(rename.mock.calls.length).toBeLessThan(3);
   });
 
   it("keeps going after one write fails", async () => {

@@ -104,6 +104,13 @@ grouping and moving.
   correct behaviour, and it has already produced one false "undo is broken"
   reading. If the source is being edited while you work, say so in the report
   and re-check anything decisive against a settled tree.
+- **A background tab throttles `setTimeout` to about one second.** Any test
+  where the delay itself is the point — undo steps collapsing while edits keep
+  arriving, a debounce, anything with a window — will read wrong. Busy-wait on
+  `performance.now()` for those. This has already produced one false "undo
+  coalescing does not work" reading, off by a factor of twenty-five.
+- After a run of failed HMR updates the page can be left half-loaded, throwing
+  `X is not defined` for things that do exist. Reload before believing it.
 
 ## What to report
 
