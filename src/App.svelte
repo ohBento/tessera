@@ -193,6 +193,21 @@
     e.stopPropagation();
   }
 
+  /** A yes/no the user actually answered.
+   *
+   *  A dialog that cannot open must not read as "no". It did: the confirmation
+   *  was awaited inside a condition, so a rejected ask aborted the action with
+   *  no dialog, no error and no change — a button that did nothing. Cancelling
+   *  is still the safe answer when it fails, but now it says so. */
+  async function confirmed(message: string, title: string) {
+    try {
+      return await ask(message, { title, kind: "warning" });
+    } catch (e) {
+      app.error = `Could not ask for confirmation: ${e}`;
+      return false;
+    }
+  }
+
   /** Deleting a Layout leaves its stamps behind as pictures nothing owns —
    *  they keep rendering, but the row falls back to the asset hash and there
    *  is no way back except undo. Worth the same warning a group gets. */
@@ -200,12 +215,12 @@
     const used = layoutUsage(id);
     if (
       used &&
-      !(await ask(
+      !(await confirmed(
         // Both units again: the pictures left behind are counted per group,
         // but what the deletion is visible on is tiles.
         `"${name}" is stamped on ${used} group(s), ${layoutTiles(id)} tile(s). ` +
           `The stamps stay behind as nameless pictures.`,
-        { title: "Delete layout?", kind: "warning" },
+        "Delete layout?",
       ))
     )
       return;
@@ -215,10 +230,10 @@
   async function removeGroup(id: string, name: string, stamps: number) {
     if (
       stamps &&
-      !(await ask(`"${name}" has ${stamps} layout(s) on its tiles. They go with it.`, {
-        title: "Delete group?",
-        kind: "warning",
-      }))
+      !(await confirmed(
+        `"${name}" has ${stamps} layout(s) on its tiles. They go with it.`,
+        "Delete group?",
+      ))
     )
       return;
     await deleteGroup(id);
