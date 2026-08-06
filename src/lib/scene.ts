@@ -389,9 +389,8 @@ export async function buildLayout(
   interactive = false,
 ): Promise<void> {
   canvas.remove(...canvas.getObjects());
-  for (const obj of await layoutObjects(layout.layers, deps, interactive, { dx: 0, dy: 0 }, false)) {
-    canvas.add(obj);
-  }
+  const objs = await layoutObjects(layout.layers, deps, interactive, { dx: 0, dy: 0 }, false, 1);
+  for (const obj of objs) canvas.add(obj);
   canvas.renderAll();
 }
 
@@ -404,24 +403,28 @@ export async function buildLayout(
  *  individually clickable — which is the whole point of grouping here, since
  *  the list is what selects a group and the canvas is what edits one layer.
  *
- *  ponytail: a group's own opacity and blend are not applied to the flattened
- *  result — with loose objects there is nothing to flatten. Swap in a real
- *  fabric.Group when half-transparent overlapping children must stop showing
- *  through each other. */
+ *  A group's opacity is multiplied into its members on the way down, like the
+ *  displacement — the panel offers the slider, so ignoring the value made a
+ *  control that does nothing.
+ *
+ *  ponytail: multiplied opacity is not the same as fading a merged picture —
+ *  half-transparent overlapping children show through each other. Swap in a
+ *  real fabric.Group when that difference matters. */
 async function layoutObjects(
   layers: Layer[],
   deps: SceneDeps,
   interactive: boolean,
   shift: { dx: number; dy: number },
   locked: boolean,
+  fade: number,
 ): Promise<fabric.Object[]> {
   const out: fabric.Object[] = [];
   for (const l of layers) {
     if (l.hidden) continue;
     if (l.kind === "group") {
       const own = groupShift(l);
-      // Hiding or locking a group has to reach its members, or the row would
-      // claim something the canvas does not do.
+      // Hiding, locking or fading a group has to reach its members, or the
+      // row would claim something the canvas does not do.
       out.push(
         ...(await layoutObjects(
           l.children,
@@ -429,11 +432,12 @@ async function layoutObjects(
           interactive,
           { dx: shift.dx + own.dx, dy: shift.dy + own.dy },
           locked || !!l.locked,
+          fade * l.opacity,
         )),
       );
       continue;
     }
-    const placed = { ...l, x: l.x + shift.dx, y: l.y + shift.dy } as Layer;
+    const placed = { ...l, x: l.x + shift.dx, y: l.y + shift.dy, opacity: l.opacity * fade } as Layer;
     const obj = await layerObject(placed, deps, { w: TILE_W, h: TILE_H, x: 0, y: 0 }, "", {});
     if (!obj) continue;
     // A locked group locks its members, so the flag has to travel down.

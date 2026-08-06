@@ -248,3 +248,35 @@ describe("renderLayout", () => {
     expect(opaque).toBe(0);
   });
 });
+
+describe("group opacity", () => {
+  it("fades every member by the group's own opacity, nested included", async () => {
+    /* The panel offers the slider on a group, so the renderer has to honour
+     * it — it used to be dropped in the flattening, a control that did
+     * nothing. Multiplied, not replaced: a half-faded child in a half-faded
+     * group is quarter-faded. */
+    const layout = newLayout("Fade");
+    const dim = newShapeLayer("rect");
+    dim.opacity = 0.8;
+    const inner = newGroupLayer([dim]);
+    inner.opacity = 0.5;
+    const solo = newShapeLayer("ellipse");
+    const outer = newGroupLayer([inner]);
+    outer.opacity = 0.5;
+    layout.layers.push(outer, solo);
+
+    const el = document.createElement("canvas");
+    document.body.append(el);
+    const canvas = new fabric.Canvas(el, { width: TILE_W, height: TILE_H });
+    try {
+      await buildLayout(canvas, layout, testDeps, true);
+      const by = (id: string) =>
+        canvas.getObjects().find((o) => (o as { layerId?: string }).layerId === id);
+      expect(by(dim.id)?.opacity).toBeCloseTo(0.8 * 0.5 * 0.5, 5);
+      // A loose layer is untouched by someone else's group.
+      expect(by(solo.id)?.opacity).toBe(1);
+    } finally {
+      await canvas.dispose();
+    }
+  });
+});
