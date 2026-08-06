@@ -33,11 +33,16 @@
   </label>
   <label class="field">
     <span>Größe</span>
+    <!-- The ceiling follows the layer, and there is no step. A canvas handle
+         has no limits, so a caption scaled past the end of the track showed as
+         pinned at the maximum and the next nudge — the gesture that means "a
+         hair smaller" — shrank it by half. Rounding did the same in miniature:
+         touching the slider at all snapped the size to the nearest step. -->
     <input
       type="range"
       min="0.02"
-      max="0.4"
-      step="0.005"
+      max={Math.max(0.4, layer.size)}
+      step="any"
       value={layer.size}
       oninput={(e) => set("size", num(e))}
     />
@@ -112,8 +117,8 @@
     <input
       type="range"
       min="0.02"
-      max="1.5"
-      step="0.01"
+      max={Math.max(1.5, layer.w)}
+      step="any"
       value={layer.w}
       oninput={(e) => set("w", num(e))}
     />
@@ -123,8 +128,8 @@
     <input
       type="range"
       min="0.02"
-      max="1.5"
-      step="0.01"
+      max={Math.max(1.5, layer.h)}
+      step="any"
       value={layer.h}
       oninput={(e) => set("h", num(e))}
     />

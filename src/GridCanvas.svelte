@@ -143,8 +143,12 @@
    * other object is inert. That replaces the old V/M mode: a full-wall picture
    * used to swallow every click, and the mode existed purely to get past it.
    *
-   * Fabric decides hit testing per object, so this is the same switch
-   * makeInteractive already flips for a locked layer. */
+   * Fabric decides hit testing per object, so this writes the same switch
+   * makeInteractive flips for a locked layer — and therefore has to keep the
+   * lock, not overwrite it. Without the `!locked`, picking a padlocked layer
+   * in the sidebar handed it straight back: anything a Layout owns could be
+   * dragged on the wall, and "Stempel aktualisieren" then threw half of those
+   * nudges away and kept the other half. */
   $effect(() => {
     if (!canvas) return;
     const chosen = app.selected;
@@ -153,7 +157,7 @@
       if (!canvas) return;
       for (const o of canvas.getObjects()) {
         const mine = (o as Tagged).layerId;
-        if (mine) o.evented = o.selectable = mine === chosen;
+        if (mine) o.evented = o.selectable = mine === chosen && !(o as Tagged).locked;
       }
       // A rubber band would only ever catch the one grabbable object.
       canvas.selection = false;

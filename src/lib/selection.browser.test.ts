@@ -116,6 +116,31 @@ describe("readBackLayout", () => {
     }
   });
 
+  it("does not read a mirrored picture as a half turn", async () => {
+    const el = document.createElement("canvas");
+    document.body.append(el);
+    const canvas = new fabric.Canvas(el, { width: TILE_W, height: TILE_H });
+    try {
+      const layout = newLayout("M");
+      const l = newImageLayer("block:#ff00ff");
+      l.scale = 0.2;
+      l.flipX = true;
+      layout.layers.push(l);
+      await buildLayout(canvas, layout, testDeps, true);
+
+      /* A flip lives in the matrix as a negative scale, which decomposes into
+       * angle + 180. The model stores the flip separately, so taking that at
+       * face value wrote rotation 180 on the first plain drag and the next
+       * rebuild stood the picture on its head. */
+      const back = readBackLayout(canvas.getObjects()[0]);
+      expect(back.rotation).toBeCloseTo(0, 3);
+      expect(back.fx).toBeGreaterThan(0);
+      expect(back.fy).toBeGreaterThan(0);
+    } finally {
+      await canvas.dispose();
+    }
+  });
+
   it("moves every member by the same amount when the selection is dragged", async () => {
     const { canvas } = await twoBlocks();
     try {

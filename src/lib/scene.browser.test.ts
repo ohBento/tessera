@@ -36,6 +36,36 @@ function gridBlock(m: Manifest, x: number, y: number, scale: number) {
   return l;
 }
 
+describe("locks on the wall", () => {
+  /* The lock is not a decoration: a nudge on the wall is either thrown away by
+   * the next "Stempel aktualisieren" or silently kept, depending on which half
+   * of the stamp it landed on. The flag has to travel with the object, because
+   * GridCanvas hands out grabbability by its own rule (only the layer chosen in
+   * the list) and used to overwrite the lock doing it. */
+  it("tags what a Layout owns as locked", async () => {
+    const m = manifest(3);
+    const mine = newImageLayer("block:#00ff00");
+    const stamp = newImageLayer("block:#ff00ff");
+    stamp.layoutId = "L1";
+    m.overlays.push({ ...newOverlay("G", [m.order[0]]), layers: [mine, stamp] });
+
+    const canvas = new fabric.StaticCanvas(undefined, { width: 100, height: 100 });
+    try {
+      await buildGrid(canvas, m, testDeps, true);
+      const by = (id: string) =>
+        canvas.getObjects().find((o) => (o as { layerId?: string }).layerId === id) as
+          | (fabric.Object & { locked?: boolean })
+          | undefined;
+      expect(by(stamp.id)?.locked).toBe(true);
+      expect(by(stamp.id)?.selectable).toBe(false);
+      expect(by(mine.id)?.locked).toBe(false);
+      expect(by(mine.id)?.selectable).toBe(true);
+    } finally {
+      await canvas.dispose();
+    }
+  });
+});
+
 describe("export", () => {
   it("writes one game-shaped BMP per visible tile", async () => {
     const m = manifest(8);

@@ -11,6 +11,7 @@
   import {
     app,
     applyLayoutTransform,
+    endGesture,
     openLayout,
     setLayerField,
     setLayoutSelection,
@@ -118,6 +119,17 @@
     const free = !!only && freeScale(only);
     canvas.uniformScaling = !free;
     canvas.uniScaleKey = free ? "shiftKey" : null;
+    /* uniformScaling only governs the corner handles. An ActiveSelection shows
+     * all four mid-side handles of its own accord, and those scale one axis
+     * whatever it is set to — so a sideways stretch of a mixed selection made
+     * the pictures and captions in it taller as well, and a rotated caption
+     * came back at a different angle, because a non-uniform scale composed
+     * with a rotation is a skew that the decomposition has to throw away. */
+    if (!free) {
+      canvas
+        .getActiveObject()
+        ?.setControlsVisibility({ ml: false, mr: false, mt: false, mb: false });
+    }
   }
 
   /** Every canvas object standing for one of these layer ids. A layer inside a
@@ -426,6 +438,9 @@
         const id = (obj as { layerId?: string }).layerId;
         if (id) void applyLayoutTransform(id, readBackLayout(obj), gesture);
       }
+      // The gesture is over, so the run is too: a second drag moments later is
+      // a second edit and has to cost its own undo step.
+      endGesture();
     });
 
     const key = (e: KeyboardEvent, down: boolean) => {

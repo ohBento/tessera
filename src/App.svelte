@@ -634,12 +634,21 @@
                     >
                       {layer.hidden ? "○" : "●"}
                     </button>
+                    <!-- A layer a Layout put here is held whatever this says,
+                         so it says so: the row used to show an open padlock on
+                         something the canvas would not let you touch, and
+                         clicking it changed nothing either way. -->
                     <button
                       class="eye"
-                      title={layer.locked ? "Entsperren" : "Sperren"}
+                      disabled={!!layer.layoutId}
+                      title={layer.layoutId
+                        ? "Vom Layout gehalten — im Layout bearbeiten"
+                        : layer.locked
+                          ? "Entsperren"
+                          : "Sperren"}
                       onclick={() => toggleLayerLocked(layer.id)}
                     >
-                      {layer.locked ? "🔒" : "🔓"}
+                      {layer.layoutId || layer.locked ? "🔒" : "🔓"}
                     </button>
                     <button
                       class="name"

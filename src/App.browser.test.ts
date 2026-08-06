@@ -22,6 +22,7 @@ import {
   canGroupLayers,
   canStampLayout,
   dropLayoutLayer,
+  endGesture,
   freeCount,
   history,
   setLayerField,
@@ -442,6 +443,49 @@ describe("the Layout editor", () => {
     });
     const scaled = findLayer(openLayout()!.layers, l.id)!;
     expect(scaled.kind === "text" && scaled.size).toBeCloseTo(size * 2, 6);
+  });
+
+  it("rebuilds after a scale, so the factor is not applied twice", async () => {
+    await newLayoutDoc("Nachwirkung");
+    await addLayoutText();
+    const l = openLayout()!.layers[0];
+
+    /* Fabric leaves the factor it applied on the object. A plain move skips the
+     * rebuild on purpose — the object is already where it belongs — but a scale
+     * must not, or the object keeps scaleX 1.5 and the next gesture reports 1.5
+     * again: two drags after one scale left the model 3.4x bigger than the
+     * picture, with nothing on screen to say so. */
+    const still = app.version;
+    await applyLayoutTransform(l.id, {
+      x: 0.5, y: 0.5, rotation: 0, scale: 0.2, scaleH: 0.09, fx: 1, fy: 1,
+    });
+    expect(app.version).toBe(still);
+
+    await applyLayoutTransform(l.id, {
+      x: 0.5, y: 0.5, rotation: 0, scale: 0.3, scaleH: 0.135, fx: 1.5, fy: 1.5,
+    });
+    expect(app.version).toBeGreaterThan(still);
+  });
+
+  it("spends one undo step per gesture, not per burst of them", async () => {
+    await newLayoutDoc("Zweimal");
+    await addLayoutText();
+    const l = openLayout()!.layers[0];
+    const before = history.past.length;
+
+    /* Two complete drags back to back. The run key exists so a multi-selection
+     * writing back once per member costs one step — not so that two separate
+     * gestures do, which made a single Ctrl+Z jump back past both. A pointer
+     * release ends the run. */
+    for (const x of [0.3, 0.7]) {
+      await applyLayoutTransform(
+        l.id,
+        { x, y: 0.5, rotation: 0, scale: 0.2, scaleH: 0.09, fx: 1, fy: 1 },
+        `drag:${l.id}`,
+      );
+      endGesture();
+    }
+    expect(history.past.length - before).toBe(2);
   });
 
   it("does not resize a polygon just for being dragged", async () => {

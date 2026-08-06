@@ -3,7 +3,7 @@ import { open as pickFile } from "./platform";
 
 import { saveTiles } from "./export";
 import { mosaicBakeCrops } from "./geometry";
-import { canRedo, canUndo, checkpoint, emptyHistory, redo, undo } from "./history";
+import { canRedo, canUndo, checkpoint, emptyHistory, endRun, redo, undo } from "./history";
 import { renderLayout } from "./layout";
 import {
   addToGroup,
@@ -510,8 +510,18 @@ export async function applyTransform(
     layer.y = patch.y;
     layer.rotation = patch.rotation;
     resize(layer, patch);
-  }, shared);
+  }, shared || scaled(patch));
 }
+
+/** Did this gesture actually scale something?
+ *
+ *  Fabric leaves the factor it applied sitting on the object, and a size that
+ *  is *multiplied* by that factor — a caption's, a shape's — would take it
+ *  again on the very next gesture. Two plain drags after one scale by 1.5 left
+ *  the model 3.4x larger than what was on screen, silently, because skipping
+ *  the rebuild meant nothing ever put the object's own scale back to 1.
+ *  Rebuilding is what resets it, so a gesture that scaled has to ask for one. */
+const scaled = (p: Transform) => p.fx !== 1 || p.fy !== 1;
 
 /** The currently selected grid-space picture, if that is what is selected —
  *  what "Anwenden" acts on. */
@@ -760,10 +770,10 @@ export async function setLayerField(id: string, key: LayerField, value: unknown)
   );
 }
 
-/** Writes a finished drag/scale/rotate back into a Layout's own layer. Unlike
- *  applyTransform on the wall, this always skips the rebuild: nothing inside
- *  one Layout is ever shared with itself, so there is never a second instance
- *  left showing a stale position. */
+/** Writes a finished drag/scale/rotate back into a Layout's own layer. A plain
+ *  move skips the rebuild — nothing inside one Layout is ever shared with
+ *  itself, so there is no second instance left showing a stale position — but
+ *  a scale must rebuild; see `scaled`. */
 export async function applyLayoutTransform(
   layerId: string,
   patch: Pick<Layer, "x" | "y" | "rotation"> & Transform,
@@ -784,8 +794,14 @@ export async function applyLayoutTransform(
     layer.y = patch.y - shift.dy;
     layer.rotation = patch.rotation;
     resize(layer, patch);
-  }, false, gesture);
+  }, scaled(patch), gesture);
 }
+
+/** Ends the current undo run, so the next edit starts a new step. A pointer
+ *  release is a boundary the run key cannot see by itself: without this, two
+ *  separate drags less than RUN_MS apart collapsed into one undo step and a
+ *  single Ctrl+Z jumped back past both. */
+export const endGesture = () => endRun(history);
 
 /** Folds a canvas resize back into whatever field a layer keeps its size in.
  *

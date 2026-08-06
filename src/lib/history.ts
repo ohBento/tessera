@@ -60,7 +60,7 @@ export function checkpoint<T>(h: History<T>, present: T, key?: string, now = Dat
 /* Travelling ends whatever run was in progress. Without this, typing after an
  * undo would collapse into the step just taken back, and the next undo would
  * jump two edits at once. */
-const endRun = (h: History<unknown>) => {
+export const endRun = (h: History<unknown>) => {
   h.runKey = undefined;
   h.runAt = undefined;
 };

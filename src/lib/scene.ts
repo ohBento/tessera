@@ -35,6 +35,9 @@ export type Tagged = fabric.Object & {
   /** "" for a grid-space layer, which belongs to no single tile. */
   tileId: string;
   space: "tile" | "grid";
+  /** Whether this object refuses to be grabbed, carried along so a caller that
+   *  hands out grabbability by some other rule can still honour the lock. */
+  locked: boolean;
 };
 
 /** Fabric's ImageSource does not include ImageBitmap even though a 2d context
@@ -341,9 +344,10 @@ export async function buildGrid(
        * on the neighbour in play — and "Stempel aktualisieren" would throw the
        * nudge away anyway, since the Layout is where the position comes from.
        * Better not to offer the drag than to revert it later. */
-      if (interactive) makeInteractive(obj, l.layoutId ? { ...l, locked: true } : l);
+      const locked = !!l.locked || !!l.layoutId;
+      if (interactive) makeInteractive(obj, locked ? { ...l, locked: true } : l);
       else obj.selectable = obj.evented = false;
-      Object.assign(obj, { layerId: l.id, tileId: id, space: "tile" });
+      Object.assign(obj, { layerId: l.id, tileId: id, space: "tile", locked });
       canvas.add(obj);
     }
   }
@@ -362,7 +366,7 @@ export async function buildGrid(
     const obj = await imageObject(l, deps, { w: grid.w, h: grid.h, x: 0, y: 0 });
     if (interactive) makeInteractive(obj, l, false);
     else obj.selectable = obj.evented = false;
-    Object.assign(obj, { layerId: l.id, tileId: "", space: "grid" });
+    Object.assign(obj, { layerId: l.id, tileId: "", space: "grid", locked: !!l.locked });
     canvas.add(obj);
   }
 
@@ -472,21 +476,31 @@ export function readBackLayout(obj: fabric.Object) {
   const { translateX, translateY, scaleX, scaleY, angle } = fabric.util.qrDecompose(
     obj.calcTransformMatrix(),
   );
+  /* A mirrored object carries its flip in the matrix as a negative scale, and
+   * a decomposition has no way to tell that apart from a half turn: it reports
+   * angle + 180 and, on one axis, a negative factor. The model keeps flipX and
+   * flipY as their own fields and the renderer applies them itself, so the
+   * half turn has to come back out here — otherwise a plain drag of a mirrored
+   * picture wrote rotation 180 into the model and the next rebuild stood it on
+   * its head. */
+  const fx = Math.abs(scaleX);
+  const fy = Math.abs(scaleY);
+  const turn = obj.flipX ? 180 : 0;
   return {
     x: translateX / TILE_W,
     y: translateY / TILE_H,
-    scale: (scaleX * (obj.width ?? 0)) / TILE_W,
+    scale: (fx * (obj.width ?? 0)) / TILE_W,
     // Read separately rather than assumed equal: a shape keeps width and
     // height apart, so stretching one side has to survive the round trip.
-    scaleH: (scaleY * (obj.height ?? 0)) / TILE_H,
+    scaleH: (fy * (obj.height ?? 0)) / TILE_H,
     /* The raw factors, for layers whose size is written straight onto the
      * object rather than derived from it. A shape is built at its exact w×h
      * with no scaling, so after a plain drag these are 1 and its size must not
      * change — deriving the size from obj.width instead shrank a polygon by
      * 13% on every drag, because a regular n-gon's bounding box is smaller
      * than the box it is inscribed in. */
-    fx: scaleX,
-    fy: scaleY,
-    rotation: angle,
+    fx,
+    fy,
+    rotation: (((angle - turn) % 360) + 360) % 360,
   };
 }
