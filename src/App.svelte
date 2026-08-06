@@ -610,7 +610,15 @@
               {#if !group.layers.length}
                 <p class="empty indent">Kein Layout zugewiesen.</p>
               {/if}
-              {@const stamps = [...group.layers].reverse()}
+              <!-- Live captions are left out on purpose. Their row offered
+                   nothing the stamp row does not: the layer is held (a wall
+                   edit would be overwritten by the next stamp update), its
+                   double-click opened the same Layout, and the per-tile
+                   wording lives in the "Text auf …" panel. One row per
+                   assigned Layout is the whole story. -->
+              {@const stamps = [...group.layers]
+                .reverse()
+                .filter((l) => !(l.kind === "text" && l.layoutId))}
               <ul class="indent">
                 {#each stamps as layer (layer.id)}
                   <li
@@ -663,9 +671,7 @@
                       class:dimmed={layer.hidden}
                       onclick={() => selectLayer(layer.id)}
                       ondblclick={() => layer.layoutId && openLayoutDoc(layer.layoutId)}
-                      title={layer.kind === "text"
-                        ? 'Doppelklick öffnet das Layout — Wortlaut pro Kachel: Kachel wählen, Feld "Text auf …"'
-                        : "Doppelklick öffnet das Layout"}
+                      title="Doppelklick öffnet das Layout"
                     >
 <!-- Marker before the name, not after: the name is what gets
                            ellipsised when the row runs out of width, and a dot
