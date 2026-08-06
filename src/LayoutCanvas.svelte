@@ -404,7 +404,10 @@
       const vt = canvas?.viewportTransform;
       if (!ctx || !vt) return;
       ctx.save();
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      // CSS pixels, not device pixels — same retina correction as GridCanvas,
+      // or the sheet outline and every guide sit at 1/dpr scale off target.
+      const dpr = canvas?.getRetinaScaling() ?? 1;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.strokeStyle = "rgba(255, 255, 255, 0.45)";
       ctx.lineWidth = 1;
       ctx.strokeRect(
@@ -571,28 +574,28 @@
   <div class="hud">
     {Math.round(zoom * 100)}% &middot; {TILE_W}&times;{TILE_H}
     <button onclick={fit}>Einpassen</button>
-    {#if app.layoutSelection.length}
-      <span class="sep"></span>
-      <button title="Links ans Blatt" onclick={() => align("left")}>⇤</button>
-      <button title="Horizontal zentrieren" onclick={() => align("centerX")}>↔</button>
-      <button title="Rechts ans Blatt" onclick={() => align("right")}>⇥</button>
-      <button title="Oben ans Blatt" onclick={() => align("top")}>⤒</button>
-      <button title="Vertikal zentrieren" onclick={() => align("centerY")}>↕</button>
-      <button title="Unten ans Blatt" onclick={() => align("bottom")}>⤓</button>
-      <span class="sep"></span>
-      <!-- Distribution needs a middle to spread; the maths refuses below three
-           anyway, this just says so instead of doing nothing. -->
-      <button
-        title="Gleiche Abstände horizontal"
-        disabled={app.layoutSelection.length < 3}
-        onclick={() => spread("x")}>⇹</button
-      >
-      <button
-        title="Gleiche Abstände vertikal"
-        disabled={app.layoutSelection.length < 3}
-        onclick={() => spread("y")}>⇳</button
-      >
-    {/if}
+  </div>
+  <!-- A fixed toolbar rather than buttons that come and go with the selection:
+       a control with a permanent home can be found before it is needed, and
+       greying out says "pick something first" better than absence does. -->
+  <div class="tools">
+    {#snippet tool(label: string, glyph: string, run: () => void, needs: number)}
+      <button title={label} disabled={app.layoutSelection.length < needs} onclick={run}>
+        {glyph}
+      </button>
+    {/snippet}
+    {@render tool("Links ans Blatt", "⇤", () => align("left"), 1)}
+    {@render tool("Horizontal zentrieren", "↔", () => align("centerX"), 1)}
+    {@render tool("Rechts ans Blatt", "⇥", () => align("right"), 1)}
+    <span class="gap"></span>
+    {@render tool("Oben ans Blatt", "⤒", () => align("top"), 1)}
+    {@render tool("Vertikal zentrieren", "↕", () => align("centerY"), 1)}
+    {@render tool("Unten ans Blatt", "⤓", () => align("bottom"), 1)}
+    <span class="gap"></span>
+    <!-- Distribution needs a middle to spread; the maths refuses below three
+         anyway, greying out just says so instead of doing nothing. -->
+    {@render tool("Gleiche Abstände horizontal", "⇹", () => spread("x"), 3)}
+    {@render tool("Gleiche Abstände vertikal", "⇳", () => spread("y"), 3)}
   </div>
 </div>
 
@@ -625,13 +628,34 @@
     color: inherit;
     cursor: pointer;
   }
-  .hud button:disabled {
-    opacity: 0.4;
+  .tools {
+    position: absolute;
+    left: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px 4px;
+    border-radius: 4px;
+    background: rgb(0 0 0 / 0.6);
+  }
+  .tools button {
+    width: 28px;
+    height: 26px;
+    padding: 0;
+    font: 14px/1 ui-sans-serif, system-ui, sans-serif;
+    border: 1px solid #3a444c;
+    border-radius: 3px;
+    background: #1b2228;
+    color: #cfd6dc;
+    cursor: pointer;
+  }
+  .tools button:disabled {
+    opacity: 0.35;
     cursor: default;
   }
-  .sep {
-    width: 1px;
-    align-self: stretch;
-    background: #3a444c;
+  .tools .gap {
+    height: 6px;
   }
 </style>

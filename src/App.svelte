@@ -662,9 +662,10 @@
                       class="name"
                       class:dimmed={layer.hidden}
                       onclick={() => selectLayer(layer.id)}
-                      ondblclick={() =>
-                        layer.kind === "image" && layer.layoutId && openLayoutDoc(layer.layoutId)}
-                      title="Doppelklick öffnet das Layout"
+                      ondblclick={() => layer.layoutId && openLayoutDoc(layer.layoutId)}
+                      title={layer.kind === "text"
+                        ? 'Doppelklick öffnet das Layout — Wortlaut pro Kachel: Kachel wählen, Feld "Text auf …"'
+                        : "Doppelklick öffnet das Layout"}
                     >
 <!-- Marker before the name, not after: the name is what gets
                            ellipsised when the row runs out of width, and a dot

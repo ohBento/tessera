@@ -331,7 +331,16 @@
       const w = Math.round(TILE_W * vt[0]);
       const h = Math.round(TILE_H * vt[3]);
       ctx.save();
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      /* CSS pixels, not device pixels. On a display scaled past 100% — every
+       * laptop, most Windows desktops — Fabric renders into a backing store
+       * devicePixelRatio times larger and bakes that factor into the context.
+       * Resetting to the identity threw the factor away, so the whole lattice
+       * drew at 1/dpr scale toward the top-left: a second, wrong grid hovering
+       * over the real one, diverging further the more you zoomed and panned.
+       * Proven by pixel probe: guide at x=20, the tile edge it belongs to at
+       * x=30, retina 1.5. */
+      const dpr = canvas?.getRetinaScaling() ?? 1;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       for (const [i, id] of ids.entries()) {
         const at = cellAt(i);
         // The half-pixel offset puts a 1px line on a pixel rather than
