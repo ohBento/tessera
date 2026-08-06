@@ -1,3 +1,4 @@
+import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { playwright } from "@vitest/browser-playwright";
 import { defineConfig } from "vitest/config";
 
@@ -15,6 +16,12 @@ export default defineConfig({
         },
       },
       {
+        /* The svelte plugin lives here rather than at the top so the Node
+         * project stays plugin-free and fast. It is what lets a test mount a
+         * real component: together with platform.ts picking its in-memory
+         * filesystem outside Tauri, the whole app runs in this project — which
+         * is the only way to cover the parts that only break when clicked. */
+        plugins: [svelte()],
         test: {
           name: "browser",
           include: ["src/**/*.browser.test.ts"],

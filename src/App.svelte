@@ -227,7 +227,10 @@
           ? `Überträgt die Änderungen auf ${layoutUsage(editing.id)} Stempel`
           : "Noch nirgends gestempelt"}
       >
-        Speichern
+        <!-- Not "Speichern": the Layout is written to disk on every edit, so a
+             save button would promise something that already happened. What
+             this does is re-render and swap the picture in every stamp. -->
+        Stempel aktualisieren{#if layoutUsage(editing.id)}&nbsp;({layoutUsage(editing.id)}){/if}
       </button>
     {:else}
       <button onclick={newGroup} disabled={!freeCount() || !!app.busy}>
@@ -256,9 +259,11 @@
       {:else if app.error}
         {app.error}
       {:else if editing && canSaveLayout(editing.id)}
-        Änderungen noch nicht auf den Kacheln
-      {:else if editing && !app.selectedTiles.length}
-        Kacheln auf der Wand wählen, um zu stempeln
+        Gesichert &middot; Änderungen noch nicht auf den Kacheln
+      {:else if editing}
+        Gesichert{#if !app.selectedTiles.length}
+          &middot; Kacheln auf der Wand wählen, um zu stempeln
+        {/if}
       {:else if app.selectedTiles.length}
         {app.selectedTiles.length} gewählt{#if freeCount() < app.selectedTiles.length}, {freeCount()}
           davon frei{/if}

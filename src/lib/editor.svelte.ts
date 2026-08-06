@@ -94,6 +94,14 @@ export function toggleTile(id: string, additive: boolean) {
 
 export const clearTiles = () => (app.selectedTiles = []);
 
+/** Drops every pick on the wall — tiles, layer, and the group outline that
+ *  follows the layer. What a click on empty canvas means. */
+export function clearAll() {
+  app.selectedTiles = [];
+  app.selected = "";
+  app.hoverGroup = "";
+}
+
 /** The tiles outlined on the wall: the hovered group's, else the selected
  *  layer's group. An "all" overlay reports nothing — outlining every cell says
  *  nothing while drowning out the plain tile guides. */
@@ -312,6 +320,17 @@ export async function openFolder(dir?: string) {
 
 const IMAGE_FILTER = { name: "Bilder", extensions: ["png", "jpg", "jpeg", "webp", "bmp"] };
 
+/** The picked file's name, without folders or extension.
+ *
+ *  Assets are stored under their content hash, so the original name is gone by
+ *  the time a layer exists — which is why layers used to be called "813b27fb".
+ *  Capturing it here is the only chance. */
+const baseName = (path: string) =>
+  path
+    .split(/[\\/]/)
+    .pop()
+    ?.replace(/\.[^.]+$/, "") ?? "";
+
 /** The group a stamp from the wall lands in: the one owning the picked tiles,
  *  or a new one built from those that are still free.
  *
@@ -342,6 +361,7 @@ export async function addGridImage() {
     const asset = await importAsset(app.dir, path);
     await mutate(() => {
       const layer = newImageLayer(asset);
+      layer.name = baseName(path);
       layer.space = "grid";
       layer.scale = 1;
       allTiles().layers.push(layer);
@@ -474,10 +494,16 @@ export async function toggleLayerLocked(id: string) {
  *  one: the pick moves `layoutSelected`, the canvas follows by setting its
  *  active object, Fabric fires selection:created, and the handler landed back
  *  here — undoing the very selection that caused it. */
+/** Replaces the Layout's whole selection — what the canvas reports after a
+ *  rubber band, and what the list writes when several rows are picked. */
+export function setLayoutSelection(ids: string[]) {
+  app.layoutSelection = ids;
+  app.layoutSelected = ids.at(-1) ?? "";
+}
+
 export function selectLayoutLayer(id: string) {
   if (app.layoutSelected !== id) app.layoutSelected = id;
-  if (!id) app.layoutSelection = [];
-  else if (!app.layoutSelection.includes(id)) app.layoutSelection = [id];
+  app.layoutSelection = id ? [id] : [];
 }
 
 export async function toggleLayoutLayerHidden(id: string) {
@@ -518,8 +544,9 @@ export async function addLayoutImage() {
     const asset = await importAsset(app.dir, path);
     await mutate(() => {
       const l = newImageLayer(asset);
+      l.name = baseName(path);
       layout.layers.push(l);
-      app.layoutSelected = l.id;
+      selectLayoutLayer(l.id);
     });
   });
 }

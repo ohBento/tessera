@@ -8,8 +8,9 @@
   import * as fabric from "fabric";
   import { onMount } from "svelte";
 
-  import { app, applyLayoutTransform, openLayout, selectLayoutLayer } from "./lib/editor.svelte";
+  import { app, applyLayoutTransform, openLayout, setLayoutSelection } from "./lib/editor.svelte";
   import { TILE_H, TILE_W } from "./lib/bmp";
+  import { findLayer, walkLayers } from "./lib/model";
   import { buildLayout, readBackLayout } from "./lib/scene";
 
   let host: HTMLDivElement;
@@ -43,18 +44,24 @@
   let rebuilding = false;
 
   function rebuild(key: string, deps: typeof app.deps) {
-    building = building.then(async () => {
-      const layout = openLayout();
-      if (!canvas || !deps || !layout) return;
-      if (!built) fit();
-      rebuilding = true;
-      try {
-        await buildLayout(canvas, $state.snapshot(layout), deps, true);
-      } finally {
-        rebuilding = false;
-      }
-      built = key;
-    });
+    building = building
+      .then(async () => {
+        const layout = openLayout();
+        if (!canvas || !deps || !layout) return;
+        if (!built) fit();
+        rebuilding = true;
+        try {
+          await buildLayout(canvas, $state.snapshot(layout), deps, true);
+        } finally {
+          rebuilding = false;
+        }
+        built = key;
+      })
+      /* Same reason as GridCanvas: a rejected chain never runs what was queued
+       * after it, so one failed build would freeze this canvas for good. */
+      .catch((e) => {
+        app.error = `Anzeige konnte nicht aufgebaut werden: ${e}`;
+      });
     return building;
   }
 
@@ -66,18 +73,44 @@
     if (canvas && deps && app.openLayoutId && key !== built) void rebuild(key, deps);
   });
 
-  /* List selection -> canvas, re-run after a rebuild replaced every object. */
+  /** Every canvas object standing for one of these layer ids. A layer inside a
+   *  group has no object of its own — its members do — so picking a group in
+   *  the list grabs the members, which is what makes a group draggable. */
+  function objectsFor(ids: string[]): fabric.Object[] {
+    const layout = openLayout();
+    if (!canvas || !layout) return [];
+    const wanted = new Set<string>();
+    for (const id of ids) {
+      const found = findLayer(layout.layers, id);
+      if (found?.kind === "group") for (const l of walkLayers(found.children)) wanted.add(l.id);
+      else wanted.add(id);
+    }
+    return canvas.getObjects().filter((o) => wanted.has((o as { layerId?: string }).layerId ?? ""));
+  }
+
+  /* List selection -> canvas, re-run after a rebuild replaced every object.
+   * More than one picked layer becomes an ActiveSelection, which is what gives
+   * the whole set one transform frame and moves it as a unit. */
   $effect(() => {
-    const id = app.layoutSelected;
+    const ids = app.layoutSelection.join(" ");
     app.version;
     if (!canvas) return;
     void building.then(() => {
       if (!canvas) return;
-      const active = canvas.getActiveObject() as (fabric.Object & { layerId?: string }) | null;
-      if (active?.layerId === id) return;
-      const obj = id && canvas.getObjects().find((o) => (o as { layerId?: string }).layerId === id);
-      if (obj) canvas.setActiveObject(obj);
-      else canvas.discardActiveObject();
+      const objs = objectsFor(ids ? ids.split(" ") : []);
+      const active = canvas.getActiveObject();
+      const shown = active
+        ? ((active as fabric.ActiveSelection).getObjects?.() ?? [active])
+        : [];
+      // Already showing exactly this set: leave it alone, or setting it again
+      // would cancel the drag in progress that caused the change.
+      if (shown.length === objs.length && shown.every((o, i) => o === objs[i])) return;
+
+      canvas.discardActiveObject();
+      if (objs.length === 1) canvas.setActiveObject(objs[0]);
+      else if (objs.length > 1) {
+        canvas.setActiveObject(new fabric.ActiveSelection(objs, { canvas }));
+      }
       canvas.requestRenderAll();
     });
   });
@@ -148,24 +181,62 @@
         Math.round(TILE_W * vt[0]),
         Math.round(TILE_H * vt[3]),
       );
+
+      /* One outline per selected layer. Fabric draws a single frame around a
+       * multi-selection and nothing around its members, so without this a set
+       * of three looks exactly like one big object and there is no way to tell
+       * which layers are in it. Screen space, like every other guide here, so
+       * it stays one pixel wide at any zoom and never reaches the export. */
+      const picked = new Set(app.layoutSelection);
+      if (picked.size > 1) {
+        ctx.strokeStyle = "rgba(120, 220, 255, 0.9)";
+        ctx.setLineDash([4, 3]);
+        for (const obj of canvas!.getObjects()) {
+          if (!picked.has((obj as { layerId?: string }).layerId ?? "")) continue;
+          const b = obj.getBoundingRect();
+          // Sat 3px outside the object: drawn flush, a cyan dash on a bright
+          // picture is close to invisible, and the whole point is being seen.
+          const pad = 3;
+          ctx.strokeRect(
+            Math.round(b.left * vt[0] + vt[4]) - pad + 0.5,
+            Math.round(b.top * vt[3] + vt[5]) - pad + 0.5,
+            Math.round(b.width * vt[0]) + pad * 2,
+            Math.round(b.height * vt[3]) + pad * 2,
+          );
+        }
+        ctx.setLineDash([]);
+      }
       ctx.restore();
     });
 
-    const picked = (opt: { selected?: fabric.Object[]; target?: fabric.Object }) => {
+    /* Canvas selection -> model. getActiveObjects covers both cases: one
+     * object, or every member of a rubber-band selection. */
+    const picked = () => {
       if (rebuilding) return;
-      const obj = (opt.selected?.[0] ?? opt.target) as { layerId?: string } | undefined;
-      selectLayoutLayer(obj?.layerId ?? "");
+      const ids = canvas!
+        .getActiveObjects()
+        .map((o) => (o as { layerId?: string }).layerId)
+        .filter((id): id is string => !!id);
+      setLayoutSelection(ids);
     };
     canvas.on("selection:created", picked);
     canvas.on("selection:updated", picked);
     canvas.on("selection:cleared", () => {
-      if (!rebuilding) selectLayoutLayer("");
+      if (!rebuilding) setLayoutSelection([]);
     });
 
+    /* A finished transform. One object writes itself back; a multi-selection
+     * writes back every member, since Fabric moved all of them and each one's
+     * own position and angle changed. */
     canvas.on("object:modified", (opt) => {
-      const obj = opt.target as (fabric.Object & { layerId?: string }) | undefined;
-      if (!obj?.layerId) return;
-      void applyLayoutTransform(obj.layerId, readBackLayout(obj));
+      const target = opt.target as fabric.Object | undefined;
+      if (!target) return;
+      const members =
+        (target as fabric.ActiveSelection).getObjects?.() ?? ([target] as fabric.Object[]);
+      for (const obj of members) {
+        const id = (obj as { layerId?: string }).layerId;
+        if (id) void applyLayoutTransform(id, readBackLayout(obj));
+      }
     });
 
     const key = (e: KeyboardEvent, down: boolean) => {

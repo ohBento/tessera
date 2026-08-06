@@ -10,6 +10,7 @@
     app,
     applyTransform,
     assignedTiles,
+    clearAll,
     clearTiles,
     selectLayer,
     swapTilePlaces,
@@ -60,20 +61,31 @@
   let rebuilding = false;
 
   function rebuild(version: number, deps: typeof app.deps) {
-    building = building.then(async () => {
-      if (!canvas || !deps) return;
-      // Fit *before* building, not after: the tile count comes from the
-      // manifest, so the viewport can be right from the first frame instead of
-      // showing the wall at 100% and then visibly snapping down to fit.
-      if (built < 0) fit();
-      rebuilding = true;
-      try {
-        await buildGrid(canvas, $state.snapshot(app.manifest), deps, true);
-      } finally {
-        rebuilding = false;
-      }
-      built = version;
-    });
+    building = building
+      .then(async () => {
+        if (!canvas || !deps) return;
+        // Fit *before* building, not after: the tile count comes from the
+        // manifest, so the viewport can be right from the first frame instead of
+        // showing the wall at 100% and then visibly snapping down to fit.
+        if (built < 0) fit();
+        rebuilding = true;
+        try {
+          await buildGrid(canvas, $state.snapshot(app.manifest), deps, true);
+        } finally {
+          rebuilding = false;
+        }
+        built = version;
+      })
+      /* Every later rebuild — and both effects that wait on this chain — is
+       * queued with building.then(...), and a rejected promise never runs the
+       * callbacks queued after it. One failed build would therefore stop the
+       * wall from ever redrawing again, while the model kept changing
+       * underneath: measured as zero draw calls after a single throw. Catching
+       * keeps the chain resolvable, and leaving `built` alone means the next
+       * version bump retries instead of giving up. */
+      .catch((e) => {
+        app.error = `Anzeige konnte nicht aufgebaut werden: ${e}`;
+      });
     return building;
   }
 
@@ -192,6 +204,7 @@
       // other object is inert, so "no target" means bare wall.
       if (opt.e.button !== 0 || opt.target) return;
       dragFrom = tileAt(opt.e);
+      if (!dragFrom) clearAll();
     });
     canvas.on("mouse:move", (opt) => {
       if (!(opt.e instanceof MouseEvent)) return;
@@ -218,7 +231,10 @@
       dropTarget = "";
       if (onto) void swapTilePlaces(from, onto);
       else if (tileAt(opt.e) === from) toggleTile(from, opt.e.ctrlKey || opt.e.shiftKey);
-      else clearTiles();
+      // Past the last tile: drop everything, layer included. Clearing only the
+      // tiles left the layer selected and its group still outlined, which reads
+      // as "something is still picked" with nothing to show for it.
+      else clearAll();
       canvas!.requestRenderAll();
     });
 

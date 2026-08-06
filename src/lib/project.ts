@@ -116,15 +116,29 @@ const mime = (name: string) => (name.toLowerCase().endsWith(".svg") ? "image/svg
 const assetBlob = async (dir: string, name: string) =>
   new Blob([await readFile(await join(await assetsDir(dir), name))], { type: mime(name) });
 
+/** Drops a failed load from its cache before rethrowing.
+ *
+ *  These caches hold promises, not values, so a rejected one stays cached and
+ *  every later read of that name fails again — a single unlucky read turns
+ *  into a permanent one, and since the render chain awaits these, the canvas
+ *  stops rebuilding for the rest of the session. Forgetting the failure makes
+ *  the next attempt a real attempt. */
+function forgetOnFailure<T>(cache: Map<string, Promise<T>>, key: string, p: Promise<T>) {
+  const guarded = p.catch((e) => {
+    cache.delete(key);
+    throw e;
+  });
+  cache.set(key, guarded);
+  return guarded;
+}
+
 const bitmaps = new Map<string, Promise<ImageBitmap>>();
 
 export function loadAsset(dir: string, name: string): Promise<ImageBitmap> {
-  let bmp = bitmaps.get(name);
-  if (!bmp) {
-    bmp = (async () => createImageBitmap(await assetBlob(dir, name)))();
-    bitmaps.set(name, bmp);
-  }
-  return bmp;
+  return (
+    bitmaps.get(name) ??
+    forgetOnFailure(bitmaps, name, (async () => createImageBitmap(await assetBlob(dir, name)))())
+  );
 }
 
 const originals = new Map<string, Promise<ImageBitmap>>();
@@ -134,29 +148,29 @@ const originals = new Map<string, Promise<ImageBitmap>>();
  *  are immutable — saving vaults the pristine file *before* overwriting it, so
  *  the bytes behind a given id never change. */
 export function loadOriginal(dir: string, id: string): Promise<ImageBitmap> {
-  let bmp = originals.get(id);
-  if (!bmp) {
-    bmp = (async () => {
-      const path = (await exists(await vaultPath(dir, id)))
-        ? await vaultPath(dir, id)
-        : await tilePath(dir, id);
-      return createImageBitmap(new Blob([await readFile(path)], { type: "image/bmp" }));
-    })();
-    originals.set(id, bmp);
-  }
-  return bmp;
+  return (
+    originals.get(id) ??
+    forgetOnFailure(
+      originals,
+      id,
+      (async () => {
+        const path = (await exists(await vaultPath(dir, id)))
+          ? await vaultPath(dir, id)
+          : await tilePath(dir, id);
+        return createImageBitmap(new Blob([await readFile(path)], { type: "image/bmp" }));
+      })(),
+    )
+  );
 }
 
 const urls = new Map<string, Promise<string>>();
 
 /** For showing an asset in an image element, e.g. while placing the mosaic. */
 export function assetUrl(dir: string, name: string): Promise<string> {
-  let url = urls.get(name);
-  if (!url) {
-    url = (async () => URL.createObjectURL(await assetBlob(dir, name)))();
-    urls.set(name, url);
-  }
-  return url;
+  return (
+    urls.get(name) ??
+    forgetOnFailure(urls, name, (async () => URL.createObjectURL(await assetBlob(dir, name)))())
+  );
 }
 
 /** The live app's pixel sources, in the shape scene.ts asks for. */

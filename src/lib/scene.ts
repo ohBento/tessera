@@ -266,12 +266,22 @@ export function readBack(obj: Tagged, tileCount: number, index: number) {
 }
 
 /** Same inverse as readBack, for a Layout's own canvas — a document with no
- *  grid index to look a cell up by, always exactly one tile in size. */
+ *  grid index to look a cell up by, always exactly one tile in size.
+ *
+ *  Read off the transform matrix rather than left/top/angle, because those are
+ *  relative to the parent once an object sits inside a multi-selection: Fabric
+ *  re-expresses children of an ActiveSelection around that selection's centre,
+ *  so a dragged group of layers would otherwise write back positions near the
+ *  origin. The matrix is absolute either way, which makes this one code path
+ *  instead of one per case. */
 export function readBackLayout(obj: fabric.Object) {
+  const { translateX, translateY, scaleX, angle } = fabric.util.qrDecompose(
+    obj.calcTransformMatrix(),
+  );
   return {
-    x: (obj.left ?? 0) / TILE_W,
-    y: (obj.top ?? 0) / TILE_H,
-    scale: obj.getScaledWidth() / TILE_W,
-    rotation: obj.angle ?? 0,
+    x: translateX / TILE_W,
+    y: translateY / TILE_H,
+    scale: (scaleX * (obj.width ?? 0)) / TILE_W,
+    rotation: angle,
   };
 }
