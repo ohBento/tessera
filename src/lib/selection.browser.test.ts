@@ -9,7 +9,7 @@ import * as fabric from "fabric";
 import { describe, expect, it } from "vitest";
 
 import { TILE_H, TILE_W } from "./bmp";
-import { newImageLayer, newLayout } from "./model";
+import { newImageLayer, newLayout, newShapeLayer, newTextLayer, type Layer } from "./model";
 import { buildLayout, readBackLayout } from "./scene";
 import { testDeps } from "../test/images";
 
@@ -36,6 +36,61 @@ async function twoBlocks() {
 }
 
 const near = (got: number, want: number, tol = 0.002) => Math.abs(got - want) <= tol;
+
+describe("free scaling", () => {
+  /** One layer of the given kind on a canvas, ready to be stretched. */
+  async function one(make: () => Layer) {
+    const el = document.createElement("canvas");
+    document.body.append(el);
+    const canvas = new fabric.Canvas(el, { width: TILE_W, height: TILE_H });
+    const layout = newLayout("S");
+    layout.layers.push(make());
+    await buildLayout(canvas, layout, testDeps, true);
+    return { canvas, layer: layout.layers[0], obj: canvas.getObjects()[0] };
+  }
+
+  it("offers side handles on a shape and withholds them elsewhere", async () => {
+    const shape = await one(() => newShapeLayer("rect"));
+    try {
+      expect(shape.obj.isControlVisible("ml")).toBe(true);
+      expect(shape.obj.isControlVisible("mt")).toBe(true);
+    } finally {
+      await shape.canvas.dispose();
+    }
+
+    for (const make of [() => newImageLayer("block:#ff00ff"), () => newTextLayer()]) {
+      const other = await one(make);
+      try {
+        // A stretch has nowhere to be stored on these, so the handle that
+        // would produce one is not there to be grabbed.
+        expect(other.obj.isControlVisible("ml")).toBe(false);
+        expect(other.obj.isControlVisible("mt")).toBe(false);
+      } finally {
+        await other.canvas.dispose();
+      }
+    }
+  });
+
+  it("reads a stretched shape back as two different sizes", async () => {
+    const { canvas, obj } = await one(() => {
+      const l = newShapeLayer("rect");
+      l.w = 0.4;
+      l.h = 0.4;
+      return l;
+    });
+    try {
+      obj.set({ scaleX: (obj.scaleX ?? 1) * 2 });
+      obj.setCoords();
+      const back = readBackLayout(obj);
+      expect(back.scale).toBeCloseTo(0.8, 3);
+      expect(back.scaleH).toBeCloseTo(0.4, 3);
+      // The whole point: the two axes disagree, and both survive.
+      expect(back.scale).not.toBeCloseTo(back.scaleH, 3);
+    } finally {
+      await canvas.dispose();
+    }
+  });
+});
 
 describe("readBackLayout", () => {
   it("is unchanged by merely joining a selection", async () => {

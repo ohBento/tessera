@@ -12,7 +12,7 @@
   import { TILE_H, TILE_W } from "./lib/bmp";
   import { isTyping, snapBox, type Guide } from "./lib/geometry";
   import { findLayer, walkLayers } from "./lib/model";
-  import { buildLayout, readBackLayout } from "./lib/scene";
+  import { buildLayout, freeScale, readBackLayout } from "./lib/scene";
 
   let host: HTMLDivElement;
   let el: HTMLCanvasElement;
@@ -125,7 +125,11 @@
     canvas = new fabric.Canvas(el, {
       backgroundColor: "#0d1114",
       preserveObjectStacking: true,
-      uniformScaling: true,
+      /* Free by default, Shift constrains — the convention everywhere else,
+       * and the common case should not need a key held down. Only shapes can
+       * actually take it; anything else is forced back to proportional in
+       * object:scaling, because its model has one size field, not two. */
+      uniformScaling: false,
     });
 
     const resize = () => {
@@ -174,6 +178,19 @@
      * It only ever attracts — outside the threshold nothing happens, and Alt
      * turns it off entirely — so a layer can still be pushed anywhere,
      * including off the sheet. */
+    /* Everything but a shape is held proportional. A side handle is already
+     * hidden for those (makeInteractive), but a corner drag would still
+     * stretch — and the stretch has nowhere to be stored, so it would spring
+     * back on the next rebuild and look like the app fighting the user. */
+    canvas.on("object:scaling", (opt) => {
+      const layout = openLayout();
+      const id = (opt.target as { layerId?: string } | undefined)?.layerId;
+      const layer = id && layout && findLayer(layout.layers, id);
+      if (!opt.target || !layer || freeScale(layer)) return;
+      const uniform = Math.max(opt.target.scaleX ?? 1, opt.target.scaleY ?? 1);
+      opt.target.set({ scaleX: uniform, scaleY: uniform });
+    });
+
     canvas.on("object:moving", (opt) => {
       guides = [];
       const target = opt.target;

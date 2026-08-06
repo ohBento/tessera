@@ -469,7 +469,10 @@ export async function addGridImage() {
  *  correct. A shared layer must rebuild, because Fabric moved one copy and the
  *  others are still sitting at the old position — the model says one thing and
  *  the canvas shows another until something redraws them. */
-export async function applyTransform(obj: Tagged, patch: Pick<Layer, "x" | "y" | "rotation"> & { scale: number }) {
+export async function applyTransform(
+  obj: Tagged,
+  patch: Pick<Layer, "x" | "y" | "rotation"> & { scale: number; scaleH: number },
+) {
   const list = listOf(obj.layerId) ?? app.manifest.tiles[obj.tileId]?.layers ?? [];
   const layer = findLayer(list, obj.layerId);
   if (!layer) return;
@@ -478,7 +481,7 @@ export async function applyTransform(obj: Tagged, patch: Pick<Layer, "x" | "y" |
     layer.x = patch.x;
     layer.y = patch.y;
     layer.rotation = patch.rotation;
-    if (layer.kind === "image") layer.scale = patch.scale;
+    resize(layer, patch.scale, patch.scaleH);
   }, shared);
 }
 
@@ -706,7 +709,7 @@ export async function setLayerField(id: string, key: LayerField, value: unknown)
  *  left showing a stale position. */
 export async function applyLayoutTransform(
   layerId: string,
-  patch: Pick<Layer, "x" | "y" | "rotation"> & { scale: number },
+  patch: Pick<Layer, "x" | "y" | "rotation"> & { scale: number; scaleH: number },
 ) {
   const layout = openLayout();
   const layer = findLayer(layout?.layers ?? [], layerId);
@@ -720,7 +723,7 @@ export async function applyLayoutTransform(
     layer.x = patch.x - shift.dx;
     layer.y = patch.y - shift.dy;
     layer.rotation = patch.rotation;
-    resize(layer, patch.scale);
+    resize(layer, patch.scale, patch.scaleH);
   }, false);
 }
 
@@ -731,16 +734,17 @@ export async function applyLayoutTransform(
  *  — an image scales its picture, a caption its font size, a shape its box.
  *  Fabric's own scaleX is deliberately not stored: the scene is rebuilt from
  *  the model, so anything left in scaleX would be applied twice. */
-function resize(layer: Layer, scale: number) {
+function resize(layer: Layer, scale: number, scaleH: number) {
   if (layer.kind === "image") {
     layer.scale = scale;
   } else if (layer.kind === "text") {
     // A caption's box is one tile wide, so the width fraction *is* the factor.
     layer.size *= scale || 1;
   } else if (layer.kind === "shape") {
-    const factor = layer.w ? scale / layer.w : 1;
+    // Both axes on their own: a shape is the one kind that can be stretched,
+    // and tying height to width is what made every shape square forever.
     layer.w = scale;
-    layer.h *= factor;
+    layer.h = scaleH;
   }
 }
 

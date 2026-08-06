@@ -105,6 +105,30 @@
     />
   </label>
 {:else if layer.kind === "shape"}
+  <!-- Width and height are the one size the canvas handles cannot give you
+       exactly, and a shape is the only kind that keeps them apart. -->
+  <label class="field">
+    <span>Breite</span>
+    <input
+      type="range"
+      min="0.02"
+      max="1.5"
+      step="0.01"
+      value={layer.w}
+      oninput={(e) => set("w", num(e))}
+    />
+  </label>
+  <label class="field">
+    <span>Höhe</span>
+    <input
+      type="range"
+      min="0.02"
+      max="1.5"
+      step="0.01"
+      value={layer.h}
+      oninput={(e) => set("h", num(e))}
+    />
+  </label>
   <label class="field">
     <span>Füllung</span>
     <input type="color" value={flat(layer.fill)} oninput={(e) => set("fill", e.currentTarget.value)} />

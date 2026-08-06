@@ -242,19 +242,26 @@ async function background(
   });
 }
 
-/** Only corner handles: the model carries one `scale` per image layer, so a
- *  side handle would offer a non-uniform stretch it cannot store.
+/** Which layers can be stretched out of proportion.
  *
- *  `allowRotate` is false for a grid-space image: it gets baked into every
+ *  Only shapes: they keep width and height as separate fields. An image
+ *  carries a single `scale` and a caption a single `size`, so a stretch has
+ *  nowhere to be stored and would spring back the moment the scene rebuilt —
+ *  better not to offer the handle than to offer one that lies. */
+export const freeScale = (l: Layer) => l.kind === "shape";
+
+/** `allowRotate` is false for a grid-space image: it gets baked into every
  *  tile's `base` (see mosaicBakeCrops in geometry.ts), and `Base` has no
  *  rotation field — a rotated picture would have no crop that reproduces it.
  *  Disabling the handle here is what stops that state from being reachable at
  *  all, rather than baking it wrong later. */
-function makeInteractive(obj: fabric.Object, locked: boolean, allowRotate = true) {
+function makeInteractive(obj: fabric.Object, l: Layer, allowRotate = true) {
+  const locked = !!l.locked;
   obj.selectable = !locked;
   obj.evented = !locked;
   obj.hasControls = !locked;
-  obj.setControlsVisibility({ ml: false, mr: false, mt: false, mb: false, mtr: allowRotate });
+  const sides = freeScale(l);
+  obj.setControlsVisibility({ ml: sides, mr: sides, mt: sides, mb: sides, mtr: allowRotate });
 }
 
 /** Fills `canvas` with the whole wall. Backgrounds are inert; layers are
@@ -284,7 +291,7 @@ export async function buildGrid(
       // here yet.
       const obj = await layerObject(l, deps, box, id, texts);
       if (!obj) continue;
-      if (interactive) makeInteractive(obj, !!l.locked);
+      if (interactive) makeInteractive(obj, l);
       else obj.selectable = obj.evented = false;
       Object.assign(obj, { layerId: l.id, tileId: id, space: "tile" });
       canvas.add(obj);
@@ -303,7 +310,7 @@ export async function buildGrid(
   for (const l of m.overlays.flatMap((o) => o.layers)) {
     if (l.hidden || l.kind !== "image" || l.space !== "grid") continue;
     const obj = await imageObject(l, deps, { w: grid.w, h: grid.h, x: 0, y: 0 });
-    if (interactive) makeInteractive(obj, !!l.locked, false);
+    if (interactive) makeInteractive(obj, l, false);
     else obj.selectable = obj.evented = false;
     Object.assign(obj, { layerId: l.id, tileId: "", space: "grid" });
     canvas.add(obj);
@@ -375,7 +382,8 @@ async function layoutObjects(
     const placed = { ...l, x: l.x + shift.dx, y: l.y + shift.dy } as Layer;
     const obj = await layerObject(placed, deps, { w: TILE_W, h: TILE_H, x: 0, y: 0 }, "", {});
     if (!obj) continue;
-    if (interactive) makeInteractive(obj, locked || !!l.locked);
+    // A locked group locks its members, so the flag has to travel down.
+    if (interactive) makeInteractive(obj, locked ? { ...l, locked: true } : l);
     else obj.selectable = obj.evented = false;
     Object.assign(obj, { layerId: l.id, tileId: "", space: "tile" });
     out.push(obj);
@@ -394,6 +402,7 @@ export function readBack(obj: Tagged, tileCount: number, index: number) {
     x: ((obj.left ?? 0) - box.x) / box.w,
     y: ((obj.top ?? 0) - box.y) / box.h,
     scale: obj.getScaledWidth() / box.w,
+    scaleH: obj.getScaledHeight() / box.h,
     rotation: obj.angle ?? 0,
   };
 }
@@ -408,13 +417,16 @@ export function readBack(obj: Tagged, tileCount: number, index: number) {
  *  origin. The matrix is absolute either way, which makes this one code path
  *  instead of one per case. */
 export function readBackLayout(obj: fabric.Object) {
-  const { translateX, translateY, scaleX, angle } = fabric.util.qrDecompose(
+  const { translateX, translateY, scaleX, scaleY, angle } = fabric.util.qrDecompose(
     obj.calcTransformMatrix(),
   );
   return {
     x: translateX / TILE_W,
     y: translateY / TILE_H,
     scale: (scaleX * (obj.width ?? 0)) / TILE_W,
+    // Read separately rather than assumed equal: a shape keeps width and
+    // height apart, so stretching one side has to survive the round trip.
+    scaleH: (scaleY * (obj.height ?? 0)) / TILE_H,
     rotation: angle,
   };
 }
