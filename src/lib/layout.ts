@@ -30,7 +30,7 @@ export async function renderLayout(layout: Layout, deps: SceneDeps): Promise<Uin
     const blob = await new Promise<Blob | null>((resolve) =>
       canvas.getElement().toBlob(resolve, "image/png"),
     );
-    if (!blob) throw new Error("Layout ließ sich nicht rendern");
+    if (!blob) throw new Error("The layout could not be rendered");
     return new Uint8Array(await blob.arrayBuffer());
   } finally {
     // Fabric v6+ disposes asynchronously; not awaiting it leaves the element

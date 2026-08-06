@@ -21,7 +21,6 @@ import {
   app,
   applyLayoutTransform,
   canGroupLayers,
-  canStampLayout,
   dropLayoutLayer,
   endGesture,
   freeCount,
@@ -34,7 +33,6 @@ import {
   moveLayersIntoGroup,
   newGroup,
   setLayoutSelection,
-  stampLayout,
   tileCaptions,
   toggleLayoutPick,
 } from "./lib/editor.svelte";
@@ -104,40 +102,6 @@ describe("the wall", () => {
     expect(document.querySelector("canvas.lower-canvas")).toBeTruthy();
   });
 
-  it("refuses to stamp a selection that is not exactly one group", async () => {
-    const [a, b, c, d] = app.manifest.order;
-    app.selectedTiles = [a, b];
-    await newGroup();
-
-    queuePick(await magentaSquare("s"));
-    await newLayoutDoc("L");
-    await addLayoutImage();
-    const layoutId = openLayout()!.id;
-
-    /* One owned tile plus one free one used to stamp the owned tile's whole
-     * group and drop the free one — tiles nobody picked got a stamp, a picked
-     * one got nothing, and nothing said so. */
-    app.selectedTiles = [a, d];
-    expect(canStampLayout()).toBe(false);
-    await stampLayout(layoutId);
-    expect(groups()[0].layers).toHaveLength(0);
-    expect(app.error).toContain("freie und vergebene");
-
-    // Part of a group is refused too: the rest of the group would be stamped.
-    app.selectedTiles = [a];
-    expect(canStampLayout()).toBe(false);
-
-    // The whole group is fine.
-    app.selectedTiles = [a, b];
-    expect(canStampLayout()).toBe(true);
-    await stampLayout(layoutId);
-    expect(groups()[0].layers).toHaveLength(1);
-
-    // So is a set of entirely free tiles, which makes its own group.
-    app.selectedTiles = [c, d];
-    expect(canStampLayout()).toBe(true);
-  });
-
   it("stamps a per-tile caption onto the group, live", async () => {
     /* Through the editor, not the model: the unit tests hand syncLiveLayers
      * plain objects, and the app hands it Svelte $state proxies — which is a
@@ -153,12 +117,12 @@ describe("the wall", () => {
     await setLayerField(caption.id, "perTile", true);
     await setLayerField(caption.id, "text", "Kachel {{id}}");
 
-    await stampLayout(openLayout()!.id);
+    await assignLayout(groups()[0].id, openLayout()!.id);
 
     expect(app.error).toBe("");
     const kinds = groups()[0].layers.map((l) => l.kind);
     expect(kinds).toEqual(["image", "text"]);
-    // Recorded, or "Stempel aktualisieren" would be greyed out forever.
+    // Recorded, or "Update stamps" would be greyed out forever.
     expect(openLayout()!.stamped).toBeTruthy();
     // And the wording panel can find it.
     app.selectedTiles = [a];

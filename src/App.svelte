@@ -22,7 +22,6 @@
     canBakeMosaic,
     canGroupLayers,
     canSaveLayout,
-    canStampLayout,
     claimedCount,
     clearTileText,
     clearTiles,
@@ -61,8 +60,6 @@
     selectLayer,
     selectLayoutLayer,
     setTileText,
-    stampHint,
-    stampLayout,
     tileCaptions,
     tileText,
     toggleLayerHidden,
@@ -112,6 +109,11 @@
   /** The wall canvas, for the one thing App needs from it: which tile is under
    *  a right-click. */
   let grid: GridCanvas | undefined = $state();
+
+  /** The Layout canvas — the toolbar's align buttons act on its live objects. */
+  let sheet: LayoutCanvas | undefined = $state();
+  const noPick = $derived(!editing || !app.layoutSelection.length);
+  const fewPicked = $derived(!editing || app.layoutSelection.length < 3);
 
   /* --- Dragging rows to reorder. Native HTML drag-and-drop rather than
      pointer bookkeeping: it is what the browser already knows how to do, and
@@ -188,8 +190,8 @@
     if (
       used &&
       !(await ask(
-        `„${name}" ist ${used}× gestempelt. Die Stempel bleiben als namenlose Bilder liegen.`,
-        { title: "Layout löschen?", kind: "warning" },
+        `"${name}" is stamped ${used} time(s). The stamps stay behind as nameless pictures.`,
+        { title: "Delete layout?", kind: "warning" },
       ))
     )
       return;
@@ -199,8 +201,8 @@
   async function removeGroup(id: string, name: string, stamps: number) {
     if (
       stamps &&
-      !(await ask(`„${name}" hat ${stamps} Layout(s) auf ihren Kacheln. Die gehen mit weg.`, {
-        title: "Gruppe löschen?",
+      !(await ask(`"${name}" has ${stamps} layout(s) on its tiles. They go with it.`, {
+        title: "Delete group?",
         kind: "warning",
       }))
     )
@@ -256,10 +258,10 @@
       x: e.clientX,
       y: e.clientY,
       items: [
-        { label: "Neue Gruppe aus Auswahl", run: () => void newGroup(), disabled: !freeCount() },
+        { label: "New group from selection", run: () => void newGroup(), disabled: !freeCount() },
         ...(groups().length ? [{ separator: true } as Item] : []),
         ...groups().map((g) => ({
-          label: `Zu „${g.name}" hinzufügen`,
+          label: `Add to "${g.name}"`,
           run: () => void addTilesToGroup(g.id),
           disabled: !freeCount(),
         })),
@@ -267,7 +269,7 @@
           ? [
               { separator: true } as Item,
               {
-                label: claimed === 1 ? "Aus Gruppe entfernen" : `${claimed} aus Gruppe entfernen`,
+                label: claimed === 1 ? "Remove from group" : `Remove ${claimed} from group`,
                 run: () => void releaseSelectedTiles(),
               },
             ]
@@ -288,19 +290,19 @@
       y: e.clientY,
       items: [
         {
-          label: picked.length > 1 ? `${picked.length} Ebenen gruppieren` : "Gruppieren",
+          label: picked.length > 1 ? `Group ${picked.length} layers` : "Group",
           run: () => void groupLayoutLayers(),
           disabled: !canGroupLayers(),
         },
         ...(targets.length ? [{ separator: true } as Item] : []),
         ...targets.map((g) => ({
-          label: `In „${layerLabel(g)}" verschieben`,
+          label: `Move into "${layerLabel(g)}"`,
           run: () => void moveLayersIntoGroup(g.id, picked),
         })),
         { separator: true },
-        { label: "Umbenennen", run: () => (renaming = layerId) },
+        { label: "Rename", run: () => (renaming = layerId) },
         {
-          label: findLayer(editing?.layers ?? [], layerId)?.kind === "group" ? "Auflösen" : "Löschen",
+          label: findLayer(editing?.layers ?? [], layerId)?.kind === "group" ? "Ungroup" : "Delete",
           run: () => void deleteLayoutLayer(layerId),
         },
       ],
@@ -346,14 +348,14 @@
       >
         <button
           class="eye"
-          title={layer.hidden ? "Einblenden" : "Ausblenden"}
+          title={layer.hidden ? "Show" : "Hide"}
           onclick={() => toggleLayoutLayerHidden(layer.id)}
         >
           {layer.hidden ? "○" : "●"}
         </button>
         <button
           class="eye"
-          title={layer.locked ? "Entsperren" : "Sperren"}
+          title={layer.locked ? "Unlock" : "Lock"}
           onclick={() => toggleLayerLocked(layer.id)}
         >
           {layer.locked ? "🔒" : "🔓"}
@@ -377,15 +379,15 @@
             class:group-name={layer.kind === "group"}
             onclick={(e) => toggleLayoutPick(layer.id, e.ctrlKey || e.shiftKey)}
             ondblclick={() => (renaming = layer.id)}
-            title="Strg-Klick wählt mehrere, Doppelklick benennt um"
+            title="Ctrl-click picks several, double-click renames"
           >
             {layer.kind === "group" ? "▾ " : ""}{layerLabel(layer)}
           </button>
         {/if}
-        <button title="Nach oben" onclick={() => moveLayoutLayer(layer.id, true)}>↑</button>
-        <button title="Nach unten" onclick={() => moveLayoutLayer(layer.id, false)}>↓</button>
+        <button title="Move up" onclick={() => moveLayoutLayer(layer.id, true)}>↑</button>
+        <button title="Move down" onclick={() => moveLayoutLayer(layer.id, false)}>↓</button>
         <button
-          title={layer.kind === "group" ? "Gruppe auflösen, Ebenen bleiben" : "Löschen"}
+          title={layer.kind === "group" ? "Ungroup, the layers stay" : "Delete"}
           onclick={() => deleteLayoutLayer(layer.id)}>×</button
         >
       </li>
@@ -398,67 +400,40 @@
 
 <main>
   <header>
-    <div class="docs" role="group" aria-label="Dokument">
-      <button class:active={!editing} onclick={closeLayoutDoc} disabled={!app.dir}>Wand</button>
+    <div class="docs" role="group" aria-label="Document">
+      <button class:active={!editing} onclick={closeLayoutDoc} disabled={!app.dir}>Wall</button>
       {#if editing}
-        <button class="active" title="Esc schließt">{editing.name}</button>
+        <button class="active" title="Esc closes">{editing.name}</button>
       {/if}
     </div>
 
     {#if editing}
-      <div class="insert" role="group" aria-label="Einfügen">
-        <button onclick={addLayoutImage} disabled={!!app.busy} title="Bild einfügen">Bild</button>
-        <button onclick={addLayoutText} disabled={!!app.busy} title="Text einfügen">Text</button>
-        <button onclick={() => addLayoutShape("rect")} title="Rechteck">▭</button>
-        <button onclick={() => addLayoutShape("ellipse")} title="Ellipse">◯</button>
-        <button onclick={() => addLayoutShape("polygon")} title="Vieleck">⬡</button>
-      </div>
-      <button
-        onclick={groupLayoutLayers}
-        disabled={!canGroupLayers() || !!app.busy}
-        title="Mehrere Ebenen mit Strg wählen, dann gruppieren"
-      >
-        Gruppieren
-      </button>
-      <button
-        onclick={() => stampLayout(editing.id)}
-        disabled={!canStampLayout() || !!app.busy}
-        title="Rendert das Layout und legt es auf die gewählten Kacheln"
-      >
-        Auf Auswahl stempeln
-        {#if app.selectedTiles.length}({app.selectedTiles.length}){/if}
-      </button>
       <button
         onclick={() => saveLayout(editing.id)}
         disabled={!canSaveLayout(editing.id) || !!app.busy}
         title={layoutUsage(editing.id)
-          ? `Überträgt die Änderungen auf ${layoutUsage(editing.id)} Stempel`
-          : "Noch nirgends gestempelt"}
+          ? `Applies the changes to ${layoutUsage(editing.id)} stamp(s)`
+          : "Not stamped anywhere yet"}
       >
-        <!-- Not "Speichern": the Layout is written to disk on every edit, so a
+        <!-- Not "Save": the Layout is written to disk on every edit, so a
              save button would promise something that already happened. What
              this does is re-render and swap the picture in every stamp. -->
-        Stempel aktualisieren{#if layoutUsage(editing.id)}&nbsp;({layoutUsage(editing.id)}){/if}
+        Update stamps{#if layoutUsage(editing.id)}&nbsp;({layoutUsage(editing.id)}){/if}
       </button>
     {:else}
       <button onclick={newGroup} disabled={!freeCount() || !!app.busy}>
-        Gruppe aus Auswahl
+        Group from selection
         {#if freeCount()}({freeCount()}){/if}
       </button>
-      <button onclick={addGridImage} disabled={!app.dir || !!app.busy}>Bild über das Grid</button>
+      <button onclick={addGridImage} disabled={!app.dir || !!app.busy}>Image across the grid</button>
       <button
         onclick={bakeMosaic}
         disabled={!canBakeMosaic() || !!app.busy}
-        title="Backt das gewählte Wandbild in jede vollständig bedeckte Kachel; danach kein Objekt mehr"
+        title="Bakes the selected wall picture into every fully covered tile; no object remains"
       >
-        Anwenden
+        Apply
       </button>
-    {/if}
-
-    <button onclick={undoEdit} disabled={!undoable()} title="Strg+Z">Rückgängig</button>
-    <button onclick={redoEdit} disabled={!redoable()} title="Strg+Y">Wiederholen</button>
-    {#if !editing}
-      <button onclick={saveToGame} disabled={!app.dir || !!app.busy}>Ins Spiel schreiben</button>
+      <button onclick={saveToGame} disabled={!app.dir || !!app.busy}>Write to game</button>
     {/if}
 
     <span class="status">
@@ -467,27 +442,56 @@
       {:else if app.error}
         {app.error}
       {:else if editing && canSaveLayout(editing.id)}
-        Gesichert &middot; Änderungen noch nicht auf den Kacheln
+        Saved &middot; changes not on the tiles yet
       {:else if editing}
-        Gesichert{#if stampHint()}&nbsp;&middot; {stampHint()}{/if}
+        Saved
       {:else if app.selectedTiles.length}
-        {app.selectedTiles.length} gewählt{#if freeCount() < app.selectedTiles.length}, {freeCount()}
-          davon frei{/if}
-        <button class="link" onclick={clearTiles}>aufheben</button>
+        {app.selectedTiles.length} selected{#if freeCount() < app.selectedTiles.length}, {freeCount()}
+          of them free{/if}
+        <button class="link" onclick={clearTiles}>clear</button>
       {:else if app.dir}
-        {app.manifest.order.length} Kacheln &middot; ziehen wählt aus, Strg addiert, Alt+ziehen tauscht
+        {app.manifest.order.length} tiles &middot; drag selects, Ctrl adds, Alt+drag swaps
       {/if}
     </span>
   </header>
 
   <div class="body">
+    <!-- One fixed toolbar for both views, two columns: the left column holds
+         the horizontal half of a pair, the right the vertical. Fixed rather
+         than appearing with the mode: a control with a permanent home can be
+         found before it is needed, and greying out says "open a Layout first"
+         better than absence does. -->
+    <div class="tools" role="toolbar" aria-label="Tools">
+      {#snippet tool(label: string, glyph: string, run: () => void, off: boolean)}
+        <button title={label} disabled={off || !!app.busy} onclick={run}>{glyph}</button>
+      {/snippet}
+      {@render tool("Undo (Ctrl+Z)", "↶", () => void undoEdit(), !undoable())}
+      {@render tool("Redo (Ctrl+Y)", "↷", () => void redoEdit(), !redoable())}
+      <span class="gap"></span>
+      {@render tool("Insert image", "🖻", () => void addLayoutImage(), !editing)}
+      {@render tool("Insert text", "T", () => void addLayoutText(), !editing)}
+      {@render tool("Rectangle", "▭", () => void addLayoutShape("rect"), !editing)}
+      {@render tool("Ellipse", "◯", () => void addLayoutShape("ellipse"), !editing)}
+      {@render tool("Polygon", "⬡", () => void addLayoutShape("polygon"), !editing)}
+      <span></span>
+      <span class="gap"></span>
+      {@render tool("Align left", "⇤", () => sheet?.alignTo("left"), noPick)}
+      {@render tool("Align top", "⤒", () => sheet?.alignTo("top"), noPick)}
+      {@render tool("Center horizontally", "↔", () => sheet?.alignTo("centerX"), noPick)}
+      {@render tool("Center vertically", "↕", () => sheet?.alignTo("centerY"), noPick)}
+      {@render tool("Align right", "⇥", () => sheet?.alignTo("right"), noPick)}
+      {@render tool("Align bottom", "⤓", () => sheet?.alignTo("bottom"), noPick)}
+      {@render tool("Equal horizontal gaps", "⇹", () => sheet?.spreadBy("x"), fewPicked)}
+      {@render tool("Equal vertical gaps", "⇳", () => sheet?.spreadBy("y"), fewPicked)}
+    </div>
+
     <!-- Capture phase: Fabric stops contextmenu on its own canvas, so a
          bubbling listener out here never sees a right-click on the wall.
          Capture runs on the way down, before the target's own handlers. -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="stage" oncontextmenucapture={wallMenu}>
       {#if editing}
-        <LayoutCanvas />
+        <LayoutCanvas bind:this={sheet} />
       {:else}
         <GridCanvas bind:this={grid} />
       {/if}
@@ -495,24 +499,24 @@
 
     <aside>
       {#if editing}
-        <h2>Ebenen im Layout</h2>
+        <h2>Layers in the layout</h2>
         {#if !layoutLayers.length}
-          <p class="empty">Keine Ebenen.</p>
+          <p class="empty">No layers.</p>
         {/if}
         {@render layerRows(layoutLayers, false, null)}
-        <p class="empty">Rechtsklick auf eine Ebene für Gruppieren, Verschieben, Umbenennen.</p>
+        <p class="empty">Right-click a layer to group, move, or rename.</p>
         {#if selectedLayoutLayer}
           <Properties layer={selectedLayoutLayer} inLayout />
         {/if}
       {:else}
         {#if wallLayers.length}
-          <h2>Wand</h2>
+          <h2>Wall</h2>
           <ul>
             {#each wallLayers as layer (layer.id)}
               <li class:selected={app.selected === layer.id}>
                 <button
                   class="eye"
-                  title={layer.hidden ? "Einblenden" : "Ausblenden"}
+                  title={layer.hidden ? "Show" : "Hide"}
                   onclick={() => toggleLayerHidden(layer.id)}
                 >
                   {layer.hidden ? "○" : "●"}
@@ -520,15 +524,15 @@
                 <button class="name" class:dimmed={layer.hidden} onclick={() => selectLayer(layer.id)}>
                   {layerLabel(layer)}
                 </button>
-                <button title="Löschen" onclick={() => deleteLayer(layer.id)}>×</button>
+                <button title="Delete" onclick={() => deleteLayer(layer.id)}>×</button>
               </li>
             {/each}
           </ul>
         {/if}
 
-        <h2 class:spaced={wallLayers.length}>Gruppen</h2>
+        <h2 class:spaced={wallLayers.length}>Groups</h2>
         {#if !groups().length}
-          <p class="empty">Kacheln wählen, dann „Gruppe aus Auswahl".</p>
+          <p class="empty">Select tiles, then "Group from selection".</p>
         {/if}
 
         {#each groups() as group (group.id)}
@@ -562,25 +566,25 @@
                   class="name"
                   ondblclick={() => (renaming = group.id)}
                   onclick={() => toggleOpen(group.id)}
-                  title="Doppelklick zum Umbenennen"
+                  title="Double-click to rename"
                 >
                   {group.name}
                   <!-- Stamps, not every layer: a live caption sits in here too,
                        and counting it made a group with one design read
                        "2 Layouts". -->
                   <span class="usage">
-                    {tiles.length} Kacheln · {group.layers.filter((l) => l.kind === "image").length}
-                    Layouts
+                    {tiles.length} tiles · {group.layers.filter((l) => l.kind === "image").length}
+                    layouts
                   </span>
                 </button>
               {/if}
               <button
-                title="Gewählte freie Kacheln hinzufügen"
+                title="Add the picked free tiles"
                 disabled={!freeCount()}
                 onclick={() => addTilesToGroup(group.id)}>+</button
               >
               <button
-                title="Gruppe löschen"
+                title="Delete group"
                 onclick={() =>
                   removeGroup(
                     group.id,
@@ -591,30 +595,30 @@
             </div>
 
             {#if open.has(group.id)}
-              <p class="sub">Kacheln</p>
+              <p class="sub">Tiles</p>
               {#if !tiles.length}
-                <p class="empty indent">Keine — Kacheln wählen, dann „+".</p>
+                <p class="empty indent">None — pick tiles, then "+".</p>
               {/if}
               <ul class="indent">
                 {#each tiles as id (id)}
                   <li class:selected={app.selectedTiles.includes(id)}>
                     <button class="name" onclick={() => (app.selectedTiles = [id])}>{id}</button>
-                    <button title="Aus Gruppe entfernen" onclick={() => removeTileFromGroup(group.id, id)}
+                    <button title="Remove from group" onclick={() => removeTileFromGroup(group.id, id)}
                       >×</button
                     >
                   </li>
                 {/each}
               </ul>
 
-              <p class="sub">Ebenen</p>
+              <p class="sub">Layers</p>
               {#if !group.layers.length}
-                <p class="empty indent">Kein Layout zugewiesen.</p>
+                <p class="empty indent">No layout assigned.</p>
               {/if}
               <!-- Live captions are left out on purpose. Their row offered
                    nothing the stamp row does not: the layer is held (a wall
                    edit would be overwritten by the next stamp update), its
                    double-click opened the same Layout, and the per-tile
-                   wording lives in the "Text auf …" panel. One row per
+                   wording lives in the "Text on …" panel. One row per
                    assigned Layout is the whole story. -->
               {@const stamps = [...group.layers]
                 .reverse()
@@ -645,7 +649,7 @@
                   >
                     <button
                       class="eye"
-                      title={layer.hidden ? "Einblenden" : "Ausblenden"}
+                      title={layer.hidden ? "Show" : "Hide"}
                       onclick={() => toggleLayerHidden(layer.id)}
                     >
                       {layer.hidden ? "○" : "●"}
@@ -658,7 +662,7 @@
                       class="eye"
                       disabled={!!layer.layoutId}
                       title={layer.layoutId
-                        ? "Vom Layout gehalten — im Layout bearbeiten"
+                        ? "Held by the layout — edit it there"
                         : layer.locked
                           ? "Entsperren"
                           : "Sperren"}
@@ -671,18 +675,18 @@
                       class:dimmed={layer.hidden}
                       onclick={() => selectLayer(layer.id)}
                       ondblclick={() => layer.layoutId && openLayoutDoc(layer.layoutId)}
-                      title="Doppelklick öffnet das Layout"
+                      title="Double-click opens the layout"
                     >
 <!-- Marker before the name, not after: the name is what gets
                            ellipsised when the row runs out of width, and a dot
                            hidden behind "…" is the same as no dot at all. -->{#if stampDirty(layer)}<span
                           class="dirty"
-                          title="Layout geändert — im Layout speichern">●&nbsp;</span
+                          title="Layout changed — press Update stamps">●&nbsp;</span
                         >{/if}{stampName(layer)}
                     </button>
-                    <button title="Nach oben" onclick={() => moveLayer(layer.id, true)}>↑</button>
-                    <button title="Nach unten" onclick={() => moveLayer(layer.id, false)}>↓</button>
-                    <button title="Löschen" onclick={() => deleteLayer(layer.id)}>×</button>
+                    <button title="Move up" onclick={() => moveLayer(layer.id, true)}>↑</button>
+                    <button title="Move down" onclick={() => moveLayer(layer.id, false)}>↓</button>
+                    <button title="Delete" onclick={() => deleteLayer(layer.id)}>×</button>
                   </li>
                 {/each}
               </ul>
@@ -696,7 +700,7 @@
                   if (id) void assignLayout(group.id, id);
                 }}
               >
-                <option value="">+ Layout zuweisen…</option>
+                <option value="">+ Assign layout…</option>
                 {#each layouts() as layout (layout.id)}
                   <option value={layout.id}>{layout.name}</option>
                 {/each}
@@ -707,7 +711,7 @@
 
         {#if tileCaptions().length}
           {@const tile = app.selectedTiles[0]}
-          <h2 class="spaced">Text auf {tile}</h2>
+          <h2 class="spaced">Text on {tile}</h2>
           {#each tileCaptions() as caption (caption.id)}
             <label class="field">
               <span>{layerLabel(caption)}</span>
@@ -720,7 +724,7 @@
                 oninput={(e) => void setTileText(tile, caption.id, e.currentTarget.value)}
               />
               <button
-                title="Standardtext der Ebene wieder verwenden"
+                title="Use the layer's default text again"
                 disabled={tileText(tile, caption.id) === undefined}
                 onclick={() => void clearTileText(tile, caption.id)}>↺</button
               >
@@ -730,7 +734,7 @@
 
         <h2 class="spaced">Layouts</h2>
         {#if !layouts().length}
-          <p class="empty">Noch keins.</p>
+          <p class="empty">None yet.</p>
         {/if}
         <ul>
           {#each layouts() as layout (layout.id)}
@@ -752,16 +756,16 @@
                   class="name"
                   onclick={() => openLayoutDoc(layout.id)}
                   ondblclick={() => (renaming = layout.id)}
-                  title="Klick öffnet, Doppelklick benennt um"
+                  title="Click opens, double-click renames"
                 >
                   {layout.name}
                   <span class="usage">
-                    {layoutUsage(layout.id) ? `${layoutUsage(layout.id)}× gestempelt` : "nicht benutzt"}
+                    {layoutUsage(layout.id) ? `stamped ${layoutUsage(layout.id)} time(s)` : "unused"}
                   </span>
                 </button>
               {/if}
-              <button title="Duplizieren" onclick={() => duplicateLayoutDoc(layout.id)}>⧉</button>
-              <button title="Löschen" onclick={() => removeLayout(layout.id, layout.name)}>×</button
+              <button title="Duplicate" onclick={() => duplicateLayoutDoc(layout.id)}>⧉</button>
+              <button title="Delete" onclick={() => removeLayout(layout.id, layout.name)}>×</button
               >
             </li>
           {/each}
@@ -771,7 +775,7 @@
           onclick={() => newLayoutDoc(`Layout ${layouts().length + 1}`)}
           disabled={!app.dir || !!app.busy}
         >
-          + Neues Layout
+          + New layout
         </button>
       {/if}
     </aside>
@@ -829,13 +833,35 @@
     margin-left: auto;
     color: #8b979f;
   }
-  .docs,
-  .insert {
+  .docs {
     display: flex;
     gap: 2px;
     margin-right: 6px;
     padding-right: 8px;
     border-right: 1px solid #232b31;
+  }
+  .tools {
+    flex: none;
+    display: grid;
+    grid-template-columns: repeat(2, 30px);
+    gap: 2px;
+    align-content: start;
+    padding: 8px 6px;
+    border-right: 1px solid #232b31;
+    overflow-y: auto;
+  }
+  .tools button {
+    height: 28px;
+    padding: 0;
+    font: 14px/1 ui-sans-serif, system-ui, sans-serif;
+    color: #cfd6dc;
+  }
+  .tools button:disabled {
+    opacity: 0.35;
+  }
+  .tools .gap {
+    grid-column: 1 / -1;
+    height: 6px;
   }
   .docs button.active {
     border-color: #78dcff;

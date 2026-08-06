@@ -360,7 +360,7 @@ export const coveredTiles = (o: Overlay, allIds: string[]) =>
  *  around as a reusable document rather than being consumed the moment it is
  *  used. It is never rendered directly onto a tile; it is only ever rendered
  *  to a flat picture and *that* is what gets stamped (see ImageLayer.layoutId
- *  and stampLayout in editor.svelte.ts). That split is deliberate: the layout
+ *  and assignLayout in editor.svelte.ts). That split is deliberate: the layout
  *  keeps its structure, styles and per-layer editability for as long as you
  *  want to keep changing it, while what actually sits on a tile is nothing
  *  more exotic than an ordinary picture, reusing every bit of image-layer

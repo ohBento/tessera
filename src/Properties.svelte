@@ -19,7 +19,7 @@
   const num = (e: Event) => Number((e.currentTarget as HTMLInputElement).value);
 </script>
 
-<h2 class="spaced">Eigenschaften</h2>
+<h2 class="spaced">Properties</h2>
 
 {#if layer.kind === "text"}
   <label class="field">
@@ -28,11 +28,11 @@
     ></textarea>
   </label>
   <label class="field">
-    <span>Schrift</span>
+    <span>Font</span>
     <input value={layer.font} onchange={(e) => set("font", e.currentTarget.value)} />
   </label>
   <label class="field">
-    <span>Größe</span>
+    <span>Size</span>
     <!-- The ceiling follows the layer, and there is no step. A canvas handle
          has no limits, so a caption scaled past the end of the track showed as
          pinned at the maximum and the next nudge — the gesture that means "a
@@ -52,33 +52,60 @@
       <button
         class:on={layer.perTile}
         onclick={() => set("perTile", !layer.perTile)}
-        title="Nicht in den Stempel einbrennen — als lebende Ebene auf jede Kachel legen, damit jede ihren eigenen Wortlaut haben kann"
+        title="Kept out of the stamp — laid on every tile as a live layer, so each tile can carry its own wording"
       >
-        {layer.perTile ? "✓ " : ""}pro Kachel
+        {layer.perTile ? "✓ " : ""}per tile
       </button>
     </div>
     {#if layer.perTile}
       <p class="hint">
-        Bleibt aus dem Stempel heraus. Nach dem Stempeln pro Kachel bearbeitbar; „{"{{id}}"}" wird
-        die Kachel-ID.
+        Stays out of the stamp. Editable per tile once stamped; "{"{{id}}"}" becomes
+        the tile id.
       </p>
     {/if}
   {/if}
+  <!-- The glyphs every text editor uses: a bold B, an italic I, and alignment
+       as little line stacks whose ragged side says which way the text falls. -->
   <div class="row">
-    <button class:on={layer.bold} onclick={() => set("bold", !layer.bold)}>F</button>
-    <button class:on={layer.italic} onclick={() => set("italic", !layer.italic)}>K</button>
+    <button class="b" class:on={layer.bold} title="Bold" onclick={() => set("bold", !layer.bold)}>
+      B
+    </button>
+    <button
+      class="i"
+      class:on={layer.italic}
+      title="Italic"
+      onclick={() => set("italic", !layer.italic)}
+    >
+      I
+    </button>
     {#each ["left", "center", "right"] as const as a}
-      <button class:on={(layer.align ?? "center") === a} onclick={() => set("align", a)}>
-        {a === "left" ? "⯇" : a === "right" ? "⯈" : "≡"}
+      {@const w = a === "center" ? [14, 8, 12, 6] : [14, 9, 13, 7]}
+      <button
+        class:on={(layer.align ?? "center") === a}
+        title={a === "left" ? "Align left" : a === "right" ? "Align right" : "Center"}
+        onclick={() => set("align", a)}
+      >
+        <svg width="16" height="14" viewBox="0 0 16 14" aria-hidden="true">
+          {#each w as lw, i}
+            <rect
+              x={a === "left" ? 1 : a === "right" ? 15 - lw : (16 - lw) / 2}
+              y={1 + i * 3.4}
+              width={lw}
+              height="1.6"
+              rx="0.8"
+              fill="currentColor"
+            />
+          {/each}
+        </svg>
       </button>
     {/each}
   </div>
   <label class="field">
-    <span>Farbe</span>
+    <span>Color</span>
     <input type="color" value={flat(layer.color)} oninput={(e) => set("color", e.currentTarget.value)} />
   </label>
   <label class="field">
-    <span>Kontur</span>
+    <span>Outline</span>
     <input
       type="range"
       min="0"
@@ -94,7 +121,7 @@
     />
   </label>
   <label class="field">
-    <span>Schatten</span>
+    <span>Shadow</span>
     <input
       type="range"
       min="0"
@@ -113,7 +140,7 @@
   <!-- Width and height are the one size the canvas handles cannot give you
        exactly, and a shape is the only kind that keeps them apart. -->
   <label class="field">
-    <span>Breite</span>
+    <span>Width</span>
     <input
       type="range"
       min="0.02"
@@ -124,7 +151,7 @@
     />
   </label>
   <label class="field">
-    <span>Höhe</span>
+    <span>Height</span>
     <input
       type="range"
       min="0.02"
@@ -135,11 +162,11 @@
     />
   </label>
   <label class="field">
-    <span>Füllung</span>
+    <span>Fill</span>
     <input type="color" value={flat(layer.fill)} oninput={(e) => set("fill", e.currentTarget.value)} />
   </label>
   <label class="field">
-    <span>Rand</span>
+    <span>Border</span>
     <input
       type="range"
       min="0"
@@ -156,7 +183,7 @@
   </label>
   {#if layer.shape === "rect"}
     <label class="field">
-      <span>Ecken</span>
+      <span>Corners</span>
       <!-- Half the short side is the maximum a rounded rect can express; past
            it Canvas draws nothing at all, so the slider stops there. -->
       <input
@@ -171,7 +198,7 @@
   {/if}
   {#if layer.shape === "polygon"}
     <label class="field">
-      <span>Ecken</span>
+      <span>Corners</span>
       <input
         type="range"
         min="3"
@@ -185,15 +212,15 @@
   {/if}
 {:else if layer.kind === "image"}
   <div class="row">
-    <button class:on={layer.flipX} onclick={() => set("flipX", !layer.flipX)}>↔ spiegeln</button>
-    <button class:on={layer.flipY} onclick={() => set("flipY", !layer.flipY)}>↕ spiegeln</button>
+    <button class:on={layer.flipX} onclick={() => set("flipX", !layer.flipX)}>↔ Flip</button>
+    <button class:on={layer.flipY} onclick={() => set("flipY", !layer.flipY)}>↕ Flip</button>
   </div>
 {:else}
-  <p class="empty">Eine Gruppe hat keine eigenen Eigenschaften.</p>
+  <p class="empty">A group has no properties of its own.</p>
 {/if}
 
 <label class="field">
-  <span>Deckkraft</span>
+  <span>Opacity</span>
   <input
     type="range"
     min="0"
@@ -266,6 +293,19 @@
     border-color: #78dcff;
     background: #223039;
     color: #cdeeff;
+  }
+  .row button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 26px;
+  }
+  button.b {
+    font-weight: 700;
+  }
+  button.i {
+    font-style: italic;
+    font-family: Georgia, "Times New Roman", serif;
   }
   .value {
     flex: none;

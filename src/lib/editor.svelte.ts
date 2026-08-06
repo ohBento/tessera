@@ -145,7 +145,7 @@ export async function newGroup() {
   const free = freeTiles(app.manifest, app.selectedTiles);
   if (!free.length) return;
   await mutate(() => {
-    app.manifest.overlays.push(newOverlay(`Gruppe ${groups().length + 1}`, free));
+    app.manifest.overlays.push(newOverlay(`Group ${groups().length + 1}`, free));
   });
 }
 
@@ -159,7 +159,7 @@ export async function addTilesToGroup(groupId: string) {
   await mutate(() => addToGroup(app.manifest, group, [...app.selectedTiles]));
   // "vergeben", not "in einer anderen Gruppe": a tile already in *this* group
   // is skipped too, and naming the wrong group is worse than naming none.
-  if (skipped) app.error = `${skipped} Kachel(n) übersprungen — schon vergeben`;
+  if (skipped) app.error = `${skipped} tile(s) skipped — already taken`;
 }
 
 export async function removeTileFromGroup(groupId: string, tileId: string) {
@@ -288,7 +288,7 @@ async function mutate(fn: () => void, structural = true, run?: string) {
      * canvas did not, and the file on disk was a third answer. Putting the
      * recorded state back is the only way all three stay in step. */
     app.manifest = before;
-    app.error = `Änderung fehlgeschlagen: ${e}`;
+    app.error = `Change failed: ${e}`;
     app.version++;
     undo(history, before);
     return;
@@ -331,7 +331,7 @@ export const layerRows = () =>
 function allTiles(): Overlay {
   const existing = app.manifest.overlays.find((o) => o.tiles === "all");
   if (existing) return existing;
-  app.manifest.overlays.push(newOverlay("Alle Kacheln"));
+  app.manifest.overlays.push(newOverlay("All tiles"));
   // Read it back out rather than using the value pushed: Svelte hands back a
   // proxy, and mutating the raw object would not be reactive.
   return app.manifest.overlays[app.manifest.overlays.length - 1];
@@ -394,7 +394,7 @@ export async function persist(): Promise<boolean> {
     await saveManifest(app.dir, plain(app.manifest));
     return true;
   } catch (e) {
-    app.error = `Speichern fehlgeschlagen: ${e}`;
+    app.error = `Saving failed: ${e}`;
     return false;
   }
 }
@@ -417,7 +417,7 @@ export async function openFolder(dir?: string) {
   });
 }
 
-const IMAGE_FILTER = { name: "Bilder", extensions: ["png", "jpg", "jpeg", "webp", "bmp"] };
+const IMAGE_FILTER = { name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "bmp"] };
 
 /** The picked file's name, without folders or extension.
  *
@@ -429,43 +429,6 @@ const baseName = (path: string) =>
     .split(/[\\/]/)
     .pop()
     ?.replace(/\.[^.]+$/, "") ?? "";
-
-/** Why stamping the current selection cannot go ahead, or "" when it can.
- *
- *  A stamp lands on a whole group, never on a hand-picked set of tiles — that
- *  is what a group is for. So a selection only works when it *is* a group:
- *  every tile in one and the same group, or every tile still free (which makes
- *  a new one). Anything in between has no answer that is not a guess.
- *
- *  This used to guess, and the guess was silent and wrong: picking one owned
- *  tile and one free tile stamped the owned tile's *whole* group and dropped
- *  the free one, so tiles nobody chose got a stamp and a chosen one did not. */
-function stampBlocker(ids: string[]): string {
-  if (!ids.length) return "Keine Kacheln gewählt";
-  const owners = new Set(ids.map((id) => groupOf(app.manifest, id)?.id ?? ""));
-  if (owners.size > 1) {
-    return owners.has("")
-      ? "Auswahl mischt freie und vergebene Kacheln — erst zu einer Gruppe machen"
-      : "Auswahl liegt in mehreren Gruppen — im Gruppen-Panel zuweisen";
-  }
-  const group = groupOf(app.manifest, ids[0]);
-  // One group, but only part of it: stamping would reach tiles left unpicked.
-  if (group && group.tiles !== "all" && group.tiles.length !== ids.length) {
-    return `„${group.name}" hat ${group.tiles.length} Kacheln — ganze Gruppe wählen oder im Panel zuweisen`;
-  }
-  return "";
-}
-
-/** The group a stamp from the wall lands in — only ever called once
- *  stampBlocker has confirmed the selection is exactly one group, or free. */
-function groupFor(ids: string[]): Overlay {
-  const existing = groupOf(app.manifest, ids[0]);
-  if (existing) return existing;
-  app.manifest.overlays.push(newOverlay(`Gruppe ${groups().length + 1}`, [...ids]));
-  // Read it back out rather than using the value pushed: Svelte hands back a
-  // proxy, and mutating the raw object would not be reactive.
-  return app.manifest.overlays[app.manifest.overlays.length - 1];
-}
 
 /** Adds a picture spanning the whole wall — what used to be "the mosaic", now
  *  an ordinary layer that happens to live in grid space. */
@@ -545,7 +508,7 @@ export async function bakeMosaic() {
     const ids = visibleIds();
     const crops = mosaicBakeCrops(layer, { w: bmp.width, h: bmp.height }, ids.length);
     if (!crops.size) {
-      app.error = "Bild deckt keine Kachel vollständig ab";
+      app.error = "The picture does not fully cover any tile";
       return;
     }
     await mutate(() => {
@@ -597,8 +560,8 @@ export async function duplicateLayoutDoc(id: string) {
   const layout = app.manifest.layouts.find((l) => l.id === id);
   if (!layout) return;
   const taken = new Set(app.manifest.layouts.map((l) => l.name));
-  let name = `${layout.name} Kopie`;
-  for (let n = 2; taken.has(name); n++) name = `${layout.name} Kopie ${n}`;
+  let name = `${layout.name} Copy`;
+  for (let n = 2; taken.has(name); n++) name = `${layout.name} Copy ${n}`;
 
   await mutate(() => {
     const copy = duplicateLayout($state.snapshot(layout), name);
@@ -885,7 +848,7 @@ export async function groupLayoutLayers() {
     for (const [i, l] of layout.layers.entries()) if (picked.has(l.id)) topMost = i;
     const above = layout.layers.slice(topMost + 1).filter((l) => !picked.has(l.id)).length;
     const group = newGroupLayer(members);
-    group.name = `Gruppe ${kept.filter((l) => l.kind === "group").length + 1}`;
+    group.name = `Group ${kept.filter((l) => l.kind === "group").length + 1}`;
     kept.splice(kept.length - above, 0, group);
     layout.layers = kept;
     setLayoutSelection([group.id]);
@@ -1006,45 +969,6 @@ export async function assignLayout(groupId: string, layoutId: string) {
   });
 }
 
-/** Renders the layout once and drops the result onto the picked tiles as an
- *  ordinary image layer. Stamping the same tile set again with the same
- *  layout updates that stamp's picture in place rather than stacking a
- *  duplicate — overlayFor already reuses the matching overlay, and finding the
- *  matching layoutId inside it is the rest. */
-export const canStampLayout = () => !stampBlocker(app.selectedTiles);
-
-/** Why the stamp button is off, for the status line — a greyed button with no
- *  reason reads as broken. */
-export const stampHint = () => stampBlocker(app.selectedTiles);
-
-export async function stampLayout(layoutId: string) {
-  const layout = app.manifest.layouts.find((l) => l.id === layoutId);
-  if (!layout || !app.deps) return;
-  /* Checked up front, not inside the edit: rendering writes a PNG into
-   * assets/ and mutate() takes an undo checkpoint, so bailing out halfway left
-   * an unreferenced file behind and an undo step for something that never
-   * happened. */
-  const blocked = stampBlocker(app.selectedTiles);
-  if (blocked) {
-    app.error = blocked;
-    return;
-  }
-  await run("stamp", async () => {
-    // Taken before the render, not after: it records the state that actually
-    // went into the picture, so an edit made while rendering still counts as
-    // unsaved rather than being silently marked as already stamped.
-    const { asset, seen } = await stampAsset(layout);
-    await mutate(() => {
-      const group = groupFor(app.selectedTiles);
-      stampInto(group, layoutId, asset);
-      // After the stamp, so a live caption sits on top of the picture it was
-      // composed over rather than behind it.
-      syncLiveLayers(group, layout);
-      layout.stamped = seen;
-    });
-  });
-}
-
 /** How many spots a Layout is currently stamped onto — shown next to it so a
  *  design nobody uses anymore is visibly safe to delete. */
 export const layoutUsage = (layoutId: string) => overlaysUsingLayout(app.manifest, layoutId).length;
@@ -1078,8 +1002,8 @@ export async function saveLayout(layoutId: string) {
 
 export async function saveToGame() {
   await run("save", async () => {
-    if (!app.deps) throw new Error("kein Ordner geöffnet");
+    if (!app.deps) throw new Error("no folder open");
     const n = await saveTiles(app.dir, plain(app.manifest), app.deps);
-    app.error = `${n} Kacheln geschrieben`;
+    app.error = `${n} tiles written`;
   });
 }

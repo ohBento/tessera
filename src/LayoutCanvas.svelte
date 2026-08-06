@@ -92,7 +92,7 @@
       /* Same reason as GridCanvas: a rejected chain never runs what was queued
        * after it, so one failed build would freeze this canvas for good. */
       .catch((e) => {
-        app.error = `Anzeige konnte nicht aufgebaut werden: ${e}`;
+        app.error = `The view could not be built: ${e}`;
       });
     return building;
   }
@@ -210,9 +210,15 @@
     c.requestRenderAll();
   }
 
-  const align = (edge: AlignEdge) =>
+  /* Instance exports: the buttons live in App's fixed toolbar, which exists
+   * whether or not a Layout is open, while the maths needs this component's
+   * live objects. `bind:this` is the one bridge that costs no state. */
+  export function alignTo(edge: AlignEdge) {
     realign((boxes) => alignBoxes(boxes, edge, { left: 0, top: 0, width: TILE_W, height: TILE_H }));
-  const spread = (axis: "x" | "y") => realign((boxes) => distributeBoxes(boxes, axis));
+  }
+  export function spreadBy(axis: "x" | "y") {
+    realign((boxes) => distributeBoxes(boxes, axis));
+  }
 
   /* List selection -> canvas, re-run after a rebuild replaced every object.
    * More than one picked layer becomes an ActiveSelection, which is what gives
@@ -573,29 +579,7 @@
   <canvas bind:this={el}></canvas>
   <div class="hud">
     {Math.round(zoom * 100)}% &middot; {TILE_W}&times;{TILE_H}
-    <button onclick={fit}>Einpassen</button>
-  </div>
-  <!-- A fixed toolbar rather than buttons that come and go with the selection:
-       a control with a permanent home can be found before it is needed, and
-       greying out says "pick something first" better than absence does. -->
-  <div class="tools">
-    {#snippet tool(label: string, glyph: string, run: () => void, needs: number)}
-      <button title={label} disabled={app.layoutSelection.length < needs} onclick={run}>
-        {glyph}
-      </button>
-    {/snippet}
-    {@render tool("Links ans Blatt", "⇤", () => align("left"), 1)}
-    {@render tool("Horizontal zentrieren", "↔", () => align("centerX"), 1)}
-    {@render tool("Rechts ans Blatt", "⇥", () => align("right"), 1)}
-    <span class="gap"></span>
-    {@render tool("Oben ans Blatt", "⤒", () => align("top"), 1)}
-    {@render tool("Vertikal zentrieren", "↕", () => align("centerY"), 1)}
-    {@render tool("Unten ans Blatt", "⤓", () => align("bottom"), 1)}
-    <span class="gap"></span>
-    <!-- Distribution needs a middle to spread; the maths refuses below three
-         anyway, greying out just says so instead of doing nothing. -->
-    {@render tool("Gleiche Abstände horizontal", "⇹", () => spread("x"), 3)}
-    {@render tool("Gleiche Abstände vertikal", "⇳", () => spread("y"), 3)}
+    <button onclick={fit}>Fit</button>
   </div>
 </div>
 
@@ -627,35 +611,5 @@
     background: #1b2228;
     color: inherit;
     cursor: pointer;
-  }
-  .tools {
-    position: absolute;
-    left: 8px;
-    top: 50%;
-    transform: translateY(-50%);
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    padding: 6px 4px;
-    border-radius: 4px;
-    background: rgb(0 0 0 / 0.6);
-  }
-  .tools button {
-    width: 28px;
-    height: 26px;
-    padding: 0;
-    font: 14px/1 ui-sans-serif, system-ui, sans-serif;
-    border: 1px solid #3a444c;
-    border-radius: 3px;
-    background: #1b2228;
-    color: #cfd6dc;
-    cursor: pointer;
-  }
-  .tools button:disabled {
-    opacity: 0.35;
-    cursor: default;
-  }
-  .tools .gap {
-    height: 6px;
   }
 </style>

@@ -117,7 +117,7 @@
        * keeps the chain resolvable, and leaving `built` alone means the next
        * version bump retries instead of giving up. */
       .catch((e) => {
-        app.error = `Anzeige konnte nicht aufgebaut werden: ${e}`;
+        app.error = `The view could not be built: ${e}`;
       });
     return building;
   }
