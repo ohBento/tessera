@@ -8,7 +8,13 @@
   import * as fabric from "fabric";
   import { onMount } from "svelte";
 
-  import { app, applyLayoutTransform, openLayout, setLayoutSelection } from "./lib/editor.svelte";
+  import {
+    app,
+    applyLayoutTransform,
+    openLayout,
+    setLayerField,
+    setLayoutSelection,
+  } from "./lib/editor.svelte";
   import { TILE_H, TILE_W } from "./lib/bmp";
   import { isTyping, snapBox, type Guide } from "./lib/geometry";
   import { findLayer, walkLayers } from "./lib/model";
@@ -246,6 +252,15 @@
      *
      * uniScaleKey is dropped along with it: Shift means "the other one", and
      * for a layer that cannot store a stretch there is no other one. */
+
+    /* Typing straight into a caption. Written back when editing ends rather
+     * than per keystroke: a rebuild mid-edit would tear the object out from
+     * under the caret. What is on the canvas in a Layout is the raw text, so
+     * this cannot swallow a "{{id}}" placeholder. */
+    canvas.on("text:editing:exited", (opt) => {
+      const obj = opt.target as (fabric.Textbox & { layerId?: string }) | undefined;
+      if (obj?.layerId) void setLayerField(obj.layerId, "text", obj.text ?? "");
+    });
 
     canvas.on("object:moving", (opt) => {
       guides = [];

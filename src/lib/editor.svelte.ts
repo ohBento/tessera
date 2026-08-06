@@ -803,8 +803,12 @@ function resize(layer: Layer, patch: Transform) {
   if (layer.kind === "image") {
     layer.scale = patch.scale;
   } else if (layer.kind === "text") {
-    // A caption's box is one tile wide, so the width fraction *is* the factor.
-    layer.size *= patch.scale || 1;
+    /* The factor Fabric applied, not the box's share of the tile. A caption's
+     * box is measured against its words, so that share is some arbitrary
+     * number — and multiplying by it on every write meant a plain drag, which
+     * scales nothing, resized the text. Same trap the polygon fell into: the
+     * only safe reading is what was actually scaled, which is 1 for a move. */
+    layer.size *= patch.fx || 1;
   } else if (layer.kind === "shape") {
     /* Multiplied by what Fabric actually scaled, not set from the object's
      * measured width. A shape is built at exactly w×h with scaleX 1, so a

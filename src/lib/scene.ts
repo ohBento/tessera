@@ -130,7 +130,12 @@ const place = (l: Layer, box: { w: number; h: number; x: number; y: number }) =>
  *  change of tile resolution, the same rule the rest of the model follows. */
 function textObject(l: TextLayer, box: { w: number; h: number; x: number; y: number }, tileId: string, texts: Record<string, string>) {
   const size = l.size * box.w;
-  const words = layerText(texts, l, tileId);
+  /* A Layout shows the caption as written, placeholder and all: it is a
+   * template, and what you edit there has to be what you typed. Only a tile
+   * resolves "{{id}}", because only a tile knows which id. This is also what
+   * makes typing on the canvas safe — what is drawn is what gets written
+   * back, so editing cannot silently swallow the placeholder. */
+  const words = tileId ? layerText(texts, l, tileId) : l.text;
   const style = {
     fontSize: size,
     fontFamily: l.font,
@@ -159,15 +164,12 @@ function textObject(l: TextLayer, box: { w: number; h: number; x: number; y: num
     // behind the fill it reads as an outline, which is what it is for.
     paintFirst: "stroke",
     splitByGrapheme: false,
-    /* Fabric lets you type straight into a Textbox, and nothing carried that
-     * back into the model — so the words changed on screen and the next
-     * rebuild put the old ones back, which reads as the app throwing away what
-     * you just typed. The properties panel is the one way in.
-     *
-     * Wiring the canvas up instead would have cost the placeholder: what is
-     * drawn is the *resolved* text, so typing over it would replace "{{id}}"
-     * with whatever tile happened to be underneath. */
-    editable: false,
+    /* Editable only in a Layout, where the raw text is what is on screen and
+     * LayoutCanvas writes it back when editing ends. On a tile the caption is
+     * a copy showing resolved words, with no path back to the Layout that owns
+     * them — typing there would change something that gets overwritten by the
+     * next stamp update. */
+    editable: !tileId,
   });
   if (l.shadow) {
     obj.shadow = new fabric.Shadow({
