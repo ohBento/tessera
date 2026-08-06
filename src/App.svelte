@@ -38,6 +38,7 @@
     groupLayoutLayers,
     groups,
     layoutGroups,
+    layoutTiles,
     layoutUsage,
     layouts,
     moveLayersIntoGroup,
@@ -188,7 +189,10 @@
     if (
       used &&
       !(await ask(
-        `"${name}" is stamped ${used} time(s). The stamps stay behind as nameless pictures.`,
+        // Both units again: the pictures left behind are counted per group,
+        // but what the deletion is visible on is tiles.
+        `"${name}" is stamped on ${used} group(s), ${layoutTiles(id)} tile(s). ` +
+          `The stamps stay behind as nameless pictures.`,
         { title: "Delete layout?", kind: "warning" },
       ))
     )
@@ -766,8 +770,14 @@
                   title="Double-click to rename"
                 >
                   {layout.name}
+                  <!-- Both numbers, because they answer different questions:
+                       the groups are what a refresh or a delete touches, the
+                       tiles are how much of the wall wears the design. One
+                       group of fifteen tiles used to read "stamped 1 time". -->
                   <span class="usage">
-                    {layoutUsage(layout.id) ? `stamped ${layoutUsage(layout.id)} time(s)` : "unused"}
+                    {layoutUsage(layout.id)
+                      ? `${layoutUsage(layout.id)} group(s) · ${layoutTiles(layout.id)} tile(s)`
+                      : "unused"}
                   </span>
                 </button>
               {/if}

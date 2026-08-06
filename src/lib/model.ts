@@ -445,10 +445,25 @@ export const emptyManifest = (): Manifest => ({
   layouts: [],
 });
 
-/** Every overlay holding a stamp of this layout — what "Layout aktualisieren"
- *  has to refresh, and what a Layout's own editor shows as "used on N spots". */
+/** Every overlay holding a stamp of this layout — what "Update stamps" has to
+ *  refresh, and how many pictures are left behind if the layout is deleted. */
 export function overlaysUsingLayout(m: Manifest, layoutId: string): Overlay[] {
   return m.overlays.filter((o) => o.layers.some((l) => l.kind === "image" && l.layoutId === layoutId));
+}
+
+/** How many portraits actually carry this layout.
+ *
+ *  The other number — how many groups hold a stamp — is what a refresh or a
+ *  delete touches, but it says nothing about how much of the wall is at stake:
+ *  one group of fifteen tiles read as "stamped 1 time" while fifteen portraits
+ *  wore the design. An "all" overlay is skipped rather than counted as the
+ *  whole wall: it is the wall axis, not a tile group, and nothing stamps into
+ *  one. */
+export function tilesUsingLayout(m: Manifest, layoutId: string): number {
+  return overlaysUsingLayout(m, layoutId).reduce(
+    (n, o) => n + (o.tiles === "all" ? 0 : o.tiles.length),
+    0,
+  );
 }
 
 /** Puts a rendered stamp of `layoutId` onto `overlay`.

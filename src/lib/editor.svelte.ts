@@ -36,6 +36,7 @@ import {
   stampInto,
   swapTiles,
   syncLiveLayers,
+  tilesUsingLayout,
   visibleTiles,
   type ImageLayer,
   type Layer,
@@ -952,9 +953,14 @@ export async function assignLayout(groupId: string, layoutId: string) {
   });
 }
 
-/** How many spots a Layout is currently stamped onto — shown next to it so a
- *  design nobody uses anymore is visibly safe to delete. */
+/** How many groups hold a stamp of this Layout — what a refresh re-renders and
+ *  what a delete leaves behind, so both are counted in the unit they act on. */
 export const layoutUsage = (layoutId: string) => overlaysUsingLayout(app.manifest, layoutId).length;
+
+/** How many portraits carry it — the other half of the picture, and the one a
+ *  wall of tiles reads first. Shown beside the group count rather than instead
+ *  of it: the two answer different questions and neither implies the other. */
+export const layoutTiles = (layoutId: string) => tilesUsingLayout(app.manifest, layoutId);
 
 /** Whether saving would do anything: the Layout has to be stamped somewhere,
  *  and changed since. Offering it otherwise gives a button that re-renders an

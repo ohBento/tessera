@@ -33,6 +33,7 @@ import {
   overlayCovering,
   overlayOf,
   overlaysUsingLayout,
+  tilesUsingLayout,
   refreshStamps,
   relocateLayer,
   removeFromGroup,
@@ -295,6 +296,34 @@ describe("overlaysUsingLayout", () => {
     ];
     expect(overlaysUsingLayout(m, "L1").map((o) => o.name)).toEqual(["A"]);
     expect(overlaysUsingLayout(m, "nope")).toEqual([]);
+  });
+});
+
+describe("tilesUsingLayout", () => {
+  const stampOf = (layoutId: string) => ({ ...newImageLayer("r.png"), layoutId });
+
+  it("adds up the tiles of every group holding the layout", () => {
+    const m = emptyManifest();
+    m.overlays = [
+      { ...newOverlay("A", ["t0", "t1", "t2"]), layers: [stampOf("L1")] },
+      { ...newOverlay("B", ["t3", "t4"]), layers: [stampOf("L1")] },
+      { ...newOverlay("C", ["t5"]), layers: [stampOf("L2")] },
+    ];
+    /* The number the group count cannot give: two groups, but five portraits
+     * wearing the design — and "stamped 2 time(s)" in front of a wall of
+     * tiles reads as two tiles. */
+    expect(tilesUsingLayout(m, "L1")).toBe(5);
+    expect(tilesUsingLayout(m, "L2")).toBe(1);
+    expect(tilesUsingLayout(m, "nope")).toBe(0);
+  });
+
+  it("does not count an all-tiles overlay as the whole wall", () => {
+    // The wall axis, not a tile group. Nothing stamps into one, but if
+    // anything ever did, "all" is not a number of tiles.
+    const m = emptyManifest();
+    m.overlays = [{ ...newOverlay("Alle"), layers: [stampOf("L1")] }];
+    expect(m.overlays[0].tiles).toBe("all");
+    expect(tilesUsingLayout(m, "L1")).toBe(0);
   });
 });
 
