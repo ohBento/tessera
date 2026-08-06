@@ -268,7 +268,7 @@
   }
   .row {
     display: flex;
-    gap: 2px;
+    gap: 3px;
     margin-bottom: 4px;
   }
   input,
@@ -276,7 +276,7 @@
     flex: 1;
     min-width: 0;
     font: inherit;
-    padding: 2px 4px;
+    padding: 4px;
     border: 1px solid #3a444c;
     border-radius: 3px;
     background: #0d1114;
@@ -285,10 +285,12 @@
   input[type="range"] {
     padding: 0;
   }
+  /* Swatch and control heights match the toolbar's 32px, so a properties row
+     and a tool button are the same target. */
   input[type="color"] {
     flex: none;
-    width: 26px;
-    height: 20px;
+    width: 32px;
+    height: 32px;
     padding: 0;
   }
   textarea {
@@ -312,7 +314,10 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 26px;
+    min-width: 32px;
+    height: 32px;
+    padding: 0 8px;
+    font-size: 15px;
   }
   button.b {
     font-weight: 700;

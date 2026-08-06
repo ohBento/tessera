@@ -897,7 +897,7 @@
     text-decoration: underline;
   }
   aside {
-    width: 220px;
+    width: 300px;
     flex: none;
     overflow-y: auto;
     padding: 8px;
@@ -949,16 +949,31 @@
   li[draggable="true"] {
     cursor: grab;
   }
+  /* The same target size as the toolbar. A row's controls are hit as often as
+     a tool is, and they were half the size — 32px is one number for the whole
+     app rather than one per panel. The name button is exempt: it stretches to
+     the row and its height comes from the line. */
   li button {
-    padding: 2px 5px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 32px;
+    height: 32px;
+    padding: 0 6px;
+    font-size: 15px;
   }
   .name {
     flex: 1;
     min-width: 0;
+    /* Left-aligned and elastic, unlike the square icon buttons above — and
+       block, so a two-line row (name plus its usage count) is not squashed
+       into one flex line. */
+    display: block;
     overflow: hidden;
     text-align: left;
     text-overflow: ellipsis;
     white-space: nowrap;
+    font-size: inherit;
     border-color: transparent;
     background: none;
   }
@@ -972,6 +987,7 @@
   }
   .wide {
     width: 100%;
+    height: 32px;
     margin-top: 6px;
   }
   .eye {
@@ -992,14 +1008,22 @@
     padding: 2px;
   }
   .grouphead button {
-    padding: 2px 5px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 32px;
+    height: 32px;
+    padding: 0 6px;
+    font-size: 15px;
   }
   .grouphead .name {
+    display: block;
+    height: auto;
     color: #78dcff;
   }
   .twisty {
-    width: 18px;
-    padding: 2px 0;
+    min-width: 22px;
+    padding: 0;
     border-color: transparent;
     background: none;
     color: #8b979f;
@@ -1019,9 +1043,10 @@
   }
   .assign {
     width: calc(100% - 18px);
+    height: 32px;
     margin: 2px 0 6px;
     font: inherit;
-    padding: 2px 4px;
+    padding: 0 6px;
     border: 1px solid #3a444c;
     border-radius: 3px;
     background: #1b2228;
@@ -1030,8 +1055,9 @@
   .rename {
     flex: 1;
     min-width: 0;
+    height: 32px;
     font: inherit;
-    padding: 1px 4px;
+    padding: 0 6px;
     border: 1px solid #78dcff;
     border-radius: 3px;
     background: #0d1114;
