@@ -159,6 +159,15 @@ function textObject(l: TextLayer, box: { w: number; h: number; x: number; y: num
     // behind the fill it reads as an outline, which is what it is for.
     paintFirst: "stroke",
     splitByGrapheme: false,
+    /* Fabric lets you type straight into a Textbox, and nothing carried that
+     * back into the model — so the words changed on screen and the next
+     * rebuild put the old ones back, which reads as the app throwing away what
+     * you just typed. The properties panel is the one way in.
+     *
+     * Wiring the canvas up instead would have cost the placeholder: what is
+     * drawn is the *resolved* text, so typing over it would replace "{{id}}"
+     * with whatever tile happened to be underneath. */
+    editable: false,
   });
   if (l.shadow) {
     obj.shadow = new fabric.Shadow({

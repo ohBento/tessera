@@ -8,11 +8,12 @@ import App from "./App.svelte";
  * import.meta.env.DEV guard. */
 if (import.meta.env.DEV) {
   void (async () => {
-    const [editor, platform] = await Promise.all([
+    const [editor, platform, model] = await Promise.all([
       import("./lib/editor.svelte"),
       import("./lib/platform"),
+      import("./lib/model"),
     ]);
-    Object.assign(window, { tessera: { ...editor, ...platform } });
+    Object.assign(window, { tessera: { ...model, ...editor, ...platform } });
   })();
 }
 

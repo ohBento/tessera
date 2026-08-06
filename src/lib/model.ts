@@ -426,7 +426,7 @@ export const layoutNeedsRestamp = (layout: Layout) =>
   layout.stamped !== undefined && layout.stamped !== layoutFingerprint(layout);
 
 export type Manifest = {
-  version: 5;
+  version: 6;
   order: string[];
   hidden: string[];
   overlays: Overlay[];
@@ -437,7 +437,7 @@ export type Manifest = {
 export const emptyTile = (): Tile => ({ base: null, layers: [], text: {} });
 
 export const emptyManifest = (): Manifest => ({
-  version: 5,
+  version: 6,
   order: [],
   hidden: [],
   overlays: [],
@@ -743,69 +743,47 @@ export function bakeMosaicInto(
 
 type Raw = Record<string, unknown>;
 
-/** v1 stored a bare {asset, crop} per tile and knew nothing about layers. */
-function v1ToV2(m: Raw): Raw {
-  const tiles: Record<string, Tile> = {};
-  for (const [id, base] of Object.entries((m.tiles ?? {}) as Record<string, Base>)) {
-    tiles[id] = { ...emptyTile(), base: base ?? null };
-  }
-  return { version: 2, order: (m.order as string[]) ?? [], hidden: [], shared: [], tiles };
-}
-
-/** v2 had one project-wide `shared` stack, which is exactly an overlay covering
- *  everything.
+/** Anything older than v6 arrives as a clean slate.
  *
- *  Its `mosaic` field is dropped rather than converted. The picture still shows:
- *  v2 baked the placement into each tile's `base` crop and those are kept
- *  verbatim, so a migrated project renders identically. What is lost is the
- *  ability to pick that placement back up and move it — which v3 does not
- *  restore in the old shape anyway, because a mosaic there is an ordinary image
- *  layer in grid space. Reconstructing one would need the source image's pixel
- *  dimensions, and migration must not touch the filesystem. */
-function v2ToV3(m: Raw): Raw {
-  const shared = (m.shared ?? []) as Layer[];
+ *  There used to be a chain here, converting each version's idea of a shared
+ *  stack into the next one's. All of it built overlays, and v6 keeps none —
+ *  the editors that made them are gone, and what came through was a mixture
+ *  nobody could work with: groups from a mode that no longer exists, layers
+ *  pinned straight onto a tile with no list that could show or delete them,
+ *  and captions keyed to layers that had stopped existing. The tile-local
+ *  layers only became visible at all once the renderer learned to draw text,
+ *  at which point they surfaced as words with no explanation and no way out.
+ *
+ *  Three things are carried over, because they are the ones that cannot be
+ *  redone in a minute:
+ *  - `order`, built by hand to match the game's own arrangement,
+ *  - `hidden`,
+ *  - each tile's `base`, which is a background rather than a group or a layer.
+ *    v1 kept that as a bare {asset, crop} directly under the tile id; every
+ *    later version under `base`, so both shapes are accepted.
+ *
+ *  Layouts survive as designs, minus their `stamped` fingerprint: nothing is
+ *  stamped any more, so claiming otherwise would grey out the one button that
+ *  puts them back on the wall. */
+function toV6(m: Raw): Raw {
+  const tiles: Record<string, Tile> = {};
+  for (const [id, raw] of Object.entries((m.tiles ?? {}) as Record<string, Tile | Base>)) {
+    const base = raw && "asset" in raw ? (raw as NonNullable<Base>) : ((raw as Tile)?.base ?? null);
+    tiles[id] = { ...emptyTile(), base };
+  }
+  const layouts = ((m.layouts ?? []) as Layout[]).map(({ stamped: _dropped, ...rest }) => rest);
   return {
-    version: 3,
+    version: 6,
     order: (m.order as string[]) ?? [],
     hidden: (m.hidden as string[]) ?? [],
-    tiles: (m.tiles ?? {}) as Record<string, Tile>,
-    overlays: shared.length ? [{ ...newOverlay("Alle Kacheln"), layers: shared }] : [],
+    overlays: [],
+    tiles,
+    layouts,
   };
 }
 
-/** v3 had no Layouts at all — nothing to convert, just the field appearing. */
-function v3ToV4(m: Raw): Raw {
-  return { ...m, version: 4, layouts: [] };
-}
-
-/** v4 let tile groups overlap. v5 makes tile ownership exclusive: the first
- *  group naming a tile keeps it, later ones give it up.
- *
- *  A group that ends up with no tiles keeps its layers, so nothing anyone
- *  composed is lost — it just has nowhere to land until tiles are added back.
- *  One with neither tiles nor layers is dropped: v4 created those by the
- *  handful (every re-pick of a slightly different tile set made one), and
- *  carrying empty shells forward would hand the user a list of nothing.
- *  "all" overlays are untouched: they are the wall axis, not groups. */
-function v4ToV5(m: Raw): Raw {
-  const claimed = new Set<string>();
-  const overlays = ((m.overlays ?? []) as Overlay[])
-    .map((o) => {
-      if (o.tiles === "all") return o;
-      const tiles = o.tiles.filter((id) => !claimed.has(id));
-      for (const id of tiles) claimed.add(id);
-      return { ...o, tiles };
-    })
-    .filter((o) => o.tiles === "all" || o.tiles.length > 0 || o.layers.length > 0);
-  return { ...m, version: 5, overlays };
-}
-
 export function migrate(raw: unknown): Manifest {
-  let m = raw as Raw | null;
+  const m = raw as Raw | null;
   if (!m || typeof m !== "object") return emptyManifest();
-  if (m.version !== 2 && m.version !== 3 && m.version !== 4 && m.version !== 5) m = v1ToV2(m);
-  if (m.version === 2) m = v2ToV3(m);
-  if (m.version === 3) m = v3ToV4(m);
-  if (m.version === 4) m = v4ToV5(m);
-  return { ...emptyManifest(), ...m } as Manifest;
+  return { ...emptyManifest(), ...(m.version === 6 ? m : toV6(m)) } as Manifest;
 }

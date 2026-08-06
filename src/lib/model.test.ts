@@ -495,6 +495,73 @@ describe("layer groups keep members where they are", () => {
   });
 });
 
+describe("migrate starts anything older than v6 from a clean slate", () => {
+  const crop = { x: 0, y: 0, w: 10, h: 10 };
+
+  const old = () => ({
+    version: 5,
+    order: ["t2", "t0", "t1"],
+    hidden: ["t1"],
+    overlays: [{ ...newOverlay("Alt", ["t0"]), layers: [newImageLayer("x.png")] }],
+    tiles: {
+      t0: { base: { asset: "b.png", crop }, layers: [newTextLayer()], text: { alt: "Geist" } },
+      t1: { base: null, layers: [], text: { weg: "verwaist" } },
+      t2: emptyTile(),
+    },
+    layouts: [{ ...newLayout("Meins"), stamped: "abc" }],
+  });
+
+  it("takes a v1 tile's bare picture, which sat under the id itself", () => {
+    const m = migrate({ version: 1, order: ["a"], tiles: { a: { asset: "x.png", crop } } });
+    expect(m.version).toBe(6);
+    expect(m.tiles.a.base).toEqual({ asset: "x.png", crop });
+    expect(m.tiles.a.layers).toEqual([]);
+  });
+
+  it("survives a null tile and unreadable input", () => {
+    expect(migrate({ version: 1, order: ["a"], tiles: { a: null } }).tiles.a.base).toBeNull();
+    expect(migrate(null).version).toBe(6);
+  });
+
+  it("leaves a v6 manifest exactly as it is", () => {
+    const v6 = {
+      ...emptyManifest(),
+      order: ["a"],
+      overlays: [{ ...newOverlay("Bleibt", ["a"]), layers: [newImageLayer("y.png")] }],
+    };
+    expect(migrate(structuredClone(v6))).toEqual(v6);
+  });
+
+  it("drops groups, tile layers and tile captions", () => {
+    const m = migrate(old());
+    expect(m.version).toBe(6);
+    expect(m.overlays).toEqual([]);
+    expect(Object.values(m.tiles).every((t) => !t.layers.length)).toBe(true);
+    expect(Object.values(m.tiles).every((t) => !Object.keys(t.text).length)).toBe(true);
+  });
+
+  it("keeps the hand-built order, the hidden tiles and each tile's picture", () => {
+    const m = migrate(old());
+    expect(m.order).toEqual(["t2", "t0", "t1"]);
+    expect(m.hidden).toEqual(["t1"]);
+    expect(m.tiles.t0.base).toEqual({ asset: "b.png", crop: { x: 0, y: 0, w: 10, h: 10 } });
+  });
+
+  it("keeps layouts but marks none of them stamped", () => {
+    const m = migrate(old());
+    expect(m.layouts.map((l) => l.name)).toEqual(["Meins"]);
+    expect(m.layouts[0].stamped).toBeUndefined();
+  });
+
+  it("leaves the input alone and runs again to the same result", () => {
+    const input = old();
+    const copy = structuredClone(input);
+    const once = migrate(input);
+    expect(input).toEqual(copy);
+    expect(migrate(once)).toEqual(once);
+  });
+});
+
 describe("per-tile captions", () => {
   const liveCaption = (id: string, text = "Kachel {{id}}") => {
     const l = { ...newTextLayer(), id, text, perTile: true };
@@ -772,140 +839,6 @@ describe("tile groups", () => {
   });
 });
 
-describe("migrate", () => {
-  const crop = { x: 0, y: 0, w: 10, h: 10 };
-
-  it("lifts a v1 manifest all the way to v5", () => {
-    const m = migrate({ version: 1, order: ["a"], tiles: { a: { asset: "x.png", crop } } });
-    expect(m.version).toBe(5);
-    expect(m.order).toEqual(["a"]);
-    expect(m.tiles.a.base).toEqual({ asset: "x.png", crop });
-    expect(m.tiles.a.layers).toEqual([]);
-    expect(m.overlays).toEqual([]);
-    expect(m.layouts).toEqual([]);
-  });
-
-  it("turns a v2 shared stack into one overlay covering everything", () => {
-    const shared = [{ ...newTextLayer(), id: "s1" }];
-    const m = migrate({ version: 2, order: ["a", "b"], hidden: ["b"], shared, tiles: {} });
-
-    expect(m.version).toBe(5);
-    expect(m.overlays).toHaveLength(1);
-    expect(m.overlays[0].tiles).toBe("all");
-    expect(m.overlays[0].layers.map((l) => l.id)).toEqual(["s1"]);
-    expect(m.hidden).toEqual(["b"]);
-    // The dead v2 fields must not ride along, or they outlive their meaning.
-    expect("shared" in m).toBe(false);
-    expect("mosaic" in m).toBe(false);
-  });
-
-  it("makes no overlay for a v2 project that had no shared layers", () => {
-    expect(migrate({ version: 2, order: [], shared: [], tiles: {} }).overlays).toEqual([]);
-  });
-
-  it("keeps a v2 mosaic visible by carrying its baked crops over", () => {
-    // v2 stored the placement twice: an editable `mosaic` rect and the crop it
-    // had already baked into each tile. Only the latter decides what renders,
-    // so dropping the former loses re-editability, never the picture.
-    const m = migrate({
-      version: 2,
-      order: ["a"],
-      shared: [],
-      mosaic: { asset: "wall.png", rect: { x: 5, y: 5, w: 70, h: 90 } },
-      tiles: { a: { base: { asset: "wall.png", crop }, layers: [], text: {} } },
-    });
-    expect(m.tiles.a.base).toEqual({ asset: "wall.png", crop });
-  });
-
-  it("adds an empty layouts list to a v3 manifest, changing nothing else", () => {
-    const v3 = { version: 3, order: ["a"], hidden: [], tiles: {}, overlays: [newOverlay("x")] };
-    const m = migrate(structuredClone(v3));
-    expect(m.version).toBe(5);
-    expect(m.layouts).toEqual([]);
-    expect(m.overlays).toEqual(v3.overlays);
-    expect(m.order).toEqual(v3.order);
-  });
-
-  it("makes tile ownership exclusive, first group wins", () => {
-    const v4 = {
-      version: 4,
-      order: ["a", "b", "c"],
-      hidden: [],
-      tiles: {},
-      layouts: [],
-      overlays: [
-        newOverlay("Alle"),
-        newOverlay("Eins", ["a", "b"]),
-        newOverlay("Zwei", ["b", "c"]),
-      ],
-    };
-    const m = migrate(structuredClone(v4));
-    expect(m.version).toBe(5);
-    expect(m.overlays[0].tiles).toBe("all"); // wall axis untouched
-    expect(m.overlays[1].tiles).toEqual(["a", "b"]);
-    expect(m.overlays[2].tiles).toEqual(["c"]);
-  });
-
-  it("drops a group left with neither tiles nor layers", () => {
-    const v4 = {
-      version: 4,
-      order: ["a"],
-      hidden: [],
-      tiles: {},
-      layouts: [],
-      overlays: [newOverlay("Erste", ["a"]), newOverlay("Leer", ["a"])],
-    };
-    const m = migrate(structuredClone(v4));
-    expect(m.overlays.map((o) => o.name)).toEqual(["Erste"]);
-  });
-
-  it("keeps a group that loses every tile rather than deleting its stamps", () => {
-    const stamp = { ...newImageLayer("x.png"), layoutId: "L1" };
-    const v4 = {
-      version: 4,
-      order: ["a"],
-      hidden: [],
-      tiles: {},
-      layouts: [],
-      overlays: [
-        newOverlay("Erste", ["a"]),
-        { ...newOverlay("Zweite", ["a"]), layers: [stamp] },
-      ],
-    };
-    const m = migrate(structuredClone(v4));
-    expect(m.overlays).toHaveLength(2);
-    expect(m.overlays[1].tiles).toEqual([]);
-    expect(m.overlays[1].layers).toHaveLength(1);
-  });
-
-  it("does not mutate the manifest handed in", () => {
-    const v4 = {
-      version: 4,
-      order: ["a"],
-      hidden: [],
-      tiles: {},
-      layouts: [],
-      overlays: [newOverlay("Eins", ["a"]), newOverlay("Zwei", ["a"])],
-    };
-    const before = structuredClone(v4);
-    migrate(v4);
-    expect(v4).toEqual(before);
-  });
-
-  it("leaves a v5 manifest alone, and migrating twice changes nothing", () => {
-    const v5 = emptyManifest();
-    v5.order = ["a", "b"];
-    v5.overlays = [newOverlay("Schon v5", ["a"])];
-    v5.layouts = [newLayout("Ein Layout")];
-    expect(migrate(structuredClone(v5))).toEqual(v5);
-    expect(migrate(migrate(structuredClone(v5)))).toEqual(v5);
-  });
-
-  it("survives a null tile and unreadable input", () => {
-    expect(migrate({ version: 1, order: ["a"], tiles: { a: null } }).tiles.a.base).toBeNull();
-    expect(migrate(null).version).toBe(5);
-  });
-});
 
 describe("resetTransform", () => {
   it("resets rotation, opacity and size but leaves position and effects alone", () => {
