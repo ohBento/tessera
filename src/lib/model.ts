@@ -282,6 +282,41 @@ export function overlaysUsingLayout(m: Manifest, layoutId: string): Overlay[] {
   return m.overlays.filter((o) => o.layers.some((l) => l.kind === "image" && l.layoutId === layoutId));
 }
 
+/** Puts a rendered stamp of `layoutId` onto `overlay`.
+ *
+ *  Re-stamping the same layout onto the same tiles replaces that stamp's
+ *  picture rather than stacking a second copy on top of the first — which
+ *  would look like nothing happened while quietly doubling the layer count. */
+export function stampInto(overlay: Overlay, layoutId: string, asset: string): ImageLayer {
+  const existing = overlay.layers.find(
+    (l): l is ImageLayer => l.kind === "image" && l.layoutId === layoutId,
+  );
+  if (existing) {
+    existing.asset = asset;
+    return existing;
+  }
+  const stamp = newImageLayer(asset);
+  stamp.layoutId = layoutId;
+  overlay.layers.push(stamp);
+  return stamp;
+}
+
+/** Points every stamp of `layoutId` at a freshly rendered picture, wherever it
+ *  sits. Returns how many were refreshed — a design used in several places has
+ *  to update everywhere at once, not be re-stamped by hand at each. */
+export function refreshStamps(m: Manifest, layoutId: string, asset: string): number {
+  let n = 0;
+  for (const o of m.overlays) {
+    for (const l of o.layers) {
+      if (l.kind === "image" && l.layoutId === layoutId) {
+        l.asset = asset;
+        n++;
+      }
+    }
+  }
+  return n;
+}
+
 export const newOverlay = (name: string, tiles: string[] | "all" = "all"): Overlay => ({
   id: newId(),
   name,

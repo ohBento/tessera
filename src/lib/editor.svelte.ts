@@ -18,8 +18,10 @@ import {
   overlayCovering,
   overlayOf,
   overlaysUsingLayout,
+  refreshStamps,
   removeLayerFrom,
   setAssigned,
+  stampInto,
   visibleTiles,
   type ImageLayer,
   type Layer,
@@ -313,23 +315,6 @@ function overlayFor(ids: string[]): Overlay {
   return app.manifest.overlays[app.manifest.overlays.length - 1];
 }
 
-/** Adds a picture to every selected tile as one shared layer: editing it later
- *  changes all of them at once, which is the whole reason overlays exist. */
-export async function addImageToSelection() {
-  if (!app.selectedTiles.length) return;
-  const path = await pickFile({ filters: [IMAGE_FILTER] });
-  if (typeof path !== "string") return;
-  await run("import", async () => {
-    const asset = await importAsset(app.dir, path);
-    await mutate(() => {
-      const overlay = overlayFor(app.selectedTiles);
-      const layer = newImageLayer(asset);
-      overlay.layers.push(layer);
-      app.selected = layer.id;
-    });
-  });
-}
-
 /** Adds a picture spanning the whole wall — what used to be "the mosaic", now
  *  an ordinary layer that happens to live in grid space. */
 export async function addGridImage() {
@@ -516,18 +501,7 @@ export async function stampLayout(layoutId: string) {
   await run("stamp", async () => {
     const bytes = await renderLayout(layout, app.deps!);
     const asset = await saveGeneratedAsset(app.dir, bytes);
-    await mutate(() => {
-      const overlay = overlayFor(app.selectedTiles);
-      const existing = overlay.layers.find(
-        (l): l is ImageLayer => l.kind === "image" && l.layoutId === layoutId,
-      );
-      if (existing) existing.asset = asset;
-      else {
-        const l = newImageLayer(asset);
-        l.layoutId = layoutId;
-        overlay.layers.push(l);
-      }
-    });
+    await mutate(() => stampInto(overlayFor(app.selectedTiles), layoutId, asset));
   });
 }
 
@@ -545,13 +519,7 @@ export async function updateLayoutStamps(layoutId: string) {
   await run("update", async () => {
     const bytes = await renderLayout(layout, app.deps!);
     const asset = await saveGeneratedAsset(app.dir, bytes);
-    await mutate(() => {
-      for (const o of overlaysUsingLayout(app.manifest, layoutId)) {
-        for (const l of o.layers) {
-          if (l.kind === "image" && l.layoutId === layoutId) l.asset = asset;
-        }
-      }
-    });
+    await mutate(() => refreshStamps(app.manifest, layoutId, asset));
   });
 }
 

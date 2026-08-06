@@ -26,6 +26,9 @@ import {
   overlayCovering,
   overlayOf,
   overlaysUsingLayout,
+  refreshStamps,
+  stampInto,
+  type ImageLayer,
   removeLayerFrom,
   setAssigned,
   resetTransform,
@@ -281,6 +284,66 @@ describe("overlaysUsingLayout", () => {
     ];
     expect(overlaysUsingLayout(m, "L1").map((o) => o.name)).toEqual(["A"]);
     expect(overlaysUsingLayout(m, "nope")).toEqual([]);
+  });
+});
+
+describe("stampInto", () => {
+  it("adds a stamp carrying the layout it came from", () => {
+    const overlay = newOverlay("A");
+    const stamp = stampInto(overlay, "L1", "render1.png");
+    expect(overlay.layers).toHaveLength(1);
+    expect(stamp.layoutId).toBe("L1");
+    expect(stamp.asset).toBe("render1.png");
+  });
+
+  it("replaces the picture of an existing stamp rather than stacking a copy", () => {
+    const overlay = newOverlay("A");
+    const first = stampInto(overlay, "L1", "render1.png");
+    const again = stampInto(overlay, "L1", "render2.png");
+    expect(overlay.layers).toHaveLength(1);
+    expect(again.id).toBe(first.id); // same layer, new picture
+    expect(again.asset).toBe("render2.png");
+  });
+
+  it("keeps stamps of different layouts apart", () => {
+    const overlay = newOverlay("A");
+    stampInto(overlay, "L1", "a.png");
+    stampInto(overlay, "L2", "b.png");
+    expect(overlay.layers).toHaveLength(2);
+  });
+
+  it("leaves an ordinary picture alone, even in the same overlay", () => {
+    const overlay = newOverlay("A");
+    const plain = newImageLayer("hand-picked.png");
+    overlay.layers.push(plain);
+    stampInto(overlay, "L1", "render.png");
+    expect(overlay.layers).toHaveLength(2);
+    expect(plain.asset).toBe("hand-picked.png");
+  });
+});
+
+describe("refreshStamps", () => {
+  it("repoints every stamp of one layout, wherever it sits", () => {
+    const m = emptyManifest();
+    const a = newOverlay("A");
+    const b = newOverlay("B");
+    stampInto(a, "L1", "old.png");
+    stampInto(b, "L1", "old.png");
+    stampInto(b, "L2", "other.png");
+    const untouched = newImageLayer("hand-picked.png");
+    b.layers.push(untouched);
+    m.overlays = [a, b];
+
+    expect(refreshStamps(m, "L1", "new.png")).toBe(2);
+    expect((a.layers[0] as ImageLayer).asset).toBe("new.png");
+    expect((b.layers[0] as ImageLayer).asset).toBe("new.png");
+    // Neither another layout's stamp nor a plain picture may move.
+    expect((b.layers[1] as ImageLayer).asset).toBe("other.png");
+    expect(untouched.asset).toBe("hand-picked.png");
+  });
+
+  it("reports zero when nothing uses the layout", () => {
+    expect(refreshStamps(emptyManifest(), "nope", "new.png")).toBe(0);
   });
 });
 
