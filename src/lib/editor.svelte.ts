@@ -16,6 +16,7 @@ import {
   groupOf,
   groupShift,
   instanceCount,
+  layerLabel,
   layoutFingerprint,
   layoutNeedsRestamp,
   nestingShift,
@@ -583,6 +584,12 @@ export async function renameLayer(id: string, name: string) {
   const layer = anyLayer(id);
   if (!layer) return;
   const next = name.trim();
+  /* Typing the text already shown is not a rename. The input is prefilled
+   * with layerLabel — the display label, which for an unnamed layer is a
+   * fallback, not layer.name — so without the second check a cancelled rename
+   * (Escape restores the label, blur still fires) wrote that fallback in as a
+   * real name and burned an undo step on nothing. */
+  if (next === (layer.name ?? "") || next === layerLabel(layer)) return;
   await mutate(() => (layer.name = next || undefined));
 }
 

@@ -21,6 +21,7 @@ import {
   app,
   applyLayoutTransform,
   canGroupLayers,
+  closeLayoutDoc,
   dropLayoutLayer,
   endGesture,
   freeCount,
@@ -32,12 +33,13 @@ import {
   layouts,
   moveLayersIntoGroup,
   newGroup,
+  renameLayer,
   setLayoutSelection,
   tileCaptions,
   toggleLayoutPick,
 } from "./lib/editor.svelte";
 import { addLayoutImage, assignLayout, newLayoutDoc, openLayout } from "./lib/editor.svelte";
-import { emptyManifest, findLayer, groupShift } from "./lib/model";
+import { emptyManifest, findLayer, groupShift, layerLabel } from "./lib/model";
 import { queuePick, resetMockFiles, stashPickedFile } from "./lib/platform";
 
 /** Waits for a condition instead of a fixed delay: the app loads tiles and
@@ -153,6 +155,48 @@ describe("the wall", () => {
     await until(() => groups()[0].layers.length === 1);
     expect(layouts()[0].name).toBe("Mein Layout");
     await until(() => document.body.textContent!.includes("Mein Layout"));
+  });
+
+  it("renames a layout from its row", async () => {
+    await newLayoutDoc("Alt");
+    await closeLayoutDoc();
+    await until(() => !app.openLayoutId);
+
+    /* Through the DOM, because the bug was in the DOM: rename used to hang off
+     * a double-click whose first click opened the document and unmounted the
+     * row — the second click could never land, so layouts were unrenamable. */
+    const pencil = [...document.querySelectorAll("aside button")].find(
+      (b) => (b as HTMLElement).title === "Rename",
+    ) as HTMLButtonElement;
+    pencil.click();
+    await until(() => !!document.querySelector("aside input.rename"));
+
+    const input = document.querySelector("aside input.rename") as HTMLInputElement;
+    input.value = "Neu";
+    input.dispatchEvent(new Event("blur"));
+    await until(() => layouts()[0]?.name === "Neu");
+    // Renaming must not have opened the document as a side effect.
+    expect(app.openLayoutId).toBe("");
+  });
+
+  it("spends nothing on a rename that changes nothing", async () => {
+    await newLayoutDoc("Nur gucken");
+    await addLayoutText();
+    const layer = openLayout()!.layers[0];
+    const steps = history.past.length;
+
+    /* What a cancelled rename does: Escape restores the *display label* into
+     * the field and blur still fires. For an unnamed layer that label is a
+     * fallback, not layer.name — writing it in gave the layer a name it never
+     * had and burned an undo step on nothing. */
+    await renameLayer(layer.id, layerLabel(layer));
+    expect(history.past.length).toBe(steps);
+    expect(findLayer(openLayout()!.layers, layer.id)!.name).toBeUndefined();
+
+    // A real rename still lands and costs its one step.
+    await renameLayer(layer.id, "Mein Text");
+    expect(findLayer(openLayout()!.layers, layer.id)!.name).toBe("Mein Text");
+    expect(history.past.length).toBe(steps + 1);
   });
 });
 

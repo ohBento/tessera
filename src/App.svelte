@@ -754,18 +754,18 @@
                   onkeydown={(e) => renameKey(e, layout.name)}
                 />
               {:else}
-                <button
-                  class="name"
-                  onclick={() => openLayoutDoc(layout.id)}
-                  ondblclick={() => (renaming = layout.id)}
-                  title="Click opens, double-click renames"
-                >
+                <!-- Rename is a button, not a double-click: the first click of
+                     a double-click already opens the document, which unmounts
+                     this row — so the dblclick could never fire and layouts
+                     were unrenamable. -->
+                <button class="name" onclick={() => openLayoutDoc(layout.id)} title="Click opens">
                   {layout.name}
                   <span class="usage">
                     {layoutUsage(layout.id) ? `stamped ${layoutUsage(layout.id)} time(s)` : "unused"}
                   </span>
                 </button>
               {/if}
+              <button title="Rename" onclick={() => (renaming = layout.id)}>✎</button>
               <button title="Duplicate" onclick={() => duplicateLayoutDoc(layout.id)}>⧉</button>
               <button title="Delete" onclick={() => removeLayout(layout.id, layout.name)}>×</button
               >
