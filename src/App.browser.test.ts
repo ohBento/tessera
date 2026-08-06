@@ -19,6 +19,7 @@ import {
   app,
   canGroupLayers,
   canStampLayout,
+  dropLayoutLayer,
   freeCount,
   history,
   setLayerField,
@@ -324,6 +325,69 @@ describe("the Layout editor", () => {
     while (performance.now() < end);
     await setLayerField(id, "text", "AB");
     expect(history.past.length - before).toBe(2);
+  });
+
+  it("drags a row to the top of the list", async () => {
+    await newLayoutDoc("Ziehen");
+    for (const name of ["a", "b", "c"]) {
+      queuePick(await magentaSquare(name));
+      await addLayoutImage();
+    }
+    const [a, b, c] = openLayout()!.layers.map((l) => l.id);
+
+    /* The list shows topmost first — c, b, a — so dropping `a` above `c` means
+     * landing at the end of the model's list. Getting the two directions
+     * confused is invisible until something draws in the wrong order. */
+    await dropLayoutLayer(a, null, null);
+    expect(openLayout()!.layers.map((l) => l.id)).toEqual([b, c, a]);
+
+    // And back down: in front of b puts it at the bottom again.
+    await dropLayoutLayer(a, null, b);
+    expect(openLayout()!.layers.map((l) => l.id)).toEqual([a, b, c]);
+  });
+
+  it("drags a row into a group and out again without moving it", async () => {
+    const [a, b] = await twoLayers();
+    queuePick(await magentaSquare("frei"));
+    await addLayoutImage();
+    const loose = openLayout()!.layers.at(-1)!.id;
+
+    setLayoutSelection([a, b]);
+    await groupLayoutLayers();
+    const group = openLayout()!.layers.find((l) => l.kind === "group")!;
+    group.x = 0.75;
+    group.y = 0.25;
+
+    const before = {
+      x: findLayer(openLayout()!.layers, loose)!.x,
+      y: findLayer(openLayout()!.layers, loose)!.y,
+    };
+
+    await dropLayoutLayer(loose, group.id, null);
+    const inside = findLayer(openLayout()!.layers, loose)!;
+    const shift = groupShift(group);
+    expect(inside.x + shift.dx).toBeCloseTo(before.x, 5);
+    expect(inside.y + shift.dy).toBeCloseTo(before.y, 5);
+
+    await dropLayoutLayer(loose, null, null);
+    const out = findLayer(openLayout()!.layers, loose)!;
+    expect(out.x).toBeCloseTo(before.x, 5);
+    expect(out.y).toBeCloseTo(before.y, 5);
+    expect(openLayout()!.layers.some((l) => l.id === loose)).toBe(true);
+  });
+
+  it("refuses to drag a group into itself", async () => {
+    const [a, b] = await twoLayers();
+    setLayoutSelection([a, b]);
+    await groupLayoutLayers();
+    const group = openLayout()!.layers.find((l) => l.kind === "group")!;
+    const before = history.past.length;
+
+    await dropLayoutLayer(group.id, group.id, null);
+
+    expect(openLayout()!.layers.map((l) => l.id)).toEqual([group.id]);
+    // And a refused move costs no undo step.
+    expect(history.past.length).toBe(before);
   });
 
   it("offers grouping only from two layers up", async () => {

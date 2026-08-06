@@ -177,6 +177,61 @@ export function removeLayerFrom(list: Layer[] | undefined, id: string) {
   }
 }
 
+/** Moves a layer somewhere else in the tree, keeping it where it visibly is.
+ *
+ *  `parentId` is the group to land in, or null for the top level. `beforeId`
+ *  is the layer to land in front of, or null for the end — a position, not an
+ *  index, because an index is ambiguous the moment the layer is taken out of
+ *  its old slot: "position 2" before or after the removal? A dragged row only
+ *  ever knows which row it is above, and that is exactly this.
+ *
+ *  A group's x/y displaces its members, so crossing a boundary has to swap one
+ *  displacement for the other or the layer jumps by the difference — the same
+ *  fold `removeLayerFrom` does on the way out of a dissolved group.
+ *
+ *  Refuses to put a group inside itself, which would otherwise detach the
+ *  whole branch from the document with no way to reach it again. */
+export function relocateLayer(
+  layers: Layer[],
+  id: string,
+  parentId: string | null,
+  beforeId: string | null,
+): boolean {
+  // Dropped on itself: the anchor is the thing being moved, and it stops
+  // existing the moment it is lifted out, which would send it to the end.
+  if (beforeId === id) return true;
+
+  const from = findList(layers, id);
+  const layer = from && findLayer(from, id);
+  if (!from || !layer) return false;
+
+  const parent = parentId ? findLayer(layers, parentId) : undefined;
+  if (parentId && parent?.kind !== "group") return false;
+  // A group cannot descend into itself or into anything it contains.
+  if (layer.kind === "group" && parentId && [...walkLayers([layer])].some((l) => l.id === parentId))
+    return false;
+
+  const was = nestingShift(layers, id) ?? { dx: 0, dy: 0 };
+  from.splice(from.indexOf(layer), 1);
+
+  const to = parent?.kind === "group" ? parent.children : layers;
+  const target = parent?.kind === "group" ? nestingShiftOf(layers, parent) : { dx: 0, dy: 0 };
+  shiftLayer(layer, was.dx - target.dx, was.dy - target.dy);
+
+  // Looked up after the removal, so the anchor's index is the one that counts.
+  const before = beforeId ? to.findIndex((l) => l.id === beforeId) : -1;
+  to.splice(before < 0 ? to.length : before, 0, layer);
+  return true;
+}
+
+/** Total displacement a group applies to its own children: its own shift plus
+ *  every group it sits in. */
+function nestingShiftOf(layers: Layer[], group: Layer & { kind: "group" }) {
+  const own = groupShift(group);
+  const outer = nestingShift(layers, group.id) ?? { dx: 0, dy: 0 };
+  return { dx: own.dx + outer.dx, dy: own.dy + outer.dy };
+}
+
 /** The array a layer sits in — the list to splice when moving or removing it. */
 export function findList(layers: Layer[], id: string): Layer[] | undefined {
   if (layers.some((l) => l.id === id)) return layers;

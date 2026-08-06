@@ -27,6 +27,7 @@ import {
   overlayOf,
   overlaysUsingLayout,
   refreshStamps,
+  relocateLayer,
   removeFromGroup,
   removeLayerFrom,
   shiftLayer,
@@ -861,6 +862,36 @@ export async function moveLayersIntoGroup(groupId: string, layerIds: string[]) {
       taken.push(layer);
     }
     if (taken.length) setLayoutSelection(taken.map((l) => l.id));
+  });
+}
+
+/** Drops a Layout layer in front of another, optionally into a group.
+ *
+ *  `parentId` null means the top level. What the list's drag-and-drop calls;
+ *  the ↑/↓ buttons stay for the keyboard and for precision. */
+export async function dropLayoutLayer(id: string, parentId: string | null, beforeId: string | null) {
+  const layout = openLayout();
+  if (!layout) return;
+  // Checked on a copy first, so a refused move — a group into itself — costs
+  // neither an undo step nor a save.
+  const trial = plain(layout.layers) as Layer[];
+  if (!relocateLayer(trial, id, parentId, beforeId)) return;
+  await mutate(() => {
+    relocateLayer(layout.layers, id, parentId, beforeId);
+    setLayoutSelection([id]);
+  });
+}
+
+/** The same for a stamp inside a tile group, which has no nesting to worry
+ *  about — only the order things are drawn in. */
+export async function dropGroupLayer(groupId: string, id: string, beforeId: string | null) {
+  const group = findGroup(groupId);
+  if (!group) return;
+  const trial = plain(group.layers) as Layer[];
+  if (!relocateLayer(trial, id, null, beforeId)) return;
+  await mutate(() => {
+    relocateLayer(group.layers, id, null, beforeId);
+    app.selected = id;
   });
 }
 

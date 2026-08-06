@@ -31,6 +31,8 @@
     deleteLayer,
     deleteLayoutDoc,
     deleteLayoutLayer,
+    dropGroupLayer,
+    dropLayoutLayer,
     freeCount,
     groupLayoutLayers,
     groups,
@@ -108,6 +110,62 @@
   /** The wall canvas, for the one thing App needs from it: which tile is under
    *  a right-click. */
   let grid: GridCanvas | undefined = $state();
+
+  /* --- Dragging rows to reorder. Native HTML drag-and-drop rather than
+     pointer bookkeeping: it is what the browser already knows how to do, and
+     Tauri's own OS-level file drop is switched off (tauri.conf.json) precisely
+     so this keeps working.
+
+     A row is a source, and it is a target in three places: the top third
+     drops in front of it, the bottom third behind it, and — on a group — the
+     middle third drops inside. That is the whole vocabulary; anything more
+     needs a mode. --- */
+
+  type Where = "before" | "after" | "into";
+  let dragId = $state("");
+  let dropOn = $state<{ id: string; where: Where } | null>(null);
+
+  /** Which third of the row the pointer is in. "into" only where it means
+   *  something, so a plain row never offers a target that cannot take it. */
+  function zone(e: DragEvent, canHold: boolean): Where {
+    const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const t = (e.clientY - box.top) / box.height;
+    if (canHold && t > 0.3 && t < 0.7) return "into";
+    return t < 0.5 ? "before" : "after";
+  }
+
+  const startDrag = (e: DragEvent, id: string) => {
+    dragId = id;
+    if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+  };
+
+  function over(e: DragEvent, id: string, canHold: boolean) {
+    if (!dragId || dragId === id) return;
+    e.preventDefault();
+    const where = zone(e, canHold);
+    if (dropOn?.id !== id || dropOn.where !== where) dropOn = { id, where };
+  }
+
+  const endDrag = () => {
+    dragId = "";
+    dropOn = null;
+  };
+
+  /** Where a drop lands, expressed as the model wants it: the row to go in
+   *  front of, and the group to go inside. `after` becomes "in front of the
+   *  next sibling", or the end of the list. */
+  function landing(rows: Layer[], id: string, where: Where, parentId: string | null) {
+    if (where === "into") return { parentId: id, beforeId: null };
+    /* `rows` is drawn topmost-first; the model stores bottom-first, so the two
+     * run in opposite directions. Dropping *above* a row means landing after
+     * it in the model — which is "in front of" whatever the row above it is,
+     * or the end of the list when there is nothing above. Dropping *below* it
+     * means landing in front of that row itself. */
+    const at = rows.findIndex((l) => l.id === id);
+    // The list the anchor lives in is where the layer lands, so a drop between
+    // two children stays inside their group instead of escaping to the top.
+    return { parentId, beforeId: where === "before" ? (rows[at - 1]?.id ?? null) : id };
+  }
 
   /* Enter and Escape both blur; Escape puts the old text back first, and the
      rename actions already ignore an unchanged name — so cancelling needs no
@@ -253,11 +311,28 @@
 <!-- One Layout row per layer, recursing into groups. A snippet rather than a
      component because it needs nothing but the list it draws, and a component
      would mean threading every action through props. -->
-{#snippet layerRows(rows: Layer[], nested: boolean)}
+{#snippet layerRows(rows: Layer[], nested: boolean, parentId: string | null)}
   <ul class:indent={nested}>
     {#each rows as layer (layer.id)}
       <li
         class:selected={app.layoutSelection.includes(layer.id)}
+        class:drop-before={dropOn?.id === layer.id && dropOn.where === "before"}
+        class:drop-after={dropOn?.id === layer.id && dropOn.where === "after"}
+        class:drop-into={dropOn?.id === layer.id && dropOn.where === "into"}
+        draggable="true"
+        ondragstart={(e) => startDrag(e, layer.id)}
+        ondragover={(e) => over(e, layer.id, layer.kind === "group")}
+        ondragleave={() => dropOn?.id === layer.id && (dropOn = null)}
+        ondragend={endDrag}
+        ondrop={(e) => {
+          e.preventDefault();
+          const spot = dropOn;
+          const moving = dragId;
+          endDrag();
+          if (!spot || !moving) return;
+          const spotIn = landing(rows, spot.id, spot.where, parentId);
+          void dropLayoutLayer(moving, spotIn.parentId, spotIn.beforeId);
+        }}
         oncontextmenu={(e) => layerMenu(e, layer.id)}
       >
         <button
@@ -306,7 +381,7 @@
         >
       </li>
       {#if layer.kind === "group"}
-        {@render layerRows([...layer.children].reverse(), true)}
+        {@render layerRows([...layer.children].reverse(), true, layer.id)}
       {/if}
     {/each}
   </ul>
@@ -415,7 +490,7 @@
         {#if !layoutLayers.length}
           <p class="empty">Keine Ebenen.</p>
         {/if}
-        {@render layerRows(layoutLayers, false)}
+        {@render layerRows(layoutLayers, false, null)}
         <p class="empty">Rechtsklick auf eine Ebene für Gruppieren, Verschieben, Umbenennen.</p>
         {#if selectedLayoutLayer}
           <Properties layer={selectedLayoutLayer} inLayout />
@@ -515,9 +590,31 @@
               {#if !group.layers.length}
                 <p class="empty indent">Kein Layout zugewiesen.</p>
               {/if}
+              {@const stamps = [...group.layers].reverse()}
               <ul class="indent">
-                {#each [...group.layers].reverse() as layer (layer.id)}
-                  <li class:selected={app.selected === layer.id}>
+                {#each stamps as layer (layer.id)}
+                  <li
+                    class:selected={app.selected === layer.id}
+                    class:drop-before={dropOn?.id === layer.id && dropOn.where === "before"}
+                    class:drop-after={dropOn?.id === layer.id && dropOn.where === "after"}
+                    draggable="true"
+                    ondragstart={(e) => startDrag(e, layer.id)}
+                    ondragover={(e) => over(e, layer.id, false)}
+                    ondragleave={() => dropOn?.id === layer.id && (dropOn = null)}
+                    ondragend={endDrag}
+                    ondrop={(e) => {
+                      e.preventDefault();
+                      const spot = dropOn;
+                      const moving = dragId;
+                      endDrag();
+                      if (!spot || !moving) return;
+                      void dropGroupLayer(
+                        group.id,
+                        moving,
+                        landing(stamps, spot.id, spot.where, null).beforeId,
+                      );
+                    }}
+                  >
                     <button
                       class="eye"
                       title={layer.hidden ? "Einblenden" : "Ausblenden"}
@@ -751,6 +848,22 @@
   }
   li.selected {
     background: #223039;
+  }
+  /* A line where the row would land, and a frame when it would land inside —
+     an insertion point has to be visible before the mouse is released or the
+     drop is a guess. box-shadow rather than a border, so nothing shifts by a
+     pixel as the marker moves from row to row. */
+  li.drop-before {
+    box-shadow: inset 0 2px 0 #78dcff;
+  }
+  li.drop-after {
+    box-shadow: inset 0 -2px 0 #78dcff;
+  }
+  li.drop-into {
+    box-shadow: inset 0 0 0 2px #78dcff;
+  }
+  li[draggable="true"] {
+    cursor: grab;
   }
   li button {
     padding: 2px 5px;

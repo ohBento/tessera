@@ -33,6 +33,7 @@ import {
   overlayOf,
   overlaysUsingLayout,
   refreshStamps,
+  relocateLayer,
   removeFromGroup,
   stampInto,
   swapTiles,
@@ -586,6 +587,72 @@ describe("per-tile captions", () => {
     syncLiveLayers(overlay, mine);
     syncLiveLayers(overlay, theirs);
     expect(overlay.layers).toHaveLength(1);
+  });
+});
+
+describe("relocateLayer", () => {
+  const at = (layers: Layer[], id: string) => {
+    const l = findLayer(layers, id)!;
+    const s = nestingShift(layers, id) ?? { dx: 0, dy: 0 };
+    return { x: l.x + s.dx, y: l.y + s.dy };
+  };
+
+  /** Two loose layers and a displaced group holding a third. */
+  const tree = (): Layer[] => [
+    { ...newImageLayer("a.png"), id: "a", x: 0.1, y: 0.1 },
+    { ...newImageLayer("b.png"), id: "b", x: 0.2, y: 0.2 },
+    {
+      ...newGroupLayer([{ ...newImageLayer("c.png"), id: "c", x: 0.3, y: 0.3 }]),
+      id: "g",
+      x: 0.7,
+      y: 0.2,
+    },
+  ];
+
+  it("drops a layer in front of the row it names", () => {
+    const t = tree();
+    expect(relocateLayer(t, "g", null, "b")).toBe(true);
+    expect(t.map((l) => l.id)).toEqual(["a", "g", "b"]);
+  });
+
+  it("sends it to the end when it names nothing", () => {
+    const t = tree();
+    relocateLayer(t, "a", null, null);
+    expect(t.map((l) => l.id)).toEqual(["b", "g", "a"]);
+  });
+
+  it("is a no-op in effect when a layer lands in front of itself", () => {
+    const t = tree();
+    relocateLayer(t, "b", null, "b");
+    expect(t.map((l) => l.id)).toEqual(["a", "b", "g"]);
+  });
+
+  it("keeps a layer where it looks when it moves into a displaced group", () => {
+    const t = tree();
+    const before = at(t, "a");
+    relocateLayer(t, "a", "g", null);
+    expect(at(t, "a").x).toBeCloseTo(before.x);
+    expect(at(t, "a").y).toBeCloseTo(before.y);
+    expect(findList(t, "a")).toBe((findLayer(t, "g") as { children: Layer[] }).children);
+  });
+
+  it("keeps a layer where it looks when it leaves a group", () => {
+    const t = tree();
+    const before = at(t, "c");
+    relocateLayer(t, "c", null, "a");
+    expect(at(t, "c").x).toBeCloseTo(before.x);
+    expect(at(t, "c").y).toBeCloseTo(before.y);
+    expect(t.map((l) => l.id)).toEqual(["c", "a", "b", "g"]);
+  });
+
+  it("refuses to put a group inside itself", () => {
+    const t = tree();
+    expect(relocateLayer(t, "g", "g", null)).toBe(false);
+    expect(t.map((l) => l.id)).toEqual(["a", "b", "g"]);
+  });
+
+  it("reports an unknown layer rather than pretending", () => {
+    expect(relocateLayer(tree(), "zz", null, null)).toBe(false);
   });
 });
 
