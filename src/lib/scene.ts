@@ -8,7 +8,15 @@
 import * as fabric from "fabric";
 
 import { TILE_H, TILE_W } from "./bmp";
-import { resolveLayers, visibleTiles, type Base, type Layer, type Layout, type Manifest } from "./model";
+import {
+  groupShift,
+  resolveLayers,
+  visibleTiles,
+  type Base,
+  type Layer,
+  type Layout,
+  type Manifest,
+} from "./model";
 /* cellAt/gridSize/rowsFor live in geometry.ts — pure grid maths that
  * mosaicBakeCrops also needs — and are re-exported here so every existing
  * caller of scene.ts keeps working unchanged. */
@@ -187,15 +195,59 @@ export async function buildLayout(
   interactive = false,
 ): Promise<void> {
   canvas.remove(...canvas.getObjects());
-  for (const l of layout.layers) {
-    if (l.hidden || l.kind !== "image") continue;
-    const obj = await imageObject(l, deps, { w: TILE_W, h: TILE_H, x: 0, y: 0 });
-    if (interactive) makeInteractive(obj, !!l.locked);
-    else obj.selectable = obj.evented = false;
-    Object.assign(obj, { layerId: l.id, tileId: "", space: "tile" });
+  for (const obj of await layoutObjects(layout.layers, deps, interactive, { dx: 0, dy: 0 }, false)) {
     canvas.add(obj);
   }
   canvas.renderAll();
+}
+
+/** One Layout's layers as Fabric objects, groups flattened into their members.
+ *
+ *  A group is a displacement, not a container: children carry absolute
+ *  coordinates and the group's x/y shifts them (see groupShift in model.ts).
+ *  Drawing them as loose objects shifted by that amount therefore renders
+ *  identically to nesting them in a fabric.Group, and keeps every child
+ *  individually clickable — which is the whole point of grouping here, since
+ *  the list is what selects a group and the canvas is what edits one layer.
+ *
+ *  ponytail: a group's own opacity and blend are not applied to the flattened
+ *  result — with loose objects there is nothing to flatten. Swap in a real
+ *  fabric.Group when half-transparent overlapping children must stop showing
+ *  through each other. */
+async function layoutObjects(
+  layers: Layer[],
+  deps: SceneDeps,
+  interactive: boolean,
+  shift: { dx: number; dy: number },
+  locked: boolean,
+): Promise<fabric.Object[]> {
+  const out: fabric.Object[] = [];
+  for (const l of layers) {
+    if (l.hidden) continue;
+    if (l.kind === "group") {
+      const own = groupShift(l);
+      // Hiding or locking a group has to reach its members, or the row would
+      // claim something the canvas does not do.
+      out.push(
+        ...(await layoutObjects(
+          l.children,
+          deps,
+          interactive,
+          { dx: shift.dx + own.dx, dy: shift.dy + own.dy },
+          locked || !!l.locked,
+        )),
+      );
+      continue;
+    }
+    if (l.kind !== "image") continue;
+    const placed = { ...l, x: l.x + shift.dx, y: l.y + shift.dy };
+    const obj = await imageObject(placed, deps, { w: TILE_W, h: TILE_H, x: 0, y: 0 });
+    if (interactive) makeInteractive(obj, locked || !!l.locked);
+    else obj.selectable = obj.evented = false;
+    Object.assign(obj, { layerId: l.id, tileId: "", space: "tile" });
+    out.push(obj);
+  }
+  return out;
 }
 
 /** Reads a dragged/scaled/rotated object back out in model terms. The inverse

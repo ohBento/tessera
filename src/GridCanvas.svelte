@@ -12,6 +12,7 @@
     assignedTiles,
     clearTiles,
     selectLayer,
+    swapTilePlaces,
     toggleTile,
     visibleIds,
   } from "./lib/editor.svelte";
@@ -23,6 +24,8 @@
   let el: HTMLCanvasElement;
   let canvas: fabric.Canvas | undefined = $state();
   let zoom = $state(1);
+  /** Tile a swap-drag is currently hovering, drawn by the after:render hook. */
+  let dropTarget = "";
 
   const MIN_ZOOM = 0.02;
   const MAX_ZOOM = 8;
@@ -86,18 +89,31 @@
   $effect(() => {
     app.selectedTiles.join();
     app.selected;
+    app.hoverGroup;
     canvas?.requestRenderAll();
   });
 
-  /* In tile mode nothing on the canvas is a hit target, so a click always
-   * reaches the wall underneath — which a full-wall picture would otherwise
-   * swallow entirely. The active object keeps its handles on purpose: it shows
-   * which layer the tiles are about to be assigned to. */
+  /* A click on the wall always means "pick a tile". Only the layer chosen in
+   * the sidebar stays grabbable, so it can still be dragged and scaled — every
+   * other object is inert. That replaces the old V/M mode: a full-wall picture
+   * used to swallow every click, and the mode existed purely to get past it.
+   *
+   * Fabric decides hit testing per object, so this is the same switch
+   * makeInteractive already flips for a locked layer. */
   $effect(() => {
     if (!canvas) return;
-    canvas.skipTargetFind = app.mode === "tiles";
-    // A rubber band that can never hit anything is just noise.
-    canvas.selection = app.mode === "layers";
+    const chosen = app.selected;
+    app.version;
+    void building.then(() => {
+      if (!canvas) return;
+      for (const o of canvas.getObjects()) {
+        const mine = (o as Tagged).layerId;
+        if (mine) o.evented = o.selectable = mine === chosen;
+      }
+      // A rubber band would only ever catch the one grabbable object.
+      canvas.selection = false;
+      canvas.requestRenderAll();
+    });
   });
 
   /* List selection -> canvas. Also keyed on version, because a rebuild replaces
@@ -147,6 +163,22 @@
     let last = { x: 0, y: 0 };
     let spaceHeld = false;
 
+    /** The tile under a pointer event, or "" past the last one. */
+    function tileAt(e: MouseEvent): string {
+      const p = canvas!.getScenePoint(e);
+      const col = Math.floor(p.x / TILE_W);
+      const row = Math.floor(p.y / TILE_H);
+      const ids = visibleIds();
+      const index = row * COLS + col;
+      const inside = col >= 0 && col < COLS && row >= 0 && index >= 0 && index < ids.length;
+      return inside ? ids[index] : "";
+    }
+
+    /* Dragging one tile onto another swaps their places. Click and drag start
+     * the same way, so which it was is decided on mouse:up by whether the
+     * pointer ever left the tile it went down on. */
+    let dragFrom = "";
+
     canvas.on("mouse:down", (opt) => {
       if (!(opt.e instanceof MouseEvent)) return;
       if (opt.e.button === 1 || spaceHeld) {
@@ -156,27 +188,38 @@
         opt.e.preventDefault();
         return;
       }
-      // Clicking past every layer picks tiles instead. Backgrounds are inert,
-      // so "no target" means the click landed on bare wall, and the cell is
-      // whichever one the scene coordinate falls in.
+      // A layer object swallows the click only when it is the chosen one; every
+      // other object is inert, so "no target" means bare wall.
       if (opt.e.button !== 0 || opt.target) return;
-      const p = canvas!.getScenePoint(opt.e);
-      const col = Math.floor(p.x / TILE_W);
-      const row = Math.floor(p.y / TILE_H);
-      const ids = visibleIds();
-      const index = row * COLS + col;
-      const inside = col >= 0 && col < COLS && row >= 0 && index >= 0 && index < ids.length;
-      if (inside) toggleTile(ids[index], opt.e.ctrlKey || opt.e.shiftKey);
-      else clearTiles();
+      dragFrom = tileAt(opt.e);
     });
     canvas.on("mouse:move", (opt) => {
-      if (!panning || !(opt.e instanceof MouseEvent)) return;
-      canvas!.relativePan(new fabric.Point(opt.e.clientX - last.x, opt.e.clientY - last.y));
-      last = { x: opt.e.clientX, y: opt.e.clientY };
+      if (!(opt.e instanceof MouseEvent)) return;
+      if (panning) {
+        canvas!.relativePan(new fabric.Point(opt.e.clientX - last.x, opt.e.clientY - last.y));
+        last = { x: opt.e.clientX, y: opt.e.clientY };
+        return;
+      }
+      if (!dragFrom) return;
+      const over = tileAt(opt.e);
+      const next = over && over !== dragFrom ? over : "";
+      if (next !== dropTarget) {
+        dropTarget = next;
+        canvas!.requestRenderAll();
+      }
     });
-    canvas.on("mouse:up", () => {
+    canvas.on("mouse:up", (opt) => {
       panning = false;
-      canvas!.selection = app.mode === "layers";
+      canvas!.selection = false;
+      if (!dragFrom || !(opt.e instanceof MouseEvent)) return;
+      const from = dragFrom;
+      const onto = dropTarget;
+      dragFrom = "";
+      dropTarget = "";
+      if (onto) void swapTilePlaces(from, onto);
+      else if (tileAt(opt.e) === from) toggleTile(from, opt.e.ctrlKey || opt.e.shiftKey);
+      else clearTiles();
+      canvas!.requestRenderAll();
     });
 
     /* Tile boundaries. Drawn straight onto the context after Fabric has
@@ -216,7 +259,14 @@
           ctx.setLineDash([]);
         }
 
-        if (picked.has(id)) {
+        if (id === dropTarget) {
+          // Where a swap would land. Filled rather than outlined: during a drag
+          // the cursor is over this cell and an outline sits under the pointer.
+          ctx.fillStyle = "rgba(255, 196, 92, 0.3)";
+          ctx.fillRect(x, y, w, h);
+          ctx.strokeStyle = "rgba(255, 196, 92, 1)";
+          ctx.lineWidth = 3;
+        } else if (picked.has(id)) {
           ctx.fillStyle = "rgba(120, 220, 255, 0.22)";
           ctx.fillRect(x, y, w, h);
           ctx.strokeStyle = "rgba(140, 225, 255, 0.95)";
@@ -236,11 +286,11 @@
     };
     canvas.on("selection:created", pickedOnCanvas);
     canvas.on("selection:updated", pickedOnCanvas);
-    /* Only a real click in layer mode clears. Switching to tile mode also makes
-     * Fabric drop its active object, and letting that through would break the
-     * one workflow needing both: pick the layer here, the tiles there, assign. */
+    /* Clearing during a rebuild is Fabric dropping its active object, not the
+     * user letting go of the layer — letting that through would silently
+     * deselect on every structural edit. */
     canvas.on("selection:cleared", () => {
-      if (!rebuilding && app.mode === "layers") selectLayer("");
+      if (!rebuilding) selectLayer("");
     });
 
     canvas.on("object:modified", (opt) => {

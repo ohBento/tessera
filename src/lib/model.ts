@@ -209,6 +209,51 @@ export type Overlay = {
 export const appliesTo = (o: Overlay, tileId: string) =>
   o.tiles === "all" || o.tiles.includes(tileId);
 
+/* --- Tile groups. A group is an overlay with a fixed tile list, and tile
+ * ownership is exclusive: a tile belongs to at most one group. That is what
+ * lets a group be a thing you point at and edit, instead of the v4 behaviour
+ * where picking a set that differed by one tile silently produced a second,
+ * near-identical overlay nobody asked for.
+ *
+ * An "all" overlay is deliberately outside this: it is the wall axis (the
+ * picture spread across the whole grid), not a group, and every tile is under
+ * it by construction. --- */
+
+/** The group owning this tile, if any. */
+export const groupOf = (m: Manifest, tileId: string) =>
+  m.overlays.find((o) => o.tiles !== "all" && o.tiles.includes(tileId));
+
+/** Which of `ids` no group has claimed yet — what "add to group" may take. */
+export const freeTiles = (m: Manifest, ids: string[]) => ids.filter((id) => !groupOf(m, id));
+
+/** Adds the unclaimed tiles among `ids` to `group`, returning how many landed.
+ *  Claimed ones are skipped rather than stolen: silently moving a tile out of
+ *  another group would change a stamp the user cannot see from here. */
+export function addToGroup(m: Manifest, group: Overlay, ids: string[]): number {
+  if (group.tiles === "all") return 0;
+  const free = freeTiles(m, ids);
+  group.tiles = [...group.tiles, ...free];
+  return free.length;
+}
+
+/** Releases a tile from its group, making it available to others again. */
+export function removeFromGroup(group: Overlay, tileId: string) {
+  if (group.tiles === "all") return;
+  group.tiles = group.tiles.filter((t) => t !== tileId);
+}
+
+/** Swaps two tiles' places on the wall.
+ *
+ *  Swap, not insert: the wall mirrors the in-game character order, which is
+ *  hand-built, and inserting would shift every tile after the target — one
+ *  drag would then rearrange half the grid. */
+export function swapTiles(m: Manifest, a: string, b: string) {
+  const i = m.order.indexOf(a);
+  const j = m.order.indexOf(b);
+  if (i < 0 || j < 0 || i === j) return;
+  [m.order[i], m.order[j]] = [m.order[j], m.order[i]];
+}
+
 /** Adds or removes tiles from an overlay.
  *
  *  Taking a tile away from an overlay that covers everything has to pin the
@@ -282,7 +327,7 @@ export const layoutNeedsRestamp = (layout: Layout) =>
   layout.stamped !== undefined && layout.stamped !== layoutFingerprint(layout);
 
 export type Manifest = {
-  version: 4;
+  version: 5;
   order: string[];
   hidden: string[];
   overlays: Overlay[];
@@ -293,7 +338,7 @@ export type Manifest = {
 export const emptyTile = (): Tile => ({ base: null, layers: [], text: {} });
 
 export const emptyManifest = (): Manifest => ({
-  version: 4,
+  version: 5,
   order: [],
   hidden: [],
   overlays: [],
@@ -572,11 +617,34 @@ function v3ToV4(m: Raw): Raw {
   return { ...m, version: 4, layouts: [] };
 }
 
+/** v4 let tile groups overlap. v5 makes tile ownership exclusive: the first
+ *  group naming a tile keeps it, later ones give it up.
+ *
+ *  A group that ends up with no tiles keeps its layers, so nothing anyone
+ *  composed is lost — it just has nowhere to land until tiles are added back.
+ *  One with neither tiles nor layers is dropped: v4 created those by the
+ *  handful (every re-pick of a slightly different tile set made one), and
+ *  carrying empty shells forward would hand the user a list of nothing.
+ *  "all" overlays are untouched: they are the wall axis, not groups. */
+function v4ToV5(m: Raw): Raw {
+  const claimed = new Set<string>();
+  const overlays = ((m.overlays ?? []) as Overlay[])
+    .map((o) => {
+      if (o.tiles === "all") return o;
+      const tiles = o.tiles.filter((id) => !claimed.has(id));
+      for (const id of tiles) claimed.add(id);
+      return { ...o, tiles };
+    })
+    .filter((o) => o.tiles === "all" || o.tiles.length > 0 || o.layers.length > 0);
+  return { ...m, version: 5, overlays };
+}
+
 export function migrate(raw: unknown): Manifest {
   let m = raw as Raw | null;
   if (!m || typeof m !== "object") return emptyManifest();
-  if (m.version !== 2 && m.version !== 3 && m.version !== 4) m = v1ToV2(m);
+  if (m.version !== 2 && m.version !== 3 && m.version !== 4 && m.version !== 5) m = v1ToV2(m);
   if (m.version === 2) m = v2ToV3(m);
   if (m.version === 3) m = v3ToV4(m);
+  if (m.version === 4) m = v4ToV5(m);
   return { ...emptyManifest(), ...m } as Manifest;
 }

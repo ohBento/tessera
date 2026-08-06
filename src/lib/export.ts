@@ -2,7 +2,7 @@
  * across it, once per tile. There is no separate export renderer to keep in
  * sync — that is the whole point. */
 import * as fabric from "fabric";
-import { writeFile } from "@tauri-apps/plugin-fs";
+import { writeFile } from "./platform";
 
 import { encodeBmp32, TILE_H, TILE_W } from "./bmp";
 import { visibleTiles, type Manifest } from "./model";

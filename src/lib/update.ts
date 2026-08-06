@@ -1,4 +1,4 @@
-import { getVersion } from "@tauri-apps/api/app";
+import { getVersion } from "./platform";
 
 const REPO = "ohBento/tessera";
 

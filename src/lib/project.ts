@@ -1,6 +1,11 @@
+/* Every host call goes through platform.ts, which picks the Tauri plugins in
+ * the app and an in-memory filesystem in a plain browser — that is what lets
+ * the whole UI run and be tested without a native shell. */
 import {
   copyFile,
+  documentDir,
   exists,
+  join,
   mkdir,
   readDir,
   readFile,
@@ -9,8 +14,7 @@ import {
   rename,
   writeFile,
   writeTextFile,
-} from "@tauri-apps/plugin-fs";
-import { documentDir, join } from "@tauri-apps/api/path";
+} from "./platform";
 
 import { emptyManifest, emptyTile, migrate, type Manifest, type Tile } from "./model";
 import type { SceneDeps } from "./scene";
@@ -215,5 +219,21 @@ export async function vaultedIds(dir: string): Promise<string[]> {
       .map((e) => e.name.replace(/\.bmp$/i, ""));
   } catch {
     return [];
+  }
+}
+
+/** Drops vault copies whose id is no longer in the game folder.
+ *
+ *  The vault is not a snapshot: each file is copied in the instant before
+ *  Tessera first overwrites it, so a new character vaults itself. What it
+ *  cannot see on its own is an id being *reused* — a character deleted and a
+ *  new one taking the same number — where the stale copy would then be served
+ *  as that tile's "original" forever. Same for the reset route: delete the folder,
+ *  let the game regenerate, and the regenerated files are the new originals.
+ *  Running this on open keeps the vault honest for one readDir per session. */
+export async function pruneVault(dir: string, ids: string[]) {
+  const keep = new Set(ids);
+  for (const id of await vaultedIds(dir)) {
+    if (!keep.has(id)) await remove(await vaultPath(dir, id));
   }
 }

@@ -1,32 +1,37 @@
 /* Editor state: opens a folder, holds a manifest, writes it back. */
-import { open as pickFile } from "@tauri-apps/plugin-dialog";
+import { open as pickFile } from "./platform";
 
 import { saveTiles } from "./export";
 import { mosaicBakeCrops } from "./geometry";
 import { canRedo, canUndo, checkpoint, emptyHistory, redo, undo } from "./history";
 import { renderLayout } from "./layout";
 import {
-  assignExactly,
+  addToGroup,
   bakeMosaicInto,
-  coveredTiles,
   emptyManifest,
   findLayer,
+  findList,
+  freeTiles,
+  groupOf,
   instanceCount,
   layoutFingerprint,
   layoutNeedsRestamp,
+  nestingShift,
+  newGroupLayer,
   newImageLayer,
   newLayout,
   newOverlay,
-  overlayCovering,
   overlayOf,
   overlaysUsingLayout,
   refreshStamps,
+  removeFromGroup,
   removeLayerFrom,
-  setAssigned,
   stampInto,
+  swapTiles,
   visibleTiles,
   type ImageLayer,
   type Layer,
+  type Layout,
   type Manifest,
   type Overlay,
 } from "./model";
@@ -36,6 +41,7 @@ import {
   listTiles,
   loadAsset,
   loadManifest,
+  pruneVault,
   saveGeneratedAsset,
   saveManifest,
   tauriDeps,
@@ -56,12 +62,11 @@ export const app = $state({
   version: 0,
   /** Layer picked in the list or on the canvas, "" for none. */
   selected: "",
-  /** Tiles picked on the canvas. What a new overlay gets assigned to. */
+  /** Tiles picked on the canvas. What a new group gets built from. */
   selectedTiles: [] as string[],
-  /* What a click on the canvas means. A grid-space picture covers the whole
-   * wall, so in layer mode every click lands on it and the tiles underneath are
-   * unreachable — hence a mode rather than a cleverer hit test. */
-  mode: "layers" as "layers" | "tiles",
+  /** Group being hovered in the sidebar — its tiles get outlined on the wall,
+   *  so you can see what a group holds without clicking it. */
+  hoverGroup: "",
   /** Which Layout is open for editing, "" when looking at the wall instead.
    *  View state only, not persisted — a Layout's own content is. */
   openLayoutId: "",
@@ -70,11 +75,11 @@ export const app = $state({
    *  disjoint and switching documents must not smear one's pick onto the
    *  other. */
   layoutSelected: "",
+  /** Every layer picked in the Layout's list. `layoutSelected` is the last of
+   *  these — the one the canvas puts handles on — while grouping needs the
+   *  whole set. */
+  layoutSelection: [] as string[],
 });
-
-/* Both selections deliberately survive a mode switch: assigning tiles to a
- * layer means picking the layer in one mode and the tiles in the other. */
-export const setMode = (mode: typeof app.mode) => (app.mode = mode);
 
 export function toggleTile(id: string, additive: boolean) {
   const current = app.selectedTiles;
@@ -89,75 +94,77 @@ export function toggleTile(id: string, additive: boolean) {
 
 export const clearTiles = () => (app.selectedTiles = []);
 
-/** The tiles the selected layer lands on, when that is less than everything.
- *
- *  An overlay covering the whole wall reports nothing: the mark exists to show
- *  which subset a layer reaches, and outlining every single cell says nothing
- *  while drowning out the plain tile guides. Take one tile away and the overlay
- *  pins to a list, at which point the mark appears and is worth reading. The
- *  layer list already names the overlay for the "all" case. */
+/** The tiles outlined on the wall: the hovered group's, else the selected
+ *  layer's group. An "all" overlay reports nothing — outlining every cell says
+ *  nothing while drowning out the plain tile guides. */
 export function assignedTiles(): string[] {
-  if (!app.selected) return [];
-  const overlay = overlayOf(app.manifest, app.selected);
-  if (!overlay || overlay.tiles === "all") return [];
-  return overlay.tiles;
+  const overlay = app.hoverGroup
+    ? app.manifest.overlays.find((o) => o.id === app.hoverGroup)
+    : app.selected
+      ? overlayOf(app.manifest, app.selected)
+      : undefined;
+  return !overlay || overlay.tiles === "all" ? [] : overlay.tiles;
 }
 
-/* order, not visibleIds: a hidden tile still belongs to the project, and
- * resolving against the visible ones would quietly unassign it the moment it
- * is hidden. */
-const selectedOverlay = () => (app.selected ? overlayOf(app.manifest, app.selected) : undefined);
+/* --- Tile groups. A group owns its tiles exclusively (see groupOf in
+ * model.ts), which is what lets it be a thing you point at: name it, add tiles
+ * to it, drop layouts on it. --- */
 
-/** A grid-space layer spans the whole wall by construction, and the renderer
- *  does not clip it to its overlay's tiles. Restricting one would make the
- *  document claim seven tiles while the picture still covered all of them, so
- *  the assignment actions are simply not offered for it. Clipping a grid-space
- *  layer to the union of its assigned cells is the feature that would lift
- *  this; nothing has needed it yet. */
-function assignable(): boolean {
-  const overlay = selectedOverlay();
-  if (!overlay) return false;
-  return findLayer(overlay.layers, app.selected)?.space !== "grid";
+/** The groups shown in the sidebar — "all" overlays are the wall axis, not
+ *  groups, and hold the grid picture rather than anything tile-scoped. */
+export const groups = () => app.manifest.overlays.filter((o) => o.tiles !== "all");
+
+export const findGroup = (id: string) => app.manifest.overlays.find((o) => o.id === id);
+
+/** How many of the picked tiles are still unclaimed — drives both buttons and
+ *  the status line, so a greyed button always has a readable reason. */
+export const freeCount = () => freeTiles(app.manifest, app.selectedTiles).length;
+
+export async function newGroup() {
+  const free = freeTiles(app.manifest, app.selectedTiles);
+  if (!free.length) return;
+  await mutate(() => {
+    app.manifest.overlays.push(newOverlay(`Gruppe ${groups().length + 1}`, free));
+  });
 }
 
-/** Whether adding (or removing) the picked tiles would change anything.
- *
- *  Drives the buttons. An action that is offered but cannot do anything is
- *  indistinguishable from a broken one — adding tiles to an overlay that
- *  already covers everything looked exactly like a failure. */
-export function canAssign(on: boolean): boolean {
-  const overlay = selectedOverlay();
-  if (!overlay || !app.selectedTiles.length || !assignable()) return false;
-  const covered = new Set(coveredTiles(overlay, app.manifest.order));
-  return app.selectedTiles.some((id) => (on ? !covered.has(id) : covered.has(id)));
+/** Adds the picked tiles that no other group has claimed. Reports the skipped
+ *  ones rather than stealing them: moving a tile between groups silently would
+ *  change a stamp the user cannot see from here. */
+export async function addTilesToGroup(groupId: string) {
+  const group = findGroup(groupId);
+  if (!group || !freeCount()) return;
+  const skipped = app.selectedTiles.length - freeCount();
+  await mutate(() => addToGroup(app.manifest, group, [...app.selectedTiles]));
+  // "vergeben", not "in einer anderen Gruppe": a tile already in *this* group
+  // is skipped too, and naming the wrong group is worse than naming none.
+  if (skipped) app.error = `${skipped} Kachel(n) übersprungen — schon vergeben`;
 }
 
-/** Adds the picked tiles to the selected layer's overlay, or takes them out. */
-export async function assignSelection(on: boolean) {
-  const overlay = selectedOverlay();
-  if (!overlay || !canAssign(on)) return;
-  await mutate(() => setAssigned(overlay, app.manifest.order, [...app.selectedTiles], on));
+export async function removeTileFromGroup(groupId: string, tileId: string) {
+  const group = findGroup(groupId);
+  if (!group) return;
+  await mutate(() => removeFromGroup(group, tileId));
 }
 
-/** Narrows the overlay to exactly the picked tiles. */
-export function canRestrict(): boolean {
-  const overlay = selectedOverlay();
-  if (!overlay || !app.selectedTiles.length || !assignable()) return false;
-  const covered = coveredTiles(overlay, app.manifest.order);
-  return covered.length !== app.selectedTiles.length || canAssign(true);
+export async function renameGroup(groupId: string, name: string) {
+  const group = findGroup(groupId);
+  if (!group || !name.trim() || group.name === name.trim()) return;
+  await mutate(() => (group.name = name.trim()));
 }
 
-/** Why the assignment actions are off, when the reason is not simply "nothing
- *  picked". A greyed button with no explanation reads as broken. */
-export function assignHint(): string {
-  if (!app.selected || !app.selectedTiles.length || assignable()) return "";
-  return "Grid-Bild deckt immer die ganze Wand — Zuweisen gilt nur für Kachel-Ebenen";
+/** Deleting a group frees its tiles and takes its stamps with them — the
+ *  layers live in the group, so there is nowhere for them to go. The caller
+ *  asks first when there is something to lose. */
+export async function deleteGroup(groupId: string) {
+  await mutate(() => {
+    const at = app.manifest.overlays.findIndex((o) => o.id === groupId);
+    if (at >= 0) app.manifest.overlays.splice(at, 1);
+  });
 }
 
-export async function restrictToSelection() {
-  const overlay = selectedOverlay();
-  if (!overlay || !canRestrict()) return;
-  await mutate(() => assignExactly(overlay, app.manifest.order, [...app.selectedTiles]));
+export async function swapTilePlaces(a: string, b: string) {
+  await mutate(() => swapTiles(app.manifest, a, b));
 }
 
 /* Reactive so the toolbar can grey the buttons out. */
@@ -288,7 +295,12 @@ export async function persist(): Promise<boolean> {
 export async function openFolder(dir?: string) {
   await run("load", async () => {
     app.dir = dir ?? (await defaultDir());
-    app.manifest = await loadManifest(app.dir, await listTiles(app.dir));
+    const ids = await listTiles(app.dir);
+    // Before anything reads an original: a vault copy for an id the folder no
+    // longer has is either dead weight or, if BDO reuses the number, the wrong
+    // picture served as that tile's pristine state.
+    await pruneVault(app.dir, ids);
+    app.manifest = await loadManifest(app.dir, ids);
     app.deps = tauriDeps(app.dir);
     app.selected = "";
     // Undo must not reach back into the folder that was open before.
@@ -298,20 +310,22 @@ export async function openFolder(dir?: string) {
   });
 }
 
-export async function pickFolder() {
-  const dir = await pickFile({ directory: true, defaultPath: await defaultDir() });
-  if (typeof dir === "string") await openFolder(dir);
-}
-
 const IMAGE_FILTER = { name: "Bilder", extensions: ["png", "jpg", "jpeg", "webp", "bmp"] };
 
-/** The overlay covering exactly these tiles, reusing one if it already exists —
- *  otherwise picking the same five tiles twice would leave two overlays that
- *  have to be kept in step by hand. */
-function overlayFor(ids: string[]): Overlay {
-  const existing = overlayCovering(app.manifest.overlays, ids);
-  if (existing) return existing;
-  app.manifest.overlays.push(newOverlay(`${ids.length} Kacheln`, [...ids]));
+/** The group a stamp from the wall lands in: the one owning the picked tiles,
+ *  or a new one built from those that are still free.
+ *
+ *  Not "an overlay covering exactly these tiles" any more — that rule made a
+ *  selection differing by one tile silently produce a second, near-identical
+ *  overlay, and left the user with a list of groups nobody created. */
+function groupFor(ids: string[]): Overlay | undefined {
+  const owned = ids.map((id) => groupOf(app.manifest, id)).filter((g) => !!g);
+  const first = owned[0];
+  // A selection spanning two groups has no single right answer, so it gets
+  // none: the sidebar's own "Layout zuweisen" targets one group by name.
+  if (first && owned.every((g) => g.id === first.id)) return first;
+  if (first) return undefined;
+  app.manifest.overlays.push(newOverlay(`Gruppe ${groups().length + 1}`, [...ids]));
   // Read it back out rather than using the value pushed: Svelte hands back a
   // proxy, and mutating the raw object would not be reactive.
   return app.manifest.overlays[app.manifest.overlays.length - 1];
@@ -358,9 +372,7 @@ export async function applyTransform(obj: Tagged, patch: Pick<Layer, "x" | "y" |
 /** The currently selected grid-space picture, if that is what is selected —
  *  what "Anwenden" acts on. */
 function selectedMosaic(): ImageLayer | undefined {
-  const overlay = selectedOverlay();
-  if (!overlay) return undefined;
-  const l = findLayer(overlay.layers, app.selected);
+  const l = app.selected ? findLayer(listOf(app.selected) ?? [], app.selected) : undefined;
   return l?.kind === "image" && l.space === "grid" ? l : undefined;
 }
 
@@ -427,8 +439,45 @@ export async function deleteLayoutDoc(id: string) {
   });
 }
 
+export async function renameLayout(id: string, name: string) {
+  const layout = app.manifest.layouts.find((l) => l.id === id);
+  if (!layout || !name.trim() || layout.name === name.trim()) return;
+  await mutate(() => (layout.name = name.trim()));
+}
+
+/** A layer by id in whichever document holds it: the open Layout's own list,
+ *  or the wall's overlays. Rename and lock work the same in both, so they take
+ *  this rather than each document getting its own copy. */
+const anyLayer = (id: string) =>
+  findLayer(openLayout()?.layers ?? [], id) ?? findLayer(listOf(id) ?? [], id);
+
+/** `name` lives on Common, so one function renames every kind of layer. */
+export async function renameLayer(id: string, name: string) {
+  const layer = anyLayer(id);
+  if (!layer) return;
+  const next = name.trim();
+  await mutate(() => (layer.name = next || undefined));
+}
+
+/** Locking takes a layer out of Fabric's hit testing (makeInteractive in
+ *  scene.ts), so it stops being draggable while staying visible. */
+export async function toggleLayerLocked(id: string) {
+  const layer = anyLayer(id);
+  if (!layer) return;
+  await mutate(() => (layer.locked = !layer.locked));
+}
+
+/** Picks one layer, from the canvas or from a plain list click.
+ *
+ *  A layer already inside the current multi-selection keeps that selection.
+ *  Without that, Ctrl-picking a second row collapsed the set straight back to
+ *  one: the pick moves `layoutSelected`, the canvas follows by setting its
+ *  active object, Fabric fires selection:created, and the handler landed back
+ *  here — undoing the very selection that caused it. */
 export function selectLayoutLayer(id: string) {
   if (app.layoutSelected !== id) app.layoutSelected = id;
+  if (!id) app.layoutSelection = [];
+  else if (!app.layoutSelection.includes(id)) app.layoutSelection = [id];
 }
 
 export async function toggleLayoutLayerHidden(id: string) {
@@ -437,19 +486,22 @@ export async function toggleLayoutLayerHidden(id: string) {
   await mutate(() => (l.hidden = !l.hidden));
 }
 
+/** Deletes a layer. On a group this dissolves it instead, handing the members
+ *  back — see removeLayerFrom. */
 export async function deleteLayoutLayer(id: string) {
   const layout = openLayout();
   if (!layout) return;
   await mutate(() => {
-    removeLayerFrom(layout.layers, id);
+    removeLayerFrom(findList(layout.layers, id) ?? layout.layers, id);
+    app.layoutSelection = app.layoutSelection.filter((x) => x !== id);
     if (app.layoutSelected === id) app.layoutSelected = "";
   });
 }
 
-/** Same top-first draw order as moveLayer, scoped to the open Layout's own
- *  flat list instead of an overlay. */
+/** Same top-first draw order as moveLayer, scoped to the list the layer sits
+ *  in — a member moves within its group, not out of it. */
 export async function moveLayoutLayer(id: string, up: boolean) {
-  const list = openLayout()?.layers;
+  const list = openLayout() && findList(openLayout()!.layers, id);
   if (!list) return;
   const at = list.findIndex((l) => l.id === id);
   const to = at + (up ? 1 : -1);
@@ -480,17 +532,107 @@ export async function applyLayoutTransform(
   layerId: string,
   patch: Pick<Layer, "x" | "y" | "rotation"> & { scale: number },
 ) {
-  const layer = findLayer(openLayout()?.layers ?? [], layerId);
-  if (!layer) return;
+  const layout = openLayout();
+  const layer = findLayer(layout?.layers ?? [], layerId);
+  if (!layout || !layer) return;
+  /* A layer inside a group renders at its own position plus every enclosing
+   * group's displacement, so the position read off the canvas has that folded
+   * in — subtract it again or the layer jumps by the group's offset on the
+   * first drag after grouping. */
+  const shift = nestingShift(layout.layers, layerId) ?? { dx: 0, dy: 0 };
   await mutate(() => {
-    layer.x = patch.x;
-    layer.y = patch.y;
+    layer.x = patch.x - shift.dx;
+    layer.y = patch.y - shift.dy;
     layer.rotation = patch.rotation;
     if (layer.kind === "image") layer.scale = patch.scale;
   }, false);
 }
 
+/* --- Layer groups inside a Layout. A group is which layers move together —
+ * the other axis from a tile group, which is which tiles a stack lands on. --- */
+
+/** Layers picked in the Layout's list, in list order. Multi-select is what
+ *  grouping needs and a single pick is just the one-element case, so the two
+ *  selections are the same field. */
+export const layoutPicked = () => app.layoutSelection;
+
+export function toggleLayoutPick(id: string, additive: boolean) {
+  const at = app.layoutSelection.indexOf(id);
+  if (!additive) {
+    app.layoutSelection = at >= 0 && app.layoutSelection.length === 1 ? [] : [id];
+  } else {
+    app.layoutSelection =
+      at >= 0
+        ? app.layoutSelection.filter((x) => x !== id)
+        : [...app.layoutSelection, id];
+  }
+  app.layoutSelected = app.layoutSelection.at(-1) ?? "";
+}
+
+/** Grouping needs at least two, and only top-level layers: a group inside a
+ *  group is a nesting level with no button to get back out of. */
+export function canGroupLayers(): boolean {
+  const list = openLayout()?.layers ?? [];
+  const picked = app.layoutSelection.filter((id) => list.some((l) => l.id === id));
+  return picked.length >= 2;
+}
+
+export async function groupLayoutLayers() {
+  const layout = openLayout();
+  if (!layout || !canGroupLayers()) return;
+  const picked = new Set(app.layoutSelection);
+  await mutate(() => {
+    const members = layout.layers.filter((l) => picked.has(l.id));
+    // Insert where the topmost member sat, so grouping does not restack.
+    const at = layout.layers.findIndex((l) => picked.has(l.id));
+    layout.layers = layout.layers.filter((l) => !picked.has(l.id));
+    const group = newGroupLayer(members);
+    group.name = `Gruppe ${layout.layers.filter((l) => l.kind === "group").length + 1}`;
+    layout.layers.splice(at, 0, group);
+    app.layoutSelection = [group.id];
+    app.layoutSelected = group.id;
+  });
+}
+
+/** Dissolves a group, leaving its members where they visibly are.
+ *
+ *  removeLayerFrom already does exactly this — it hands a group's children back
+ *  to the list at the group's index with the displacement folded in, precisely
+ *  so one misplaced click on a folder cannot take a stack of layers with it. */
+export async function ungroupLayoutLayers(groupId: string) {
+  const layout = openLayout();
+  if (!layout) return;
+  await mutate(() => {
+    removeLayerFrom(layout.layers, groupId);
+    app.layoutSelection = app.layoutSelection.filter((id) => id !== groupId);
+    if (app.layoutSelected === groupId) app.layoutSelected = "";
+  });
+}
+
 export const canStampLayout = () => app.selectedTiles.length > 0;
+
+/** Renders `layout` and points a stamp at the result. Shared by stamping from
+ *  the wall and assigning from a group's own row, which differ only in how the
+ *  target group is found. */
+async function stampAsset(layout: Layout): Promise<{ asset: string; seen: string }> {
+  const seen = layoutFingerprint(layout);
+  const bytes = await renderLayout(layout, app.deps!);
+  return { asset: await saveGeneratedAsset(app.dir, bytes), seen };
+}
+
+/** Puts a layout onto a named group — the sidebar's "Layout zuweisen". */
+export async function assignLayout(groupId: string, layoutId: string) {
+  const group = findGroup(groupId);
+  const layout = app.manifest.layouts.find((l) => l.id === layoutId);
+  if (!group || !layout || !app.deps) return;
+  await run("stamp", async () => {
+    const { asset, seen } = await stampAsset(layout);
+    await mutate(() => {
+      stampInto(group, layoutId, asset);
+      layout.stamped = seen;
+    });
+  });
+}
 
 /** Renders the layout once and drops the result onto the picked tiles as an
  *  ordinary image layer. Stamping the same tile set again with the same
@@ -501,14 +643,17 @@ export async function stampLayout(layoutId: string) {
   const layout = app.manifest.layouts.find((l) => l.id === layoutId);
   if (!layout || !app.deps || !canStampLayout()) return;
   await run("stamp", async () => {
-    const bytes = await renderLayout(layout, app.deps!);
-    const asset = await saveGeneratedAsset(app.dir, bytes);
-    const seen = layoutFingerprint(layout);
+    // Taken before the render, not after: it records the state that actually
+    // went into the picture, so an edit made while rendering still counts as
+    // unsaved rather than being silently marked as already stamped.
+    const { asset, seen } = await stampAsset(layout);
     await mutate(() => {
-      stampInto(overlayFor(app.selectedTiles), layoutId, asset);
-      // Taken before the render, not after: it records the state that actually
-      // went into the picture, so an edit made while rendering still counts as
-      // unsaved rather than being silently marked as already stamped.
+      const group = groupFor(app.selectedTiles);
+      if (!group) {
+        app.error = "Auswahl liegt in mehreren Gruppen — im Gruppen-Panel zuweisen";
+        return;
+      }
+      stampInto(group, layoutId, asset);
       layout.stamped = seen;
     });
   });
@@ -533,9 +678,7 @@ export async function saveLayout(layoutId: string) {
   const layout = app.manifest.layouts.find((l) => l.id === layoutId);
   if (!layout || !app.deps || !canSaveLayout(layoutId)) return;
   await run("save", async () => {
-    const bytes = await renderLayout(layout, app.deps!);
-    const asset = await saveGeneratedAsset(app.dir, bytes);
-    const seen = layoutFingerprint(layout);
+    const { asset, seen } = await stampAsset(layout);
     await mutate(() => {
       const n = refreshStamps(app.manifest, layoutId, asset);
       layout.stamped = seen;

@@ -9,8 +9,11 @@ import {
   effectiveTile,
   emptyManifest,
   emptyTile,
+  addToGroup,
   findLayer,
   findList,
+  freeTiles,
+  groupOf,
   instanceCount,
   isDetached,
   layerLabel,
@@ -29,7 +32,9 @@ import {
   overlayOf,
   overlaysUsingLayout,
   refreshStamps,
+  removeFromGroup,
   stampInto,
+  swapTiles,
   type ImageLayer,
   removeLayerFrom,
   setAssigned,
@@ -447,12 +452,113 @@ describe("layerText", () => {
   });
 });
 
+describe("layer groups keep members where they are", () => {
+  /** Where a layer actually renders: its own position plus every enclosing
+   *  group's displacement — the sum buildLayout applies. */
+  const at = (layers: Layer[], id: string) => {
+    const l = findLayer(layers, id)!;
+    const s = nestingShift(layers, id) ?? { dx: 0, dy: 0 };
+    return { x: l.x + s.dx, y: l.y + s.dy };
+  };
+
+  const two = (): Layer[] => [
+    { ...newImageLayer("a.png"), id: "a", x: 0.2, y: 0.3 },
+    { ...newImageLayer("b.png"), id: "b", x: 0.7, y: 0.8 },
+  ];
+
+  it("does not move anything when a fresh group is formed", () => {
+    const flat = two();
+    const before = [at(flat, "a"), at(flat, "b")];
+    const grouped: Layer[] = [newGroupLayer(flat)];
+    expect([at(grouped, "a"), at(grouped, "b")]).toEqual(before);
+  });
+
+  it("moves every member when the group moves, by exactly the group's shift", () => {
+    const grouped: Layer[] = [{ ...newGroupLayer(two()), x: 0.6, y: 0.4 }];
+    // group at 0.6/0.4 means a displacement of +0.1/-0.1 over neutral 0.5/0.5
+    expect(at(grouped, "a").x).toBeCloseTo(0.3);
+    expect(at(grouped, "a").y).toBeCloseTo(0.2);
+    expect(at(grouped, "b").x).toBeCloseTo(0.8);
+    expect(at(grouped, "b").y).toBeCloseTo(0.7);
+  });
+
+  it("leaves members exactly where they were when the group is dissolved", () => {
+    const grouped: Layer[] = [{ ...newGroupLayer(two()), x: 0.6, y: 0.4 }];
+    const before = [at(grouped, "a"), at(grouped, "b")];
+    removeLayerFrom(grouped, grouped[0].id);
+    expect(grouped.map((l) => l.id)).toEqual(["a", "b"]);
+    expect([at(grouped, "a"), at(grouped, "b")]).toEqual(before);
+  });
+});
+
+describe("tile groups", () => {
+  /** Two groups over five tiles, plus an "all" overlay standing in for the
+   *  wall picture — which must never count as owning anything. */
+  const grouped = (): Manifest => {
+    const m = emptyManifest();
+    m.order = ["a", "b", "c", "d", "e"];
+    m.overlays = [
+      newOverlay("Alle"),
+      newOverlay("Eins", ["a", "b"]),
+      newOverlay("Zwei", ["c"]),
+    ];
+    return m;
+  };
+
+  it("finds the group owning a tile, ignoring the all-overlay", () => {
+    const m = grouped();
+    expect(groupOf(m, "a")?.name).toBe("Eins");
+    expect(groupOf(m, "c")?.name).toBe("Zwei");
+    expect(groupOf(m, "d")).toBeUndefined();
+  });
+
+  it("reports only unclaimed tiles as free", () => {
+    expect(freeTiles(grouped(), ["a", "c", "d", "e"])).toEqual(["d", "e"]);
+  });
+
+  it("adds only free tiles and says how many landed", () => {
+    const m = grouped();
+    const group = m.overlays[2];
+    expect(addToGroup(m, group, ["a", "d", "e"])).toBe(2);
+    expect(group.tiles).toEqual(["c", "d", "e"]);
+    // "a" stayed where it was rather than being stolen.
+    expect(groupOf(m, "a")?.name).toBe("Eins");
+  });
+
+  it("never adds a tile twice", () => {
+    const m = grouped();
+    const group = m.overlays[1];
+    expect(addToGroup(m, group, ["a", "b"])).toBe(0);
+    expect(group.tiles).toEqual(["a", "b"]);
+  });
+
+  it("frees a removed tile for other groups", () => {
+    const m = grouped();
+    removeFromGroup(m.overlays[1], "a");
+    expect(groupOf(m, "a")).toBeUndefined();
+    expect(addToGroup(m, m.overlays[2], ["a"])).toBe(1);
+  });
+
+  it("swaps two tiles and leaves every other position alone", () => {
+    const m = grouped();
+    swapTiles(m, "a", "d");
+    expect(m.order).toEqual(["d", "b", "c", "a", "e"]);
+  });
+
+  it("ignores a swap with an unknown or identical tile", () => {
+    const m = grouped();
+    swapTiles(m, "a", "a");
+    swapTiles(m, "a", "zz");
+    expect(m.order).toEqual(["a", "b", "c", "d", "e"]);
+  });
+});
+
 describe("migrate", () => {
   const crop = { x: 0, y: 0, w: 10, h: 10 };
 
-  it("lifts a v1 manifest all the way to v4", () => {
+  it("lifts a v1 manifest all the way to v5", () => {
     const m = migrate({ version: 1, order: ["a"], tiles: { a: { asset: "x.png", crop } } });
-    expect(m.version).toBe(4);
+    expect(m.version).toBe(5);
     expect(m.order).toEqual(["a"]);
     expect(m.tiles.a.base).toEqual({ asset: "x.png", crop });
     expect(m.tiles.a.layers).toEqual([]);
@@ -464,7 +570,7 @@ describe("migrate", () => {
     const shared = [{ ...newTextLayer(), id: "s1" }];
     const m = migrate({ version: 2, order: ["a", "b"], hidden: ["b"], shared, tiles: {} });
 
-    expect(m.version).toBe(4);
+    expect(m.version).toBe(5);
     expect(m.overlays).toHaveLength(1);
     expect(m.overlays[0].tiles).toBe("all");
     expect(m.overlays[0].layers.map((l) => l.id)).toEqual(["s1"]);
@@ -495,22 +601,90 @@ describe("migrate", () => {
   it("adds an empty layouts list to a v3 manifest, changing nothing else", () => {
     const v3 = { version: 3, order: ["a"], hidden: [], tiles: {}, overlays: [newOverlay("x")] };
     const m = migrate(structuredClone(v3));
-    expect(m.version).toBe(4);
+    expect(m.version).toBe(5);
     expect(m.layouts).toEqual([]);
     expect(m.overlays).toEqual(v3.overlays);
     expect(m.order).toEqual(v3.order);
   });
 
-  it("leaves a v4 manifest alone", () => {
-    const v4 = emptyManifest();
-    v4.overlays = [newOverlay("Schon v4")];
-    v4.layouts = [newLayout("Ein Layout")];
-    expect(migrate(structuredClone(v4))).toEqual(v4);
+  it("makes tile ownership exclusive, first group wins", () => {
+    const v4 = {
+      version: 4,
+      order: ["a", "b", "c"],
+      hidden: [],
+      tiles: {},
+      layouts: [],
+      overlays: [
+        newOverlay("Alle"),
+        newOverlay("Eins", ["a", "b"]),
+        newOverlay("Zwei", ["b", "c"]),
+      ],
+    };
+    const m = migrate(structuredClone(v4));
+    expect(m.version).toBe(5);
+    expect(m.overlays[0].tiles).toBe("all"); // wall axis untouched
+    expect(m.overlays[1].tiles).toEqual(["a", "b"]);
+    expect(m.overlays[2].tiles).toEqual(["c"]);
+  });
+
+  it("drops a group left with neither tiles nor layers", () => {
+    const v4 = {
+      version: 4,
+      order: ["a"],
+      hidden: [],
+      tiles: {},
+      layouts: [],
+      overlays: [newOverlay("Erste", ["a"]), newOverlay("Leer", ["a"])],
+    };
+    const m = migrate(structuredClone(v4));
+    expect(m.overlays.map((o) => o.name)).toEqual(["Erste"]);
+  });
+
+  it("keeps a group that loses every tile rather than deleting its stamps", () => {
+    const stamp = { ...newImageLayer("x.png"), layoutId: "L1" };
+    const v4 = {
+      version: 4,
+      order: ["a"],
+      hidden: [],
+      tiles: {},
+      layouts: [],
+      overlays: [
+        newOverlay("Erste", ["a"]),
+        { ...newOverlay("Zweite", ["a"]), layers: [stamp] },
+      ],
+    };
+    const m = migrate(structuredClone(v4));
+    expect(m.overlays).toHaveLength(2);
+    expect(m.overlays[1].tiles).toEqual([]);
+    expect(m.overlays[1].layers).toHaveLength(1);
+  });
+
+  it("does not mutate the manifest handed in", () => {
+    const v4 = {
+      version: 4,
+      order: ["a"],
+      hidden: [],
+      tiles: {},
+      layouts: [],
+      overlays: [newOverlay("Eins", ["a"]), newOverlay("Zwei", ["a"])],
+    };
+    const before = structuredClone(v4);
+    migrate(v4);
+    expect(v4).toEqual(before);
+  });
+
+  it("leaves a v5 manifest alone, and migrating twice changes nothing", () => {
+    const v5 = emptyManifest();
+    v5.order = ["a", "b"];
+    v5.overlays = [newOverlay("Schon v5", ["a"])];
+    v5.layouts = [newLayout("Ein Layout")];
+    expect(migrate(structuredClone(v5))).toEqual(v5);
+    expect(migrate(migrate(structuredClone(v5)))).toEqual(v5);
   });
 
   it("survives a null tile and unreadable input", () => {
     expect(migrate({ version: 1, order: ["a"], tiles: { a: null } }).tiles.a.base).toBeNull();
-    expect(migrate(null).version).toBe(4);
+    expect(migrate(null).version).toBe(5);
   });
 });
 
