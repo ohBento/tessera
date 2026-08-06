@@ -21,6 +21,7 @@
     bakeMosaic,
     canBakeMosaic,
     canGroupLayers,
+    captionsNeedOneTile,
     canSaveLayout,
     claimedCount,
     clearTileText,
@@ -715,6 +716,12 @@
           </div>
         {/each}
 
+        {#if captionsNeedOneTile()}
+          <!-- The panel needs one tile, and saying so is the whole point: it
+               used to vanish without a word, and after stamping the whole
+               group is still selected — exactly when someone comes looking. -->
+          <p class="empty spaced">Pick a single tile to edit its wording.</p>
+        {/if}
         {#if tileCaptions().length}
           {@const tile = app.selectedTiles[0]}
           <h2 class="spaced">Text on {tile}</h2>
@@ -917,6 +924,9 @@
   .empty {
     margin: 0;
     color: #6c777e;
+  }
+  .empty.spaced {
+    margin-top: 18px;
   }
   ul {
     margin: 0;

@@ -199,6 +199,18 @@ export function tileCaptions(): TextLayer[] {
   return (group?.layers ?? []).filter((l): l is TextLayer => l.kind === "text");
 }
 
+/** Whether the wording panel is hiding only because several tiles are picked.
+ *
+ *  The panel needs exactly one tile — a field showing several tiles' differing
+ *  words would have to invent an answer — but vanishing without a word made
+ *  the whole feature unfindable: after stamping, the whole group is still
+ *  selected, which is precisely when someone goes looking for it. */
+export const captionsNeedOneTile = () =>
+  app.selectedTiles.length > 1 &&
+  app.selectedTiles.some((id) =>
+    (groupOf(app.manifest, id)?.layers ?? []).some((l) => l.kind === "text"),
+  );
+
 /** This tile's wording for a caption, or undefined when it has none of its own
  *  and shows the layer's default. */
 export const tileText = (tileId: string, layerId: string): string | undefined =>
