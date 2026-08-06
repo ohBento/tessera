@@ -90,6 +90,9 @@ export const app = $state({
 });
 
 export function toggleTile(id: string, additive: boolean) {
+  // Picking something is the user moving on; a note about the last action has
+  // had its moment and is now in the way of the selection count.
+  app.error = "";
   const current = app.selectedTiles;
   if (additive) {
     app.selectedTiles = current.includes(id) ? current.filter((t) => t !== id) : [...current, id];
@@ -254,6 +257,12 @@ const plain = <T>(v: T): T => JSON.parse(JSON.stringify(v));
  *  `structural` is false for a drag: the canvas already shows the result, so
  *  bumping the version would tear the scene down to redraw what is correct. */
 async function mutate(fn: () => void, structural = true) {
+  /* Cleared here rather than left to time out: the status line has one slot,
+   * and a note from three actions ago ("12 Kacheln geschrieben") sat there
+   * hiding the live selection count and its "aufheben" link until something
+   * else happened to overwrite it. Anything a mutation wants to say sets it
+   * inside fn, after this. */
+  app.error = "";
   checkpoint(history, plain(app.manifest));
   fn();
   if (structural) app.version++;
@@ -393,19 +402,37 @@ const baseName = (path: string) =>
     .pop()
     ?.replace(/\.[^.]+$/, "") ?? "";
 
-/** The group a stamp from the wall lands in: the one owning the picked tiles,
- *  or a new one built from those that are still free.
+/** Why stamping the current selection cannot go ahead, or "" when it can.
  *
- *  Not "an overlay covering exactly these tiles" any more — that rule made a
- *  selection differing by one tile silently produce a second, near-identical
- *  overlay, and left the user with a list of groups nobody created. */
-function groupFor(ids: string[]): Overlay | undefined {
-  const owned = ids.map((id) => groupOf(app.manifest, id)).filter((g) => !!g);
-  const first = owned[0];
-  // A selection spanning two groups has no single right answer, so it gets
-  // none: the sidebar's own "Layout zuweisen" targets one group by name.
-  if (first && owned.every((g) => g.id === first.id)) return first;
-  if (first) return undefined;
+ *  A stamp lands on a whole group, never on a hand-picked set of tiles — that
+ *  is what a group is for. So a selection only works when it *is* a group:
+ *  every tile in one and the same group, or every tile still free (which makes
+ *  a new one). Anything in between has no answer that is not a guess.
+ *
+ *  This used to guess, and the guess was silent and wrong: picking one owned
+ *  tile and one free tile stamped the owned tile's *whole* group and dropped
+ *  the free one, so tiles nobody chose got a stamp and a chosen one did not. */
+function stampBlocker(ids: string[]): string {
+  if (!ids.length) return "Keine Kacheln gewählt";
+  const owners = new Set(ids.map((id) => groupOf(app.manifest, id)?.id ?? ""));
+  if (owners.size > 1) {
+    return owners.has("")
+      ? "Auswahl mischt freie und vergebene Kacheln — erst zu einer Gruppe machen"
+      : "Auswahl liegt in mehreren Gruppen — im Gruppen-Panel zuweisen";
+  }
+  const group = groupOf(app.manifest, ids[0]);
+  // One group, but only part of it: stamping would reach tiles left unpicked.
+  if (group && group.tiles !== "all" && group.tiles.length !== ids.length) {
+    return `„${group.name}" hat ${group.tiles.length} Kacheln — ganze Gruppe wählen oder im Panel zuweisen`;
+  }
+  return "";
+}
+
+/** The group a stamp from the wall lands in — only ever called once
+ *  stampBlocker has confirmed the selection is exactly one group, or free. */
+function groupFor(ids: string[]): Overlay {
+  const existing = groupOf(app.manifest, ids[0]);
+  if (existing) return existing;
   app.manifest.overlays.push(newOverlay(`Gruppe ${groups().length + 1}`, [...ids]));
   // Read it back out rather than using the value pushed: Svelte hands back a
   // proxy, and mutating the raw object would not be reactive.
@@ -427,6 +454,10 @@ export async function addGridImage() {
       layer.space = "grid";
       layer.scale = 1;
       allTiles().layers.push(layer);
+      // Selected straight away, like every other insert: "Anwenden" acts on
+      // the chosen layer, and leaving it unchosen meant the button stayed grey
+      // until you went hunting for the thing you had just added.
+      app.selected = layer.id;
     });
   });
 }
@@ -628,6 +659,12 @@ export async function addLayoutText() {
     // Dead centre, not the 0.9 a tile caption defaults to: a Layout is a blank
     // sheet, and something dropped at the bottom edge reads as misplaced.
     l.y = 0.5;
+    /* Centred, or it is not actually in the middle: a caption's box is a whole
+     * tile wide, and left-aligned text starts at that box's left edge however
+     * the box itself is placed. The default of "left" is right for a caption
+     * pinned along the bottom of a tile, and wrong for one dropped in the
+     * middle of a sheet. */
+    l.align = "center";
     layout.layers.push(l);
     selectLayoutLayer(l.id);
   });
@@ -742,14 +779,22 @@ export async function groupLayoutLayers() {
   const picked = new Set(app.layoutSelection);
   await mutate(() => {
     const members = layout.layers.filter((l) => picked.has(l.id));
-    // Insert where the topmost member sat, so grouping does not restack.
-    const at = layout.layers.findIndex((l) => picked.has(l.id));
-    layout.layers = layout.layers.filter((l) => !picked.has(l.id));
+    /* The group goes where the *topmost* member was, so nothing that was
+     * above a member ends up below the group. findIndex gives the bottom-most
+     * one, which restacked the pick: grouping A and C out of A,B,C,D put the
+     * group under B, and C stopped drawing over it.
+     *
+     * Counted in the list with the members removed, since that is the list the
+     * group is spliced into. */
+    const kept = layout.layers.filter((l) => !picked.has(l.id));
+    let topMost = -1;
+    for (const [i, l] of layout.layers.entries()) if (picked.has(l.id)) topMost = i;
+    const above = layout.layers.slice(topMost + 1).filter((l) => !picked.has(l.id)).length;
     const group = newGroupLayer(members);
-    group.name = `Gruppe ${layout.layers.filter((l) => l.kind === "group").length + 1}`;
-    layout.layers.splice(at, 0, group);
-    app.layoutSelection = [group.id];
-    app.layoutSelected = group.id;
+    group.name = `Gruppe ${kept.filter((l) => l.kind === "group").length + 1}`;
+    kept.splice(kept.length - above, 0, group);
+    layout.layers = kept;
+    setLayoutSelection([group.id]);
   });
 }
 
@@ -768,17 +813,31 @@ export async function moveLayersIntoGroup(groupId: string, layerIds: string[]) {
   const layout = openLayout();
   const group = layout && findLayer(layout.layers, groupId);
   if (!layout || group?.kind !== "group") return;
-  const moving = new Set(layerIds.filter((id) => id !== groupId));
-  if (!moving.size) return;
+
+  /* Every layer that is not already in this group, wherever it currently
+   * sits. Looking only at the top level made this a silent no-op on a layer
+   * nested in some other group — it still cleared the selection and pushed an
+   * undo step, so it looked like something had happened. */
+  const own = new Set(group.children.map((c) => c.id));
+  const moving = layerIds.filter((id) => id !== groupId && !own.has(id));
+  if (!moving.length) return;
+
   await mutate(() => {
-    const { dx, dy } = groupShift(group);
-    const taken = layout.layers.filter((l) => moving.has(l.id));
-    layout.layers = layout.layers.filter((l) => !moving.has(l.id));
-    for (const l of taken) {
-      shiftLayer(l, -dx, -dy);
-      group.children.push(l);
+    const target = groupShift(group);
+    const taken: Layer[] = [];
+    for (const id of moving) {
+      const from = findList(layout.layers, id);
+      const layer = from && findLayer(from, id);
+      if (!from || !layer) continue;
+      // Where it renders now, minus where the target group will put it: the
+      // layer has to stay exactly where it visibly is.
+      const was = nestingShift(layout.layers, id) ?? { dx: 0, dy: 0 };
+      from.splice(from.indexOf(layer), 1);
+      shiftLayer(layer, was.dx - target.dx, was.dy - target.dy);
+      group.children.push(layer);
+      taken.push(layer);
     }
-    setLayoutSelection(taken.map((l) => l.id));
+    if (taken.length) setLayoutSelection(taken.map((l) => l.id));
   });
 }
 
@@ -796,8 +855,6 @@ export async function ungroupLayoutLayers(groupId: string) {
     if (app.layoutSelected === groupId) app.layoutSelected = "";
   });
 }
-
-export const canStampLayout = () => app.selectedTiles.length > 0;
 
 /** Renders `layout` and points a stamp at the result. Shared by stamping from
  *  the wall and assigning from a group's own row, which differ only in how the
@@ -830,9 +887,24 @@ export async function assignLayout(groupId: string, layoutId: string) {
  *  layout updates that stamp's picture in place rather than stacking a
  *  duplicate — overlayFor already reuses the matching overlay, and finding the
  *  matching layoutId inside it is the rest. */
+export const canStampLayout = () => !stampBlocker(app.selectedTiles);
+
+/** Why the stamp button is off, for the status line — a greyed button with no
+ *  reason reads as broken. */
+export const stampHint = () => stampBlocker(app.selectedTiles);
+
 export async function stampLayout(layoutId: string) {
   const layout = app.manifest.layouts.find((l) => l.id === layoutId);
-  if (!layout || !app.deps || !canStampLayout()) return;
+  if (!layout || !app.deps) return;
+  /* Checked up front, not inside the edit: rendering writes a PNG into
+   * assets/ and mutate() takes an undo checkpoint, so bailing out halfway left
+   * an unreferenced file behind and an undo step for something that never
+   * happened. */
+  const blocked = stampBlocker(app.selectedTiles);
+  if (blocked) {
+    app.error = blocked;
+    return;
+  }
   await run("stamp", async () => {
     // Taken before the render, not after: it records the state that actually
     // went into the picture, so an edit made while rendering still counts as
@@ -840,11 +912,9 @@ export async function stampLayout(layoutId: string) {
     const { asset, seen } = await stampAsset(layout);
     await mutate(() => {
       const group = groupFor(app.selectedTiles);
-      if (!group) {
-        app.error = "Auswahl liegt in mehreren Gruppen — im Gruppen-Panel zuweisen";
-        return;
-      }
       stampInto(group, layoutId, asset);
+      // After the stamp, so a live caption sits on top of the picture it was
+      // composed over rather than behind it.
       syncLiveLayers(group, layout);
       layout.stamped = seen;
     });

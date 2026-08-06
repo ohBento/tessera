@@ -10,6 +10,17 @@ import type { Crop, TextLayer } from "./model";
 
 export const COLS = 7;
 
+/** Whether a keystroke belongs to a field the user is typing in.
+ *
+ *  Every shortcut has to ask this, and asking it as `instanceof
+ *  HTMLInputElement` misses `<textarea>` — which is what the caption field is.
+ *  The result was that a space never reached the text, Escape closed the whole
+ *  document mid-word, and Ctrl+Z undid a model edit instead of a character.
+ *  One predicate, so the next field type is fixed everywhere at once. */
+export const isTyping = (el: EventTarget | Element | null): boolean =>
+  el instanceof HTMLElement &&
+  (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el.isContentEditable);
+
 export const rowsFor = (count: number) => Math.ceil(count / COLS);
 
 export const gridSize = (count: number) => ({

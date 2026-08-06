@@ -18,7 +18,7 @@
     visibleIds,
   } from "./lib/editor.svelte";
   import { TILE_H, TILE_W } from "./lib/bmp";
-  import { cellsIn, COLS } from "./lib/geometry";
+  import { cellsIn, COLS, isTyping } from "./lib/geometry";
   import { buildGrid, cellAt, gridSize, readBack, type Tagged } from "./lib/scene";
 
   let host: HTMLDivElement;
@@ -35,6 +35,21 @@
   function tilesIn(r: { x: number; y: number; w: number; h: number }): string[] {
     const ids = visibleIds();
     return cellsIn(r, ids.length).map((i) => ids[i]);
+  }
+
+  /** The tile under a pointer event, or "" past the last one.
+   *
+   *  Exported because the context menu lives in App but only this component
+   *  knows the viewport transform that turns a screen point into a cell. */
+  export function tileAtEvent(e: MouseEvent): string {
+    if (!canvas) return "";
+    const p = canvas.getScenePoint(e);
+    const col = Math.floor(p.x / TILE_W);
+    const row = Math.floor(p.y / TILE_H);
+    const ids = visibleIds();
+    const index = row * COLS + col;
+    const inside = col >= 0 && col < COLS && row >= 0 && index >= 0 && index < ids.length;
+    return inside ? ids[index] : "";
   }
 
   const MIN_ZOOM = 0.02;
@@ -184,16 +199,7 @@
     let last = { x: 0, y: 0 };
     let spaceHeld = false;
 
-    /** The tile under a pointer event, or "" past the last one. */
-    function tileAt(e: MouseEvent): string {
-      const p = canvas!.getScenePoint(e);
-      const col = Math.floor(p.x / TILE_W);
-      const row = Math.floor(p.y / TILE_H);
-      const ids = visibleIds();
-      const index = row * COLS + col;
-      const inside = col >= 0 && col < COLS && row >= 0 && index >= 0 && index < ids.length;
-      return inside ? ids[index] : "";
-    }
+    const tileAt = (e: MouseEvent) => tileAtEvent(e);
 
     /* Two gestures share one drag, told apart by Alt.
      *
@@ -383,7 +389,7 @@
     const key = (e: KeyboardEvent, down: boolean) => {
       if (e.code !== "Space") return;
       // Not while typing into a field, or the space bar stops producing spaces.
-      if (document.activeElement instanceof HTMLInputElement) return;
+      if (isTyping(document.activeElement)) return;
       spaceHeld = down;
       host.style.cursor = down ? "grab" : "";
       if (down) e.preventDefault();

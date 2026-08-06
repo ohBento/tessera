@@ -73,11 +73,29 @@ export async function saveApplied(dir: string, tiles: Applied) {
   await writeTextFile(await appliedPath(dir), JSON.stringify(tiles));
 }
 
-export async function saveManifest(dir: string, m: Manifest) {
-  const path = await manifestPath(dir);
-  await mkdir(await projectDir(dir), { recursive: true });
-  await writeTextFile(`${path}.tmp`, JSON.stringify(m, null, 2));
-  await rename(`${path}.tmp`, path);
+/** Serialises manifest writes.
+ *
+ *  The write is two steps — a temp file, then a rename over the real one — so
+ *  two of them in flight at once interleave: the second write replaces the
+ *  temp file the first is about to rename, and one rename then finds nothing
+ *  there. That is reachable from ordinary use: dragging a multi-selection
+ *  fires one save per member in the same tick. Here it surfaced as a failed
+ *  save; against a real disk, through Tauri's IPC, it is a lost write.
+ *
+ *  A queue rather than a lock, because a dropped save is worse than a late
+ *  one: every caller still gets its turn, in order. */
+let writing: Promise<void> = Promise.resolve();
+
+export function saveManifest(dir: string, m: Manifest): Promise<void> {
+  writing = writing
+    .catch(() => {})
+    .then(async () => {
+      const path = await manifestPath(dir);
+      await mkdir(await projectDir(dir), { recursive: true });
+      await writeTextFile(`${path}.tmp`, JSON.stringify(m, null, 2));
+      await rename(`${path}.tmp`, path);
+    });
+  return writing;
 }
 
 async function hashBytes(bytes: Uint8Array): Promise<string> {

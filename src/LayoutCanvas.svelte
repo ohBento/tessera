@@ -10,7 +10,7 @@
 
   import { app, applyLayoutTransform, openLayout, setLayoutSelection } from "./lib/editor.svelte";
   import { TILE_H, TILE_W } from "./lib/bmp";
-  import { snapBox, type Guide } from "./lib/geometry";
+  import { isTyping, snapBox, type Guide } from "./lib/geometry";
   import { findLayer, walkLayers } from "./lib/model";
   import { buildLayout, readBackLayout } from "./lib/scene";
 
@@ -295,6 +295,21 @@
         .getActiveObjects()
         .map((o) => (o as { layerId?: string }).layerId)
         .filter((id): id is string => !!id);
+      /* Anything already covered by the model's selection is this component
+       * reporting back what it was told, not the user choosing something —
+       * objectsFor turns a group id into its children's objects, since a group
+       * owns no object of its own. Taking that at face value swapped the group
+       * for its children the instant it was picked, so the highlighted row was
+       * never the one clicked and renaming or dissolving hit a child.
+       *
+       * Membership, not a count: Fabric does not always report the whole set
+       * back in one event, and one child arriving alone is the same story.
+       * It also means a click on any member of a selected group keeps the
+       * group selected, which is what makes dragging one part move the whole. */
+      const covered = new Set(
+        objectsFor(app.layoutSelection).map((o) => (o as { layerId?: string }).layerId),
+      );
+      if (ids.length && ids.every((id) => covered.has(id))) return;
       setLayoutSelection(ids);
     };
     canvas.on("selection:created", picked);
@@ -319,7 +334,7 @@
 
     const key = (e: KeyboardEvent, down: boolean) => {
       if (e.code !== "Space") return;
-      if (document.activeElement instanceof HTMLInputElement) return;
+      if (isTyping(document.activeElement)) return;
       spaceHeld = down;
       host.style.cursor = down ? "grab" : "";
       if (down) e.preventDefault();

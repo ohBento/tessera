@@ -17,6 +17,7 @@ import App from "./App.svelte";
 import {
   app,
   canGroupLayers,
+  canStampLayout,
   freeCount,
   groupLayoutLayers,
   groups,
@@ -24,6 +25,7 @@ import {
   moveLayersIntoGroup,
   newGroup,
   setLayoutSelection,
+  stampLayout,
   toggleLayoutPick,
 } from "./lib/editor.svelte";
 import { addLayoutImage, assignLayout, newLayoutDoc, openLayout } from "./lib/editor.svelte";
@@ -90,6 +92,40 @@ describe("the wall", () => {
     expect(app.dir).toContain("FaceTexture");
     expect(app.manifest.order.length).toBeGreaterThan(0);
     expect(document.querySelector("canvas.lower-canvas")).toBeTruthy();
+  });
+
+  it("refuses to stamp a selection that is not exactly one group", async () => {
+    const [a, b, c, d] = app.manifest.order;
+    app.selectedTiles = [a, b];
+    await newGroup();
+
+    queuePick(await magentaSquare("s"));
+    await newLayoutDoc("L");
+    await addLayoutImage();
+    const layoutId = openLayout()!.id;
+
+    /* One owned tile plus one free one used to stamp the owned tile's whole
+     * group and drop the free one — tiles nobody picked got a stamp, a picked
+     * one got nothing, and nothing said so. */
+    app.selectedTiles = [a, d];
+    expect(canStampLayout()).toBe(false);
+    await stampLayout(layoutId);
+    expect(groups()[0].layers).toHaveLength(0);
+    expect(app.error).toContain("freie und vergebene");
+
+    // Part of a group is refused too: the rest of the group would be stamped.
+    app.selectedTiles = [a];
+    expect(canStampLayout()).toBe(false);
+
+    // The whole group is fine.
+    app.selectedTiles = [a, b];
+    expect(canStampLayout()).toBe(true);
+    await stampLayout(layoutId);
+    expect(groups()[0].layers).toHaveLength(1);
+
+    // So is a set of entirely free tiles, which makes its own group.
+    app.selectedTiles = [c, d];
+    expect(canStampLayout()).toBe(true);
   });
 
   it("makes a group from the picked tiles and counts only the free ones", async () => {
@@ -178,6 +214,73 @@ describe("the Layout editor", () => {
     expect(inside.y + shift.dy).toBeCloseTo(0.8, 5);
     // And it really is inside now, not merely renamed.
     expect(openLayout()!.layers.some((l) => l.id === loose.id)).toBe(false);
+  });
+
+  it("puts a new group where its topmost member was, so nothing restacks", async () => {
+    await newLayoutDoc("Stapel");
+    for (const name of ["a", "b", "c", "d"]) {
+      queuePick(await magentaSquare(name));
+      await addLayoutImage();
+    }
+    const [a, b, c, d] = openLayout()!.layers.map((l) => l.id);
+
+    // Group the bottom one and the third: c drew above b, and must keep to.
+    setLayoutSelection([a, c]);
+    await groupLayoutLayers();
+
+    const order = openLayout()!.layers.map((l) => (l.kind === "group" ? "G" : l.id));
+    expect(order).toEqual([b, "G", d]);
+    const made = openLayout()!.layers[1];
+    expect(made.kind === "group" ? made.children.map((x) => x.id) : null).toEqual([a, c]);
+  });
+
+  it("keeps the new group selected instead of its children", async () => {
+    const [a, b] = await twoLayers();
+    setLayoutSelection([a, b]);
+    await groupLayoutLayers();
+    // The canvas answers a group pick with its members; that must not come
+    // back as the selection, or the row you just made is never the one picked.
+    await new Promise((r) => setTimeout(r, 250));
+    const group = openLayout()!.layers.find((l) => l.kind === "group")!;
+    expect(app.layoutSelection).toEqual([group.id]);
+    expect([a, b]).not.toContain(app.layoutSelection[0]);
+  });
+
+  it("moves a layer out of one group into another without moving it", async () => {
+    // Four layers: two make each group, one travels between them.
+    await newLayoutDoc("Umzug");
+    for (const name of ["a", "b", "c", "d"]) {
+      queuePick(await magentaSquare(name));
+      await addLayoutImage();
+    }
+    const [a, b, c, d] = openLayout()!.layers.map((l) => l.id);
+
+    setLayoutSelection([a, b]);
+    await groupLayoutLayers();
+    const first = openLayout()!.layers.find((l) => l.kind === "group")!;
+    first.x = 0.7;
+
+    setLayoutSelection([c, d]);
+    await groupLayoutLayers();
+    const second = openLayout()!.layers.filter((l) => l.kind === "group").at(-1)!;
+    second.y = 0.3;
+
+    /* A layer nested in one group, moved into another: this used to look only
+     * at the top level, so nothing moved, the selection was cleared anyway and
+     * an undo step was pushed for it. */
+    const travelling = findLayer(openLayout()!.layers, a)!;
+    const before = {
+      x: travelling.x + groupShift(first).dx,
+      y: travelling.y + groupShift(first).dy,
+    };
+
+    await moveLayersIntoGroup(second.id, [a]);
+
+    const moved = findLayer(openLayout()!.layers, a)!;
+    expect(moved.x + groupShift(second).dx).toBeCloseTo(before.x, 5);
+    expect(moved.y + groupShift(second).dy).toBeCloseTo(before.y, 5);
+    expect(first.kind === "group" && first.children.map((x) => x.id)).toEqual([b]);
+    expect(second.kind === "group" && second.children.map((x) => x.id)).toEqual([c, d, a]);
   });
 
   it("offers grouping only from two layers up", async () => {

@@ -57,6 +57,7 @@
     selectLayer,
     selectLayoutLayer,
     setTileText,
+    stampHint,
     stampLayout,
     tileCaptions,
     tileText,
@@ -67,6 +68,7 @@
     undoEdit,
     undoable,
   } from "./lib/editor.svelte";
+  import { isTyping } from "./lib/geometry";
   import { findLayer, layerLabel, layoutNeedsRestamp, type Layer } from "./lib/model";
 
   const editing = $derived(openLayout());
@@ -76,7 +78,7 @@
   onMount(() => void openFolder());
 
   function shortcut(e: KeyboardEvent) {
-    if (e.target instanceof HTMLInputElement) return;
+    if (isTyping(e.target)) return;
     const key = e.key.toLowerCase();
 
     if (key === "escape" && editing && !e.ctrlKey) {
@@ -103,6 +105,10 @@
   /** The row being renamed, "" for none. One at a time by construction. */
   let renaming = $state("");
 
+  /** The wall canvas, for the one thing App needs from it: which tile is under
+   *  a right-click. */
+  let grid: GridCanvas | undefined = $state();
+
   /* Enter and Escape both blur; Escape puts the old text back first, and the
      rename actions already ignore an unchanged name — so cancelling needs no
      flag of its own. */
@@ -112,6 +118,22 @@
     else if (e.key !== "Enter") return;
     input.blur();
     e.stopPropagation();
+  }
+
+  /** Deleting a Layout leaves its stamps behind as pictures nothing owns —
+   *  they keep rendering, but the row falls back to the asset hash and there
+   *  is no way back except undo. Worth the same warning a group gets. */
+  async function removeLayout(id: string, name: string) {
+    const used = layoutUsage(id);
+    if (
+      used &&
+      !(await ask(
+        `„${name}" ist ${used}× gestempelt. Die Stempel bleiben als namenlose Bilder liegen.`,
+        { title: "Layout löschen?", kind: "warning" },
+      ))
+    )
+      return;
+    await deleteLayoutDoc(id);
   }
 
   async function removeGroup(id: string, name: string, stamps: number) {
@@ -159,7 +181,15 @@
   let menu: { x: number; y: number; items: Item[] } | null = $state(null);
 
   function wallMenu(e: MouseEvent) {
-    if (editing || !app.selectedTiles.length) return;
+    if (editing) return;
+    /* Right-clicking bare wall with nothing picked used to do nothing at all,
+       while the layer list picks the row under the cursor first. GridCanvas
+       answers which tile is there, since only it knows the viewport. */
+    if (!app.selectedTiles.length) {
+      const under = grid?.tileAtEvent(e);
+      if (!under) return;
+      app.selectedTiles = [under];
+    }
     e.preventDefault();
     const claimed = claimedCount();
     menu = {
@@ -355,9 +385,7 @@
       {:else if editing && canSaveLayout(editing.id)}
         Gesichert &middot; Änderungen noch nicht auf den Kacheln
       {:else if editing}
-        Gesichert{#if !app.selectedTiles.length}
-          &middot; Kacheln auf der Wand wählen, um zu stempeln
-        {/if}
+        Gesichert{#if stampHint()}&nbsp;&middot; {stampHint()}{/if}
       {:else if app.selectedTiles.length}
         {app.selectedTiles.length} gewählt{#if freeCount() < app.selectedTiles.length}, {freeCount()}
           davon frei{/if}
@@ -377,7 +405,7 @@
       {#if editing}
         <LayoutCanvas />
       {:else}
-        <GridCanvas />
+        <GridCanvas bind:this={grid} />
       {/if}
     </div>
 
@@ -599,7 +627,8 @@
                   </span>
                 </button>
               {/if}
-              <button title="Löschen" onclick={() => deleteLayoutDoc(layout.id)}>×</button>
+              <button title="Löschen" onclick={() => removeLayout(layout.id, layout.name)}>×</button
+              >
             </li>
           {/each}
         </ul>
