@@ -12,43 +12,46 @@
 export type History<T> = {
   past: T[];
   future: T[];
-  /** What the last checkpoint was for, and when — see `checkpoint`. */
+  /** What the run in progress is for — see `checkpoint`. */
   runKey?: string;
-  runAt?: number;
 };
 
-/* runKey and runAt are spelled out rather than left to appear on first write:
- * the editor wraps this in a Svelte $state proxy, and a field that is not
- * there when the proxy is built does not reliably survive one. */
+/* runKey is spelled out rather than left to appear on first write: the editor
+ * wraps this in a Svelte $state proxy, and a field that is not there when the
+ * proxy is built does not reliably survive one. */
 export const emptyHistory = <T>(): History<T> => ({
   past: [],
   future: [],
   runKey: undefined,
-  runAt: 0,
 });
 
 /** How far back undo reaches. Beyond this the oldest step is dropped. */
 export const LIMIT = 200;
-
-/** How long a run of same-kind edits keeps collapsing into one step. Long
- *  enough to cover typing at speed and a slider being dragged, short enough
- *  that going back to a field after a pause starts a fresh step. */
-export const RUN_MS = 700;
 
 /** Records the state about to be replaced. Call before mutating, with a
  *  snapshot that will not be mutated afterwards — storing a live reference
  *  would let later edits rewrite history in place.
  *
  *  `key` collapses a run of edits of the same kind into one step: while the
- *  same key keeps arriving without a pause, the checkpoint taken at the start
- *  of the run is the one that stays, because that is the state a user means
- *  to go back to. Without it, typing a caption cost one undo step per
- *  character — thirty presses to take back one word, and thirty of the two
- *  hundred steps gone. Edits with no key never collapse. */
-export function checkpoint<T>(h: History<T>, present: T, key?: string, now = Date.now()) {
-  const sameRun = key !== undefined && h.runKey === key && now - (h.runAt ?? 0) < RUN_MS;
+ *  same key keeps arriving, the checkpoint taken at the start of the run is
+ *  the one that stays, because that is the state a user means to go back to.
+ *  Without it, typing a caption cost one undo step per character — thirty
+ *  presses to take back one word, and thirty of the two hundred steps gone.
+ *  Edits with no key never collapse.
+ *
+ *  A run ends when a different key arrives, at an undo or redo, or when
+ *  `endRun` is called — never on a clock. It used to expire after 700ms, and
+ *  the reason that had to go is that a wall clock does not know what a gesture
+ *  is: two complete drags in quick succession were merged into one step, so a
+ *  single undo jumped back past both, while the same two drags done slowly
+ *  cost two. Editors that get this right have the code that knows where the
+ *  gesture ends say so, which is what `endRun` is for. It also made the
+ *  behaviour untestable without faking time, and one measurement of mine was
+ *  wrong by a factor of twenty-five because a background tab throttles
+ *  timers. */
+export function checkpoint<T>(h: History<T>, present: T, key?: string) {
+  const sameRun = key !== undefined && h.runKey === key;
   h.runKey = key;
-  h.runAt = now;
   if (sameRun) return;
 
   h.past.push(present);
@@ -57,12 +60,14 @@ export function checkpoint<T>(h: History<T>, present: T, key?: string, now = Dat
   h.future.length = 0;
 }
 
-/* Travelling ends whatever run was in progress. Without this, typing after an
- * undo would collapse into the step just taken back, and the next undo would
- * jump two edits at once. */
+/** Closes the run in progress, so the next edit starts a new step whatever key
+ *  it carries. What a pointer release, a committed field or a finished gesture
+ *  calls.
+ *
+ *  Travelling calls it too. Without that, typing after an undo would collapse
+ *  into the step just taken back, and the next undo would jump two edits. */
 export const endRun = (h: History<unknown>) => {
   h.runKey = undefined;
-  h.runAt = undefined;
 };
 
 /** The state to go back to, or undefined at the start of history. */

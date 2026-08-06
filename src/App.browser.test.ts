@@ -38,7 +38,6 @@ import {
   toggleLayoutPick,
 } from "./lib/editor.svelte";
 import { addLayoutImage, assignLayout, newLayoutDoc, openLayout } from "./lib/editor.svelte";
-import { RUN_MS } from "./lib/history";
 import { emptyManifest, findLayer, groupShift } from "./lib/model";
 import { queuePick, resetMockFiles, stashPickedFile } from "./lib/platform";
 
@@ -345,16 +344,23 @@ describe("the Layout editor", () => {
     expect(back?.kind === "text" && back.text).toBe("Text");
   });
 
-  it("starts a new step once the run has gone quiet", async () => {
+  it("starts a new step once the field has been left", async () => {
     await newLayoutDoc("Pause");
     await addLayoutText();
     const id = openLayout()!.layers[0].id;
 
+    /* This used to wait out a 700ms clock. What ends a run now is the control
+     * saying so — `change` fires when a field is left or a slider released,
+     * and App.svelte listens for it on the window. Dispatched here rather than
+     * called directly, because the listener being wired up is half of what
+     * makes the boundary real. */
     const before = history.past.length;
     await setLayerField(id, "text", "A");
-    const end = performance.now() + RUN_MS + 50;
-    while (performance.now() < end);
     await setLayerField(id, "text", "AB");
+    expect(history.past.length - before).toBe(1);
+
+    window.dispatchEvent(new Event("change", { bubbles: true }));
+    await setLayerField(id, "text", "ABC");
     expect(history.past.length - before).toBe(2);
   });
 

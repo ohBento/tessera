@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   LIMIT,
-  RUN_MS,
   canRedo,
   canUndo,
   checkpoint,
   emptyHistory,
+  endRun,
   redo,
   undo,
   type History,
@@ -80,7 +80,7 @@ describe("runs of same-kind edits collapse into one step", () => {
   /** Typing five characters: five edits, all of the same field. */
   const typeFive = (h: History<string>) => {
     for (const [i, s] of ["T", "Te", "Tes", "Test", "Test!"].entries()) {
-      checkpoint(h, i === 0 ? "" : s.slice(0, -1), "field:a:text", 1000 + i * 50);
+      checkpoint(h, i === 0 ? "" : s.slice(0, -1), "field:a:text");
     }
   };
 
@@ -92,25 +92,43 @@ describe("runs of same-kind edits collapse into one step", () => {
     expect(undo(h, "Test!")).toBe("");
   });
 
-  it("starts a new step after a pause", () => {
+  it("starts a new step once the run is closed", () => {
     const h = emptyHistory<string>();
-    checkpoint(h, "a", "field:a:text", 1000);
-    checkpoint(h, "b", "field:a:text", 1000 + RUN_MS + 1);
-    expect(h.past).toEqual(["a", "b"]);
+    checkpoint(h, "a", "field:a:text");
+    checkpoint(h, "b", "field:a:text");
+    expect(h.past).toEqual(["a"]);
+
+    /* The whole point of dropping the clock: two runs of the same kind are two
+     * steps because something said the first one was over — a slider released,
+     * a field left, a gesture finished — not because enough time passed. Time
+     * cannot tell a fast second gesture from a slow single one. */
+    endRun(h);
+    checkpoint(h, "c", "field:a:text");
+    expect(h.past).toEqual(["a", "c"]);
   });
 
   it("starts a new step when a different field is touched", () => {
     const h = emptyHistory<string>();
-    checkpoint(h, "a", "field:a:text", 1000);
-    checkpoint(h, "b", "field:a:size", 1010);
+    checkpoint(h, "a", "field:a:text");
+    checkpoint(h, "b", "field:a:size");
     expect(h.past).toEqual(["a", "b"]);
   });
 
   it("never collapses an edit that gave no key", () => {
     const h = emptyHistory<string>();
-    checkpoint(h, "a", undefined, 1000);
-    checkpoint(h, "b", undefined, 1001);
+    checkpoint(h, "a", undefined);
+    checkpoint(h, "b", undefined);
     expect(h.past).toEqual(["a", "b"]);
+  });
+
+  it("keeps collapsing however long the user takes", () => {
+    const h = emptyHistory<string>();
+    checkpoint(h, "a", "field:a:size");
+    // A slider held still mid-drag, then moved again, is one edit. Under the
+    // old clock this became two steps and one undo left it half-dragged.
+    checkpoint(h, "b", "field:a:size");
+    checkpoint(h, "c", "field:a:size");
+    expect(h.past).toEqual(["a"]);
   });
 
   it("ends the run at an undo, so typing after it is its own step", () => {
@@ -119,9 +137,9 @@ describe("runs of same-kind edits collapse into one step", () => {
     expect(undo(h, "Test!")).toBe("");
     expect(h.past).toEqual([]);
 
-    // Same field, well inside the window — but the run ended at the undo, so
-    // this records a step instead of vanishing into the one just taken back.
-    checkpoint(h, "", "field:a:text", 1300);
+    // Same field and same key — but the run ended at the undo, so this records
+    // a step instead of vanishing into the one just taken back.
+    checkpoint(h, "", "field:a:text");
     expect(h.past).toEqual([""]);
     // And the forked future is dropped, as any new edit does.
     expect(h.future).toEqual([]);

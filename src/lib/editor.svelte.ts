@@ -797,10 +797,11 @@ export async function applyLayoutTransform(
   }, scaled(patch), gesture);
 }
 
-/** Ends the current undo run, so the next edit starts a new step. A pointer
- *  release is a boundary the run key cannot see by itself: without this, two
- *  separate drags less than RUN_MS apart collapsed into one undo step and a
- *  single Ctrl+Z jumped back past both. */
+/** Ends the current undo run, so the next edit starts a new step. The one
+ *  thing history cannot work out for itself: a run key says two edits are of
+ *  the same kind, not that the user is still in the middle of making them.
+ *  Called at every boundary — a finished canvas gesture here, and every form
+ *  control's `change` event in App.svelte. */
 export const endGesture = () => endRun(history);
 
 /** Folds a canvas resize back into whatever field a layer keeps its size in.

@@ -34,6 +34,7 @@
     dropGroupLayer,
     dropLayoutLayer,
     duplicateLayoutDoc,
+    endGesture,
     freeCount,
     groupLayoutLayers,
     groups,
@@ -307,7 +308,14 @@
   }
 </script>
 
-<svelte:window onkeydown={shortcut} />
+<!-- `change` is the browser's own "this control is finished" signal — it fires
+     when a slider is released, a colour is chosen, a field is left or Enter is
+     pressed — and it bubbles all the way up here. One listener therefore closes
+     the undo run for every form control in the app, which is what lets history
+     coalesce edits without a clock: a slider dragged in one go stays one step,
+     and picking the same slider up again is a second one. Canvas gestures have
+     no `change` event and call endGesture themselves. -->
+<svelte:window onkeydown={shortcut} onchange={endGesture} />
 
 <!-- One Layout row per layer, recursing into groups. A snippet rather than a
      component because it needs nothing but the list it draws, and a component
