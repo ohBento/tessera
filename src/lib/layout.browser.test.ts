@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { TILE_H, TILE_W } from "./bmp";
 import { renderLayout } from "./layout";
-import { newGroupLayer, newImageLayer, newLayout } from "./model";
+import { newGroupLayer, newImageLayer, newLayout, newShapeLayer, newTextLayer } from "./model";
 import { testDeps } from "../test/images";
 
 /** Decodes a PNG back into pixels, the same shape pixel-reading tests
@@ -103,6 +103,85 @@ describe("renderLayout", () => {
     let opaque = 0;
     for (let i = 3; i < data.length; i += 4) if (data[i] > 0) opaque++;
     expect(opaque).toBe(0);
+  });
+
+  /** How many pixels in the rendered sheet are not fully transparent. */
+  async function opaqueCount(layout: Parameters<typeof renderLayout>[0]) {
+    const { data } = await decode(await renderLayout(layout, testDeps));
+    let n = 0;
+    for (let i = 3; i < data.length; i += 4) if (data[i] > 0) n++;
+    return n;
+  }
+
+  it("draws a caption, and its colour is the one asked for", async () => {
+    const layout = newLayout("Text");
+    const l = newTextLayer();
+    l.text = "ABC";
+    l.color = "#ff00ff";
+    l.size = 0.2;
+    l.y = 0.5;
+    layout.layers.push(l);
+
+    const { data, width } = await decode(await renderLayout(layout, testDeps));
+    let magenta = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i] > 200 && data[i + 1] < 60 && data[i + 2] > 200 && data[i + 3] > 200) magenta++;
+    }
+    // Real glyphs, not a stray pixel or a filled box.
+    expect(magenta).toBeGreaterThan(400);
+    expect(magenta).toBeLessThan(width * TILE_H * 0.5);
+  });
+
+  it("renders each shape kind, and a bigger one covers more", async () => {
+    for (const shape of ["rect", "ellipse", "polygon"] as const) {
+      const small = newLayout(shape);
+      const a = newShapeLayer(shape);
+      a.fill = "#ff00ff";
+      small.layers.push(a);
+
+      const big = newLayout(shape);
+      const b = newShapeLayer(shape);
+      b.fill = "#ff00ff";
+      b.w = a.w * 2;
+      b.h = a.h * 2;
+      big.layers.push(b);
+
+      const [n, m] = [await opaqueCount(small), await opaqueCount(big)];
+      expect(n).toBeGreaterThan(1000);
+      expect(m).toBeGreaterThan(n * 2);
+    }
+  });
+
+  it("fills an ellipse with fewer pixels than the rectangle around it", async () => {
+    const mk = (shape: "rect" | "ellipse") => {
+      const layout = newLayout(shape);
+      const l = newShapeLayer(shape);
+      l.fill = "#ff00ff";
+      l.w = 0.5;
+      l.h = 0.5;
+      layout.layers.push(l);
+      return layout;
+    };
+    const rect = await opaqueCount(mk("rect"));
+    const ellipse = await opaqueCount(mk("ellipse"));
+    // pi/4 of the box, give or take antialiasing.
+    expect(ellipse / rect).toBeGreaterThan(0.7);
+    expect(ellipse / rect).toBeLessThan(0.85);
+  });
+
+  it("paints a gradient, so the two ends differ", async () => {
+    const layout = newLayout("Verlauf");
+    const l = newShapeLayer("rect");
+    l.w = 0.8;
+    l.h = 0.4;
+    l.fill = { from: "#ff0000", to: "#0000ff", angle: 0 };
+    layout.layers.push(l);
+
+    const px = await probe(layout);
+    const left = px(0.15, 0.5);
+    const right = px(0.85, 0.5);
+    expect(left[0]).toBeGreaterThan(left[2]); // red end
+    expect(right[2]).toBeGreaterThan(right[0]); // blue end
   });
 
   it("skips a hidden layer", async () => {

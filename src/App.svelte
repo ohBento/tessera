@@ -9,9 +9,12 @@
   import ContextMenu, { type Item } from "./ContextMenu.svelte";
   import GridCanvas from "./GridCanvas.svelte";
   import LayoutCanvas from "./LayoutCanvas.svelte";
+  import Properties from "./Properties.svelte";
   import {
     addGridImage,
     addLayoutImage,
+    addLayoutShape,
+    addLayoutText,
     addTilesToGroup,
     app,
     assignLayout,
@@ -137,6 +140,15 @@
   );
 
   const layoutLayers = $derived(editing ? [...editing.layers].reverse() : []);
+
+  /** The one layer the properties panel edits. Shown for a single pick only:
+   *  with several selected the fields would have to merge differing values,
+   *  which is a whole design of its own and nothing needs it yet. */
+  const selectedLayoutLayer = $derived(
+    editing && app.layoutSelection.length === 1
+      ? findLayer(editing.layers, app.layoutSelection[0])
+      : undefined,
+  );
 
   /* One context menu serves both documents: the wall right-clicks tiles, the
      Layout editor right-clicks layers, and only the item list differs. */
@@ -276,7 +288,13 @@
     </div>
 
     {#if editing}
-      <button onclick={addLayoutImage} disabled={!!app.busy}>Bild einfügen</button>
+      <div class="insert" role="group" aria-label="Einfügen">
+        <button onclick={addLayoutImage} disabled={!!app.busy} title="Bild einfügen">Bild</button>
+        <button onclick={addLayoutText} disabled={!!app.busy} title="Text einfügen">Text</button>
+        <button onclick={() => addLayoutShape("rect")} title="Rechteck">▭</button>
+        <button onclick={() => addLayoutShape("ellipse")} title="Ellipse">◯</button>
+        <button onclick={() => addLayoutShape("polygon")} title="Vieleck">⬡</button>
+      </div>
       <button
         onclick={groupLayoutLayers}
         disabled={!canGroupLayers() || !!app.busy}
@@ -367,6 +385,9 @@
         {/if}
         {@render layerRows(layoutLayers, false)}
         <p class="empty">Rechtsklick auf eine Ebene für Gruppieren, Verschieben, Umbenennen.</p>
+        {#if selectedLayoutLayer}
+          <Properties layer={selectedLayoutLayer} />
+        {/if}
       {:else}
         {#if wallLayers.length}
           <h2>Wand</h2>
@@ -618,7 +639,8 @@
     margin-left: auto;
     color: #8b979f;
   }
-  .docs {
+  .docs,
+  .insert {
     display: flex;
     gap: 2px;
     margin-right: 6px;

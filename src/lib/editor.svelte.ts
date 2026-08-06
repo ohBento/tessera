@@ -22,6 +22,8 @@ import {
   newImageLayer,
   newLayout,
   newOverlay,
+  newShapeLayer,
+  newTextLayer,
   overlayOf,
   overlaysUsingLayout,
   refreshStamps,
@@ -36,6 +38,9 @@ import {
   type Layout,
   type Manifest,
   type Overlay,
+  type ShapeKind,
+  type ShapeLayer,
+  type TextLayer,
 } from "./model";
 import {
   defaultDir,
@@ -568,6 +573,56 @@ export async function addLayoutImage() {
   });
 }
 
+/** Adds a caption to the open Layout.
+ *
+ *  A Layout is rendered once and stamped as a flat picture, so every tile gets
+ *  the same words — the "{{id}}" placeholder cannot vary here the way it does
+ *  in a tile-local caption, because by the time the stamp lands there is no
+ *  text left, only pixels. Per-tile wording needs a layer on the tile itself,
+ *  which buildGrid now draws but nothing yet creates. */
+export async function addLayoutText() {
+  const layout = openLayout();
+  if (!layout) return;
+  await mutate(() => {
+    const l = newTextLayer();
+    // Dead centre, not the 0.9 a tile caption defaults to: a Layout is a blank
+    // sheet, and something dropped at the bottom edge reads as misplaced.
+    l.y = 0.5;
+    layout.layers.push(l);
+    selectLayoutLayer(l.id);
+  });
+}
+
+export async function addLayoutShape(shape: ShapeKind) {
+  const layout = openLayout();
+  if (!layout) return;
+  await mutate(() => {
+    const l = newShapeLayer(shape);
+    layout.layers.push(l);
+    selectLayoutLayer(l.id);
+  });
+}
+
+/** Any field any kind of layer has.
+ *
+ *  `keyof Layer` would only be the handful every kind shares, since Layer is a
+ *  union — so a caption's `size` would not typecheck. Spelling the union out
+ *  still rejects a field that exists nowhere, which is the typo this is
+ *  guarding against; pairing the right field with the right kind is the
+ *  caller's job, and the properties panel does it by rendering each field
+ *  inside the branch that narrowed the layer to that kind. */
+export type LayerField = keyof TextLayer | keyof ShapeLayer | keyof ImageLayer;
+
+/** Edits one field of a layer. Everything the properties panel changes goes
+ *  through here, so each edit is one undo step and one save. */
+export async function setLayerField(id: string, key: LayerField, value: unknown) {
+  const layer = anyLayer(id) as Record<string, unknown> | undefined;
+  if (!layer || layer[key] === value) return;
+  await mutate(() => {
+    layer[key] = value;
+  });
+}
+
 /** Writes a finished drag/scale/rotate back into a Layout's own layer. Unlike
  *  applyTransform on the wall, this always skips the rebuild: nothing inside
  *  one Layout is ever shared with itself, so there is never a second instance
@@ -588,8 +643,28 @@ export async function applyLayoutTransform(
     layer.x = patch.x - shift.dx;
     layer.y = patch.y - shift.dy;
     layer.rotation = patch.rotation;
-    if (layer.kind === "image") layer.scale = patch.scale;
+    resize(layer, patch.scale);
   }, false);
+}
+
+/** Folds a canvas resize back into whatever field a layer keeps its size in.
+ *
+ *  `patch.scale` is the object's on-screen width as a fraction of the tile, so
+ *  each kind has to undo its own way of turning a model value into that width
+ *  — an image scales its picture, a caption its font size, a shape its box.
+ *  Fabric's own scaleX is deliberately not stored: the scene is rebuilt from
+ *  the model, so anything left in scaleX would be applied twice. */
+function resize(layer: Layer, scale: number) {
+  if (layer.kind === "image") {
+    layer.scale = scale;
+  } else if (layer.kind === "text") {
+    // A caption's box is one tile wide, so the width fraction *is* the factor.
+    layer.size *= scale || 1;
+  } else if (layer.kind === "shape") {
+    const factor = layer.w ? scale / layer.w : 1;
+    layer.w = scale;
+    layer.h *= factor;
+  }
 }
 
 /* --- Layer groups inside a Layout. A group is which layers move together —

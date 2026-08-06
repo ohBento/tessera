@@ -10,18 +10,23 @@ import * as fabric from "fabric";
 import { TILE_H, TILE_W } from "./bmp";
 import {
   groupShift,
+  isGradient,
+  layerText,
   resolveLayers,
   visibleTiles,
   type Base,
   type Layer,
   type Layout,
   type Manifest,
+  type Paint,
+  type ShapeLayer,
+  type TextLayer,
 } from "./model";
 /* cellAt/gridSize/rowsFor live in geometry.ts — pure grid maths that
  * mosaicBakeCrops also needs — and are re-exported here so every existing
  * caller of scene.ts keeps working unchanged. */
 export { cellAt, gridSize, rowsFor } from "./geometry";
-import { cellAt, gridSize } from "./geometry";
+import { cellAt, gradientLine, gridSize, LINE_HEIGHT, polygonPoints } from "./geometry";
 
 /** What a Fabric object remembers about where it came from, so a drag can be
  *  written back to the right layer without searching the model for a match. */
@@ -71,6 +76,128 @@ async function imageObject(
     flipY: !!l.flipY,
   });
   return img;
+}
+
+/** A colour, or a Fabric gradient built from one of ours.
+ *
+ *  Fabric's pixel gradient coordinates start at the object's top-left corner,
+ *  while gradientLine works from the centre outwards — so half the line has to
+ *  be shifted back in, or the visible part of the ramp is only its second half
+ *  and a red-to-blue fill starts out purple. gradientLine stays centred
+ *  because that is the form the angle maths is tested in. */
+function paintOf(paint: Paint, w: number, h: number): NonNullable<fabric.FabricObjectProps["fill"]> {
+  if (!isGradient(paint)) return paint;
+  const stops = [
+    { offset: 0, color: paint.from },
+    { offset: 1, color: paint.to },
+  ];
+  const cx = w / 2;
+  const cy = h / 2;
+  if (paint.radial) {
+    const r = (Math.max(w, h) / 2) * (paint.radius ?? 1);
+    return new fabric.Gradient({
+      type: "radial",
+      gradientUnits: "pixels",
+      coords: { x1: cx, y1: cy, r1: 0, x2: cx, y2: cy, r2: r },
+      colorStops: stops,
+    });
+  }
+  const { x1, y1, x2, y2 } = gradientLine(paint.angle, w, h);
+  return new fabric.Gradient({
+    type: "linear",
+    gradientUnits: "pixels",
+    coords: { x1: x1 + cx, y1: y1 + cy, x2: x2 + cx, y2: y2 + cy },
+    colorStops: stops,
+  });
+}
+
+/** Geometry shared by every non-image layer: centre origin, tile fractions
+ *  turned into pixels of the box it is being drawn into. */
+const place = (l: Layer, box: { w: number; h: number; x: number; y: number }) => ({
+  originX: "center" as const,
+  originY: "center" as const,
+  left: box.x + l.x * box.w,
+  top: box.y + l.y * box.h,
+  angle: l.rotation,
+  opacity: l.opacity,
+});
+
+/** A caption.
+ *
+ *  fabric.Textbox rather than Text, because a caption that runs past the tile
+ *  should wrap rather than bleed into the neighbour — a tile is a hard edge,
+ *  not a suggestion. Sizes are fractions of tile width so a layout survives a
+ *  change of tile resolution, the same rule the rest of the model follows. */
+function textObject(l: TextLayer, box: { w: number; h: number; x: number; y: number }, tileId: string, texts: Record<string, string>) {
+  const size = l.size * box.w;
+  const obj = new fabric.Textbox(layerText(texts, l, tileId), {
+    ...place(l, box),
+    width: box.w,
+    fontSize: size,
+    fontFamily: l.font,
+    fontStyle: l.italic ? "italic" : "normal",
+    fontWeight: l.bold ? "bold" : "normal",
+    textAlign: l.align ?? "center",
+    lineHeight: LINE_HEIGHT,
+    fill: paintOf(l.color, box.w, size),
+    stroke: l.strokeWidth ? l.strokeColor : undefined,
+    strokeWidth: l.strokeWidth * box.w,
+    // Stroke centred on the glyph outline eats into the letter shapes; painted
+    // behind the fill it reads as an outline, which is what it is for.
+    paintFirst: "stroke",
+    splitByGrapheme: false,
+  });
+  if (l.shadow) {
+    obj.shadow = new fabric.Shadow({
+      color: l.shadowColor,
+      blur: l.shadow * box.w,
+      offsetX: 0,
+      offsetY: 0,
+    });
+  }
+  return obj;
+}
+
+/** A rectangle, ellipse or regular polygon. */
+function shapeObject(l: ShapeLayer, box: { w: number; h: number; x: number; y: number }) {
+  const w = l.w * box.w;
+  const h = l.h * box.h;
+  const common = {
+    ...place(l, box),
+    fill: paintOf(l.fill, w, h),
+    stroke: l.borderWidth ? l.borderColor : undefined,
+    strokeWidth: l.borderWidth * box.w,
+    // Border grows outward from the edge rather than being scaled with the
+    // object, so a 2px border stays 2px when the shape is resized.
+    strokeUniform: true,
+  };
+  if (l.shape === "ellipse") return new fabric.Ellipse({ ...common, rx: w / 2, ry: h / 2 });
+  if (l.shape === "polygon")
+    return new fabric.Polygon(polygonPoints(l.sides, w, h), { ...common, objectCaching: false });
+  return new fabric.Rect({
+    ...common,
+    width: w,
+    height: h,
+    // A radius past half the short side is not a rounder rectangle, it is a
+    // broken path — Canvas draws nothing at all past that point.
+    rx: Math.min(l.cornerRadius, 0.5) * Math.min(w, h),
+    ry: Math.min(l.cornerRadius, 0.5) * Math.min(w, h),
+  });
+}
+
+/** Any layer as a Fabric object, or undefined for a kind that has no shape of
+ *  its own (a group, which is a displacement over its members). */
+async function layerObject(
+  l: Layer,
+  deps: SceneDeps,
+  box: { w: number; h: number; x: number; y: number },
+  tileId: string,
+  texts: Record<string, string>,
+): Promise<fabric.Object | undefined> {
+  if (l.kind === "image") return imageObject(l, deps, box);
+  if (l.kind === "text") return textObject(l, box, tileId, texts);
+  if (l.kind === "shape") return shapeObject(l, box);
+  return undefined;
 }
 
 /** What fills the tile before any layer: the picture set for it if there is
@@ -148,9 +275,15 @@ export async function buildGrid(
     const at = cellAt(index);
     canvas.add(await background(m.tiles[id]?.base ?? null, id, deps, at));
 
+    const box = { w: TILE_W, h: TILE_H, x: at.x, y: at.y };
+    const texts = m.tiles[id]?.text ?? {};
     for (const l of resolveLayers(m, id)) {
-      if (l.hidden || l.kind !== "image" || l.space === "grid") continue;
-      const obj = await imageObject(l, deps, { w: TILE_W, h: TILE_H, x: at.x, y: at.y });
+      if (l.hidden || l.space === "grid") continue;
+      // Groups are a wall-side concept only in Layouts; on a tile they would
+      // need the same flattening layoutObjects does, and nothing creates one
+      // here yet.
+      const obj = await layerObject(l, deps, box, id, texts);
+      if (!obj) continue;
       if (interactive) makeInteractive(obj, !!l.locked);
       else obj.selectable = obj.evented = false;
       Object.assign(obj, { layerId: l.id, tileId: id, space: "tile" });
@@ -239,9 +372,9 @@ async function layoutObjects(
       );
       continue;
     }
-    if (l.kind !== "image") continue;
-    const placed = { ...l, x: l.x + shift.dx, y: l.y + shift.dy };
-    const obj = await imageObject(placed, deps, { w: TILE_W, h: TILE_H, x: 0, y: 0 });
+    const placed = { ...l, x: l.x + shift.dx, y: l.y + shift.dy } as Layer;
+    const obj = await layerObject(placed, deps, { w: TILE_W, h: TILE_H, x: 0, y: 0 }, "", {});
+    if (!obj) continue;
     if (interactive) makeInteractive(obj, locked || !!l.locked);
     else obj.selectable = obj.evented = false;
     Object.assign(obj, { layerId: l.id, tileId: "", space: "tile" });
