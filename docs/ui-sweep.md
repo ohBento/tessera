@@ -75,8 +75,15 @@ filesystem** — do it between scenarios for a clean slate.
 - `tessera.history` — `past`/`future`. The only way to count what an action
   cost: "typing a word is one undo step" and "one per letter" look identical
   from outside, and so do a group drag worth one step and one worth three.
+- `tesseraWall` and `tesseraLayout` — the live Fabric canvases, on `window`
+  next to `tessera` rather than inside it. Anything about what is actually on
+  screen goes through these: control positions, the viewport transform, which
+  object is active, what `scaleX` a drag left behind. `tesseraLayout` is
+  `undefined` whenever no Layout is open.
 - `tessera.readTextFile(path)` — read the manifest back off the mock
-  filesystem, at `<dir>/../FaceTexture.tessera/manifest.json`. The claim that
+  filesystem, at `/mock/Documents/Black Desert/FaceTexture.tessera/manifest.json`.
+  Spell the path out: the mock filesystem does not resolve `..`, so building it
+  from the folder path throws a `not found` naming a file that exists. The claim that
   the manifest is the only truth is worth checking rather than believing;
   comparing it against `tessera.app.manifest` after a burst of edits is what
   turns "an error appeared" into "the file on disk is behind the screen".
@@ -133,16 +140,29 @@ then `drop`.
   correct behaviour, and it has already produced one false "undo is broken"
   reading. If the source is being edited while you work, say so in the report
   and re-check anything decisive against a settled tree.
-- **A background tab throttles `setTimeout` to about one second.** Any test
-  where the delay itself is the point — undo steps collapsing while edits keep
-  arriving, a debounce, anything with a window — will read wrong. Busy-wait on
-  `performance.now()` for those. This has already produced one false "undo
-  coalescing does not work" reading, off by a factor of twenty-five.
+- **Never await an animation frame.** `requestAnimationFrame` does not fire
+  while the pane is hidden, so a helper waiting on one hangs until the tool
+  times out. `setTimeout` is fine and has measured accurate here; do not
+  busy-wait on `performance.now()` instead, which blocks the macrotask queue
+  the app's own rebuild needs and hangs the thing it was meant to time.
+  (A background tab *can* throttle timers to about a second, and that has
+  produced one false "undo coalescing does not work" reading. If a delay is
+  itself the point, measure the delay you actually got rather than assuming
+  either way.)
 - After a run of failed HMR updates the page can be left half-loaded, throwing
   `X is not defined` for things that do exist. Reload before believing it.
-- Screenshots lag the DOM by a frame after a click, and the coordinate-to-CSS
-  scale changes with the window size. Before deciding from a picture that a
-  control did nothing, confirm against `tessera.app`.
+- **Screenshots may be unavailable outright** — "the Browser pane is not
+  displayed, so the page is not compositing frames". Read the DOM and
+  `tessera.app` instead; that is the better evidence anyway. When a screenshot
+  does work it still lags the DOM by a frame after a click, and the
+  coordinate-to-CSS scale changes with the window size.
+- **Alt does double duty on the Layout canvas.** It suppresses snapping while
+  dragging, and it is also Fabric's `centeredKey`: holding it through a handle
+  drag makes the scale centred, which quietly doubles every factor you measure.
+  Hold it for drags, never for scales.
+- A handle drag only registers when the object is the canvas's active object.
+  A stray click that cleared the selection turns the next one into a rubber
+  band that does nothing — which looks exactly like a broken control.
 
 ## What to report
 

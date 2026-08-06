@@ -189,6 +189,11 @@
       // corner handles must never produce one.
       uniformScaling: true,
     });
+    /* Dev-only handle, same reason as the one in main.ts: anything asking what
+     * the canvas is actually showing — control positions, the viewport
+     * transform, which object is active — has no other way in, and a sweep of
+     * this app burned real time reaching it by patching Fabric's prototype. */
+    if (import.meta.env.DEV) Object.assign(window, { tesseraWall: canvas });
 
     const resize = () => {
       canvas?.setDimensions({ width: host.clientWidth, height: host.clientHeight });

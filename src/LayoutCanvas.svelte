@@ -205,6 +205,8 @@
        * object:scaling, because its model has one size field, not two. */
       uniformScaling: false,
     });
+    // Dev-only handle; see the same line in GridCanvas.
+    if (import.meta.env.DEV) Object.assign(window, { tesseraLayout: canvas });
 
     const resize = () => {
       canvas?.setDimensions({ width: host.clientWidth, height: host.clientHeight });
@@ -461,6 +463,9 @@
       removeEventListener("keyup", onUp);
       const dying = canvas;
       canvas = undefined;
+      // Cleared, not left dangling: a Layout canvas comes and goes, and a
+      // stale handle looks exactly like a live one.
+      if (import.meta.env.DEV) Object.assign(window, { tesseraLayout: undefined });
       void dying?.dispose();
     };
   });
