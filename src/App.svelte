@@ -18,6 +18,7 @@
     addTilesToGroup,
     app,
     assignLayout,
+    assignTileLayout,
     bakeMosaic,
     canBakeMosaic,
     canGroupLayers,
@@ -34,6 +35,7 @@
     deleteLayoutLayer,
     dropGroupLayer,
     dropLayoutLayer,
+    dropTileLayer,
     duplicateLayoutDoc,
     endGesture,
     freeCount,
@@ -65,8 +67,10 @@
     setTileAsset,
     tileAsset,
     tileCaptions,
+    tileGroup,
     tileImageChoices,
     tileImages,
+    tileLayers,
     tileText,
     toggleLayerHidden,
     toggleLayerLocked,
@@ -216,9 +220,9 @@
     if (
       used &&
       !(await confirmed(
-        // Both units again: the pictures left behind are counted per group,
+        // Both units again: the pictures left behind are counted per stamp,
         // but what the deletion is visible on is tiles.
-        `"${name}" is stamped on ${used} group(s), ${layoutTiles(id)} tile(s). ` +
+        `"${name}" is stamped ${used} time(s), on ${layoutTiles(id)} tile(s). ` +
           `The stamps stay behind as nameless pictures.`,
         "Delete layout?",
       ))
@@ -238,6 +242,11 @@
       return;
     await deleteGroup(id);
   }
+
+  /** A holder's rows as the list draws them: topmost first, and without the
+   *  live captions a Layout keeps there — see the note at the group's list. */
+  const stampsOf = (layers: Layer[]) =>
+    [...layers].reverse().filter((l) => !(l.kind === "text" && l.layoutId));
 
   /** A stamp shows its Layout's name; anything else falls back to layerLabel. */
   const stampName = (l: Layer) =>
@@ -421,6 +430,73 @@
       {#if layer.kind === "group"}
         {@render layerRows([...layer.children].reverse(), true, layer.id)}
       {/if}
+    {/each}
+  </ul>
+{/snippet}
+
+<!-- The stamps on one holder — a group's stack or a single tile's own. Same
+     row either way, so `drop` is the only thing that differs: which list the
+     reorder writes back to. -->
+{#snippet stampRows(rows: Layer[], drop: (moving: string, beforeId: string | null) => void)}
+  <ul class="indent">
+    {#each rows as layer (layer.id)}
+      <li
+        class:selected={app.selected === layer.id}
+        class:drop-before={dropOn?.id === layer.id && dropOn.where === "before"}
+        class:drop-after={dropOn?.id === layer.id && dropOn.where === "after"}
+        draggable="true"
+        ondragstart={(e) => startDrag(e, layer.id)}
+        ondragover={(e) => over(e, layer.id, false)}
+        ondragleave={() => dropOn?.id === layer.id && (dropOn = null)}
+        ondragend={endDrag}
+        ondrop={(e) => {
+          e.preventDefault();
+          const spot = dropOn;
+          const moving = dragId;
+          endDrag();
+          if (!spot || !moving) return;
+          drop(moving, landing(rows, spot.id, spot.where, null).beforeId);
+        }}
+      >
+        <button
+          class="eye"
+          title={layer.hidden ? "Show" : "Hide"}
+          onclick={() => toggleLayerHidden(layer.id)}
+        >
+          {layer.hidden ? "○" : "●"}
+        </button>
+        <!-- A layer a Layout put here is held whatever this says, so it says
+             so: the row used to show an open padlock on something the canvas
+             would not let you touch, and clicking it changed nothing either
+             way. -->
+        <button
+          class="eye"
+          disabled={!!layer.layoutId}
+          title={layer.layoutId
+            ? "Held by the layout — edit it there"
+            : layer.locked
+              ? "Unlock"
+              : "Lock"}
+          onclick={() => toggleLayerLocked(layer.id)}
+        >
+          {layer.layoutId || layer.locked ? "🔒" : "🔓"}
+        </button>
+        <button
+          class="name"
+          class:dimmed={layer.hidden}
+          onclick={() => selectLayer(layer.id)}
+          ondblclick={() => layer.layoutId && openLayoutDoc(layer.layoutId)}
+          title="Double-click opens the layout"
+        >
+<!-- Marker before the name, not after: the name is what gets
+               ellipsised when the row runs out of width, and a dot hidden
+               behind "…" is the same as no dot at all. -->{#if stampDirty(layer)}<span
+              class="dirty"
+              title="Layout changed — press Update stamps">●&nbsp;</span
+            >{/if}{stampName(layer)}
+        </button>
+        <button title="Delete" onclick={() => deleteLayer(layer.id)}>×</button>
+      </li>
     {/each}
   </ul>
 {/snippet}
@@ -655,74 +731,10 @@
                    double-click opened the same Layout, and the per-tile
                    wording lives in the "Text on …" panel. One row per
                    assigned Layout is the whole story. -->
-              {@const stamps = [...group.layers]
-                .reverse()
-                .filter((l) => !(l.kind === "text" && l.layoutId))}
-              <ul class="indent">
-                {#each stamps as layer (layer.id)}
-                  <li
-                    class:selected={app.selected === layer.id}
-                    class:drop-before={dropOn?.id === layer.id && dropOn.where === "before"}
-                    class:drop-after={dropOn?.id === layer.id && dropOn.where === "after"}
-                    draggable="true"
-                    ondragstart={(e) => startDrag(e, layer.id)}
-                    ondragover={(e) => over(e, layer.id, false)}
-                    ondragleave={() => dropOn?.id === layer.id && (dropOn = null)}
-                    ondragend={endDrag}
-                    ondrop={(e) => {
-                      e.preventDefault();
-                      const spot = dropOn;
-                      const moving = dragId;
-                      endDrag();
-                      if (!spot || !moving) return;
-                      void dropGroupLayer(
-                        group.id,
-                        moving,
-                        landing(stamps, spot.id, spot.where, null).beforeId,
-                      );
-                    }}
-                  >
-                    <button
-                      class="eye"
-                      title={layer.hidden ? "Show" : "Hide"}
-                      onclick={() => toggleLayerHidden(layer.id)}
-                    >
-                      {layer.hidden ? "○" : "●"}
-                    </button>
-                    <!-- A layer a Layout put here is held whatever this says,
-                         so it says so: the row used to show an open padlock on
-                         something the canvas would not let you touch, and
-                         clicking it changed nothing either way. -->
-                    <button
-                      class="eye"
-                      disabled={!!layer.layoutId}
-                      title={layer.layoutId
-                        ? "Held by the layout — edit it there"
-                        : layer.locked
-                          ? "Entsperren"
-                          : "Sperren"}
-                      onclick={() => toggleLayerLocked(layer.id)}
-                    >
-                      {layer.layoutId || layer.locked ? "🔒" : "🔓"}
-                    </button>
-                    <button
-                      class="name"
-                      class:dimmed={layer.hidden}
-                      onclick={() => selectLayer(layer.id)}
-                      ondblclick={() => layer.layoutId && openLayoutDoc(layer.layoutId)}
-                      title="Double-click opens the layout"
-                    >
-<!-- Marker before the name, not after: the name is what gets
-                           ellipsised when the row runs out of width, and a dot
-                           hidden behind "…" is the same as no dot at all. -->{#if stampDirty(layer)}<span
-                          class="dirty"
-                          title="Layout changed — press Update stamps">●&nbsp;</span
-                        >{/if}{stampName(layer)}
-                    </button>
-                    <button title="Delete" onclick={() => deleteLayer(layer.id)}>×</button>
-                  </li>
-                {/each}
-              </ul>
+              {@render stampRows(
+                stampsOf(group.layers),
+                (moving, beforeId) => void dropGroupLayer(group.id, moving, beforeId),
+              )}
 
               <select
                 class="indent assign"
@@ -741,6 +753,78 @@
             {/if}
           </div>
         {/each}
+
+        <!-- Every portrait, whether or not a group ever claimed it. A tile in
+             a group takes its layout from there, so its row shows the group's
+             name where the dropdown would be: one place per tile for a layout
+             to come from, and no way to set the two against each other. -->
+        <h2 class="spaced">Tiles</h2>
+        <div class="group">
+          <div class="grouphead">
+            <button class="twisty" onclick={() => toggleOpen("tiles")}>
+              {open.has("tiles") ? "▾" : "▸"}
+            </button>
+            <button class="name" onclick={() => toggleOpen("tiles")}>
+              All tiles
+              <span class="usage">{app.manifest.order.length} · assign one at a time</span>
+            </button>
+          </div>
+
+          {#if open.has("tiles")}
+            <div class="indent">
+              {#each app.manifest.order as id (id)}
+                {@const held = tileGroup(id)}
+                {@const own = stampsOf(tileLayers(id))}
+                <div class="group">
+                  <div class="grouphead">
+                    <button class="twisty" onclick={() => toggleOpen(id)}>
+                      {open.has(id) ? "▾" : "▸"}
+                    </button>
+                    <button
+                      class="name"
+                      class:dimmed={app.manifest.hidden.includes(id)}
+                      onclick={() => (app.selectedTiles = [id])}
+                      title="Picks this tile on the wall"
+                    >
+                      {id}
+                      <span class="usage">
+                        {held ? held.name : own.length ? `${own.length} layout(s)` : "free"}
+                      </span>
+                    </button>
+                  </div>
+
+                  {#if open.has(id)}
+                    <!-- Shown even for a tile in a group: a layout stamped
+                         while the tile was still free stays on it, and a row
+                         with no × would be a picture with no way out. -->
+                    {@render stampRows(
+                      own,
+                      (moving, beforeId) => void dropTileLayer(id, moving, beforeId),
+                    )}
+                    {#if held}
+                      <p class="empty indent">In "{held.name}" — assign the layout there.</p>
+                    {:else}
+                      <select
+                        class="indent assign"
+                        disabled={!layouts().length || !!app.busy}
+                        onchange={(e) => {
+                          const layoutId = e.currentTarget.value;
+                          e.currentTarget.value = "";
+                          if (layoutId) void assignTileLayout(id, layoutId);
+                        }}
+                      >
+                        <option value="">+ Assign layout…</option>
+                        {#each layouts() as layout (layout.id)}
+                          <option value={layout.id}>{layout.name}</option>
+                        {/each}
+                      </select>
+                    {/if}
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
 
         {#if captionsNeedOneTile()}
           <!-- The panel needs one tile, and saying so is the whole point: it
@@ -853,12 +937,12 @@
                 >
                   {layout.name}
                   <!-- Both numbers, because they answer different questions:
-                       the groups are what a refresh or a delete touches, the
+                       the stamps are what a refresh or a delete touches, the
                        tiles are how much of the wall wears the design. One
                        group of fifteen tiles used to read "stamped 1 time". -->
                   <span class="usage">
                     {layoutUsage(layout.id)
-                      ? `${layoutUsage(layout.id)} group(s) · ${layoutTiles(layout.id)} tile(s)`
+                      ? `${layoutUsage(layout.id)} stamp(s) · ${layoutTiles(layout.id)} tile(s)`
                       : "unused"}
                   </span>
                 </button>

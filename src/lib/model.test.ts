@@ -33,7 +33,7 @@ import {
   newTextLayer,
   overlayCovering,
   overlayOf,
-  overlaysUsingLayout,
+  holdersUsingLayout,
   pruneToFolder,
   tilesUsingLayout,
   refreshStamps,
@@ -285,19 +285,28 @@ describe("overlayOf", () => {
   });
 });
 
-describe("overlaysUsingLayout", () => {
+describe("holdersUsingLayout", () => {
   it("finds every overlay carrying a stamp of this layout, and no others", () => {
     const stamped = { ...newImageLayer("render1.png"), layoutId: "L1" };
     const other = { ...newImageLayer("render2.png"), layoutId: "L2" };
     const plain = newImageLayer("hand-picked.png"); // never stamped from any layout
     const m = emptyManifest();
     m.overlays = [
-      { ...newOverlay("A"), layers: [stamped] },
-      { ...newOverlay("B"), layers: [other] },
-      { ...newOverlay("C"), layers: [plain] },
+      { ...newOverlay("A", ["t0"]), layers: [stamped] },
+      { ...newOverlay("B", ["t1"]), layers: [other] },
+      { ...newOverlay("C", ["t2"]), layers: [plain] },
     ];
-    expect(overlaysUsingLayout(m, "L1").map((o) => o.name)).toEqual(["A"]);
-    expect(overlaysUsingLayout(m, "nope")).toEqual([]);
+    expect(holdersUsingLayout(m, "L1").map((h) => h.tiles)).toEqual([["t0"]]);
+    expect(holdersUsingLayout(m, "nope")).toEqual([]);
+  });
+
+  it("finds a tile that carries the layout on its own, with no group", () => {
+    /* The whole point of an individual assignment: a stamp sitting in a tile's
+     * own layer stack. Looking only at overlays left it out of every refresh
+     * and every count, which is a design that silently stops updating. */
+    const m = emptyManifest();
+    m.tiles = { t0: { ...emptyTile(), layers: [{ ...newImageLayer("r.png"), layoutId: "L1" }] } };
+    expect(holdersUsingLayout(m, "L1").map((h) => h.tiles)).toEqual([["t0"]]);
   });
 });
 
@@ -317,6 +326,13 @@ describe("tilesUsingLayout", () => {
     expect(tilesUsingLayout(m, "L1")).toBe(5);
     expect(tilesUsingLayout(m, "L2")).toBe(1);
     expect(tilesUsingLayout(m, "nope")).toBe(0);
+  });
+
+  it("counts an individually stamped tile as the one tile it is", () => {
+    const m = emptyManifest();
+    m.overlays = [{ ...newOverlay("A", ["t0", "t1"]), layers: [stampOf("L1")] }];
+    m.tiles = { t9: { ...emptyTile(), layers: [stampOf("L1")] } };
+    expect(tilesUsingLayout(m, "L1")).toBe(3);
   });
 
   it("does not count an all-tiles overlay as the whole wall", () => {
@@ -463,6 +479,19 @@ describe("refreshStamps", () => {
 
   it("reports zero when nothing uses the layout", () => {
     expect(refreshStamps(emptyManifest(), "nope", "new.png")).toBe(0);
+  });
+
+  it("reaches a stamp sitting in a tile's own stack", () => {
+    /* "Update stamps" is the only way an edited Layout reaches the wall. A
+     * tile stamped on its own used to be invisible to it — the design kept
+     * showing the version it was stamped at, for good. */
+    const m = emptyManifest();
+    const tile = emptyTile();
+    stampInto(tile, "L1", "old.png");
+    m.tiles = { t0: tile };
+
+    expect(refreshStamps(m, "L1", "new.png")).toBe(1);
+    expect((tile.layers[0] as ImageLayer).asset).toBe("new.png");
   });
 });
 

@@ -15,6 +15,7 @@ import {
   freeTiles,
   groupOf,
   groupShift,
+  holdersUsingLayout,
   instanceCount,
   layerLabel,
   layoutFingerprint,
@@ -27,11 +28,11 @@ import {
   newShapeLayer,
   newTextLayer,
   overlayOf,
-  overlaysUsingLayout,
   refreshStamps,
   relocateLayer,
   removeFromGroup,
   removeLayerFrom,
+  resolveLayers,
   shiftLayer,
   stampInto,
   swapTiles,
@@ -189,14 +190,21 @@ export const claimedCount = () =>
  * every tile of its group: position and style are shared, the words are
  * not. --- */
 
+/** Everything drawn on one tile, whichever group or tile stack it comes from.
+ *
+ *  `resolveLayers` and not the group's list: a tile can carry a layout of its
+ *  own now, and its live captions and pictures sit in the tile's own stack —
+ *  looking only at the group left an individually stamped portrait with no
+ *  wording panel at all. */
+const drawnOn = (tileId: string) => resolveLayers(app.manifest, tileId);
+
 /** The live captions on the tiles currently picked, deduplicated — what the
  *  wording panel offers to edit. Empty unless exactly one tile is picked,
  *  since a field showing several tiles' differing words would have to invent
  *  an answer for what typing into it means. */
 export function tileCaptions(): TextLayer[] {
   if (app.selectedTiles.length !== 1) return [];
-  const group = groupOf(app.manifest, app.selectedTiles[0]);
-  return (group?.layers ?? []).filter((l): l is TextLayer => l.kind === "text");
+  return drawnOn(app.selectedTiles[0]).filter((l): l is TextLayer => l.kind === "text");
 }
 
 /** The live pictures on the tile currently picked — the same bargain as a
@@ -204,8 +212,7 @@ export function tileCaptions(): TextLayer[] {
  *  which picture. One tile at a time, for the same reason. */
 export function tileImages(): ImageLayer[] {
   if (app.selectedTiles.length !== 1) return [];
-  const group = groupOf(app.manifest, app.selectedTiles[0]);
-  return (group?.layers ?? []).filter((l): l is ImageLayer => l.kind === "image" && !!l.live);
+  return drawnOn(app.selectedTiles[0]).filter((l): l is ImageLayer => l.kind === "image" && !!l.live);
 }
 
 /** This tile's picture for a live image layer, or undefined when it shows the
@@ -268,9 +275,7 @@ export async function pickTileImage(tileId: string, layerId: string) {
 export const captionsNeedOneTile = () =>
   app.selectedTiles.length > 1 &&
   app.selectedTiles.some((id) =>
-    (groupOf(app.manifest, id)?.layers ?? []).some(
-      (l) => l.kind === "text" || (l.kind === "image" && !!l.live),
-    ),
+    drawnOn(id).some((l) => l.kind === "text" || (l.kind === "image" && !!l.live)),
   );
 
 /** This tile's wording for a caption, or undefined when it has none of its own
@@ -397,11 +402,6 @@ async function travel(step: typeof undo<Manifest>) {
 export const undoEdit = () => travel(undo);
 export const redoEdit = () => travel(redo);
 
-/** Every overlay layer paired with the overlay it came from — what the layer
- *  list renders. Tile-local layers are not in here; nothing creates them yet. */
-export const layerRows = () =>
-  app.manifest.overlays.flatMap((o) => o.layers.map((layer) => ({ overlay: o, layer })));
-
 /** The project-wide overlay, created on first use. A grid-space layer covers
  *  the whole wall, so it only belongs somewhere that covers the whole wall. */
 function allTiles(): Overlay {
@@ -413,8 +413,13 @@ function allTiles(): Overlay {
   return app.manifest.overlays[app.manifest.overlays.length - 1];
 }
 
-/** The array a layer lives in, whichever overlay owns it. */
-const listOf = (id: string) => overlayOf(app.manifest, id)?.layers;
+/** The array a layer lives in: an overlay's, or the tile's own.
+ *
+ *  Both, because a stamp can now sit in either — deleting or hiding one that
+ *  belongs to a single tile used to find nothing and silently do nothing. */
+const listOf = (id: string) =>
+  overlayOf(app.manifest, id)?.layers ??
+  Object.values(app.manifest.tiles).find((t) => !!findLayer(t.layers, id))?.layers;
 
 export function selectLayer(id: string) {
   if (app.selected !== id) app.selected = id;
@@ -973,18 +978,26 @@ export async function dropLayoutLayer(id: string, parentId: string | null, befor
   });
 }
 
-/** The same for a stamp inside a tile group, which has no nesting to worry
- *  about — only the order things are drawn in. */
-export async function dropGroupLayer(groupId: string, id: string, beforeId: string | null) {
-  const group = findGroup(groupId);
-  if (!group) return;
-  const trial = plain(group.layers) as Layer[];
+/** The same for a stamp on the wall, which has no nesting to worry about —
+ *  only the order things are drawn in. Takes the list rather than an owner, so
+ *  a group's stack and a tile's own are the same call. */
+async function dropInto(layers: Layer[] | undefined, id: string, beforeId: string | null) {
+  if (!layers) return;
+  // Checked on a copy first, so a refused move costs neither an undo step nor
+  // a save.
+  const trial = plain(layers) as Layer[];
   if (!relocateLayer(trial, id, null, beforeId)) return;
   await mutate(() => {
-    relocateLayer(group.layers, id, null, beforeId);
+    relocateLayer(layers, id, null, beforeId);
     app.selected = id;
   });
 }
+
+export const dropGroupLayer = (groupId: string, id: string, beforeId: string | null) =>
+  dropInto(findGroup(groupId)?.layers, id, beforeId);
+
+export const dropTileLayer = (tileId: string, id: string, beforeId: string | null) =>
+  dropInto(app.manifest.tiles[tileId]?.layers, id, beforeId);
 
 /** Dissolves a group, leaving its members where they visibly are.
  *
@@ -1010,26 +1023,47 @@ async function stampAsset(layout: Layout): Promise<{ asset: string; seen: string
   return { asset: await saveGeneratedAsset(app.dir, bytes), seen };
 }
 
-/** Puts a layout onto a named group — the sidebar's "Layout zuweisen". */
-export async function assignLayout(groupId: string, layoutId: string) {
-  const group = findGroup(groupId);
+/** Puts a layout into a layer stack — a group's or a tile's own. */
+async function stampOnto(into: { layers: Layer[] } | undefined, layoutId: string) {
   const layout = app.manifest.layouts.find((l) => l.id === layoutId);
-  if (!group || !layout || !app.deps) return;
+  if (!into || !layout || !app.deps) return;
   await run("stamp", async () => {
     const { asset, seen } = await stampAsset(layout);
     await mutate(() => {
-      stampInto(group, layoutId, asset);
+      stampInto(into, layoutId, asset);
       // After the stamp, so a live caption sits on top of the picture it was
       // composed over rather than behind it.
-      syncLiveLayers(group, layout);
+      syncLiveLayers(into, layout);
       layout.stamped = seen;
     });
   });
 }
 
-/** How many groups hold a stamp of this Layout — what a refresh re-renders and
+/** Puts a layout onto a named group — the sidebar's "Assign layout". */
+export const assignLayout = (groupId: string, layoutId: string) =>
+  stampOnto(findGroup(groupId), layoutId);
+
+/** The same for one portrait on its own, with no group in between.
+ *
+ *  A tile's own layers are drawn after every overlay's (see resolveLayers), so
+ *  this lands on top of whatever a group already gives the tile rather than
+ *  fighting it. The tile list only offers this on a free tile, so in practice
+ *  there is nothing under it — but the ordering is what makes that a UI choice
+ *  and not a rule the model has to enforce. */
+export const assignTileLayout = (tileId: string, layoutId: string) =>
+  stampOnto(app.manifest.tiles[tileId], layoutId);
+
+/** One tile's own layers — what the tile list shows under its row. */
+export const tileLayers = (tileId: string) => app.manifest.tiles[tileId]?.layers ?? [];
+
+/** The group holding this tile, if any. The tile list shows its name in place
+ *  of the assign dropdown, so a tile's layout has exactly one place to come
+ *  from and the two cannot be set against each other by accident. */
+export const tileGroup = (tileId: string) => groupOf(app.manifest, tileId);
+
+/** How many places hold a stamp of this Layout — what a refresh re-renders and
  *  what a delete leaves behind, so both are counted in the unit they act on. */
-export const layoutUsage = (layoutId: string) => overlaysUsingLayout(app.manifest, layoutId).length;
+export const layoutUsage = (layoutId: string) => holdersUsingLayout(app.manifest, layoutId).length;
 
 /** How many portraits carry it — the other half of the picture, and the one a
  *  wall of tiles reads first. Shown beside the group count rather than instead
@@ -1055,10 +1089,10 @@ export async function saveLayout(layoutId: string) {
     await mutate(() => {
       const n = refreshStamps(app.manifest, layoutId, asset);
       // Live captions travel with the stamp: repositioning or restyling one in
-      // the Layout has to reach every group using it, the same as the picture.
-      for (const o of overlaysUsingLayout(app.manifest, layoutId)) syncLiveLayers(o, layout);
+      // the Layout has to reach everywhere it is used, the same as the picture.
+      for (const h of holdersUsingLayout(app.manifest, layoutId)) syncLiveLayers(h, layout);
       layout.stamped = seen;
-      app.error = `${n} Stempel aktualisiert`;
+      app.error = `${n} stamp(s) updated`;
     });
   });
 }

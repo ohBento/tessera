@@ -264,7 +264,9 @@ export function findList(layers: Layer[], id: string): Layer[] | undefined {
 export type Tile = {
   base: Base;
   /** Tile-local layers. A layer whose id matches a shared one is a detached
-   *  copy and replaces it on this tile only. */
+   *  copy and replaces it on this tile only; anything else is this tile's
+   *  alone, drawn on top of whatever its group gives it — which is what lets a
+   *  single portrait carry a layout without a group being invented for it. */
   layers: Layer[];
   /** Text content per shared layer — style syncs across tiles, wording does not. */
   text: Record<string, string>;
@@ -458,37 +460,52 @@ export const emptyManifest = (): Manifest => ({
   layouts: [],
 });
 
-/** Every overlay holding a stamp of this layout — what "Update stamps" has to
+/** Somewhere a stamp can sit, paired with the tiles it reaches.
+ *
+ *  There are two such places and they are deliberately not the same type: a
+ *  group's stack, and one tile's own. Everything that acts on stamps — refresh,
+ *  count, delete — has to reach both, and having each of them ask "overlay or
+ *  tile?" separately is how one of the two quietly gets left out. */
+export type StampHolder = { layers: Layer[]; tiles: string[] };
+
+/** Every such place in the document. An "all" overlay reports no tiles: it is
+ *  the wall axis, not a tile group, and nothing stamps into one. */
+export function stampHolders(m: Manifest): StampHolder[] {
+  return [
+    ...m.overlays.map((o) => ({ layers: o.layers, tiles: o.tiles === "all" ? [] : o.tiles })),
+    ...Object.entries(m.tiles).map(([id, t]) => ({ layers: t.layers, tiles: [id] })),
+  ];
+}
+
+/** Every place holding a stamp of this layout — what "Update stamps" has to
  *  refresh, and how many pictures are left behind if the layout is deleted. */
-export function overlaysUsingLayout(m: Manifest, layoutId: string): Overlay[] {
-  return m.overlays.filter((o) => o.layers.some((l) => l.kind === "image" && l.layoutId === layoutId));
+export function holdersUsingLayout(m: Manifest, layoutId: string): StampHolder[] {
+  return stampHolders(m).filter((h) =>
+    h.layers.some((l) => l.kind === "image" && l.layoutId === layoutId),
+  );
 }
 
 /** How many portraits actually carry this layout.
  *
- *  The other number — how many groups hold a stamp — is what a refresh or a
+ *  The other number — how many places hold a stamp — is what a refresh or a
  *  delete touches, but it says nothing about how much of the wall is at stake:
  *  one group of fifteen tiles read as "stamped 1 time" while fifteen portraits
- *  wore the design. An "all" overlay is skipped rather than counted as the
- *  whole wall: it is the wall axis, not a tile group, and nothing stamps into
- *  one. */
+ *  wore the design. */
 export function tilesUsingLayout(m: Manifest, layoutId: string): number {
-  return overlaysUsingLayout(m, layoutId).reduce(
-    (n, o) => n + (o.tiles === "all" ? 0 : o.tiles.length),
-    0,
-  );
+  return holdersUsingLayout(m, layoutId).reduce((n, h) => n + h.tiles.length, 0);
 }
 
-/** Puts a rendered stamp of `layoutId` onto `overlay`.
+/** Puts a rendered stamp of `layoutId` into a layer stack — a group's or one
+ *  tile's own; it needs nothing from either but the list.
  *
  *  Re-stamping the same layout onto the same tiles replaces that stamp's
  *  picture rather than stacking a second copy on top of the first — which
  *  would look like nothing happened while quietly doubling the layer count. */
-export function stampInto(overlay: Overlay, layoutId: string, asset: string): ImageLayer {
+export function stampInto(into: { layers: Layer[] }, layoutId: string, asset: string): ImageLayer {
   // Not a live picture the same Layout keeps on these tiles: that also carries
   // this layoutId, and grabbing it here would overwrite a per-tile logo with
   // the whole flattened sheet.
-  const existing = overlay.layers.find(
+  const existing = into.layers.find(
     (l): l is ImageLayer => l.kind === "image" && l.layoutId === layoutId && !l.live,
   );
   if (existing) {
@@ -503,7 +520,7 @@ export function stampInto(overlay: Overlay, layoutId: string, asset: string): Im
    * wrong — here it shrank the whole sheet to a patch in the middle of the
    * tile, which reads as "the stamp did not arrive". */
   stamp.scale = 1;
-  overlay.layers.push(stamp);
+  into.layers.push(stamp);
   return stamp;
 }
 
@@ -512,8 +529,8 @@ export function stampInto(overlay: Overlay, layoutId: string, asset: string): Im
  *  to update everywhere at once, not be re-stamped by hand at each. */
 export function refreshStamps(m: Manifest, layoutId: string, asset: string): number {
   let n = 0;
-  for (const o of m.overlays) {
-    for (const l of o.layers) {
+  for (const h of stampHolders(m)) {
+    for (const l of h.layers) {
       if (l.kind === "image" && l.layoutId === layoutId) {
         l.asset = asset;
         n++;
@@ -738,7 +755,7 @@ export function bakeable(layout: Layout): Layout {
  *  displacement; there is no group on the tile, so the displacement is folded
  *  in on the way over — the same fold removeLayerFrom does when a group is
  *  dissolved. */
-export function syncLiveLayers(overlay: Overlay, layout: Layout): number {
+export function syncLiveLayers(into: { layers: Layer[] }, layout: Layout): number {
   const live = perTileLayers(layout);
   const wanted = new Set(live.map((l) => l.id));
 
@@ -754,23 +771,23 @@ export function syncLiveLayers(overlay: Overlay, layout: Layout): number {
       perTile: undefined,
       live: true,
     };
-    const at = overlay.layers.findIndex((l) => l.id === src.id);
-    if (at >= 0) overlay.layers[at] = copy;
-    else overlay.layers.push(copy);
+    const at = into.layers.findIndex((l) => l.id === src.id);
+    if (at >= 0) into.layers[at] = copy;
+    else into.layers.push(copy);
   }
 
   /* Withdraw the copies this Layout no longer keeps live. `live` is what keeps
    * the stamp out of it: the stamp is an image carrying the same layoutId, and
    * a rule written on kind and layoutId alone would delete the whole design
    * the moment a per-tile picture was switched off. */
-  for (let i = overlay.layers.length - 1; i >= 0; i--) {
-    const l = overlay.layers[i];
+  for (let i = into.layers.length - 1; i >= 0; i--) {
+    const l = into.layers[i];
     /* Text counts as a copy whether or not it carries the flag: a stamp is
      * never text, and captions stamped before `live` existed would otherwise
      * be orphaned here forever — a withdrawn caption is only ever replaced
      * while it is still live, so it can never gain the flag afterwards. */
     const copy = l.live || l.kind === "text";
-    if (copy && l.layoutId === layout.id && !wanted.has(l.id)) overlay.layers.splice(i, 1);
+    if (copy && l.layoutId === layout.id && !wanted.has(l.id)) into.layers.splice(i, 1);
   }
   return live.length;
 }
