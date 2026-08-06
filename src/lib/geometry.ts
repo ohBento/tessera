@@ -32,10 +32,12 @@ export const rowsFor = (count: number) => Math.ceil(count / COLS);
  *  up in play, and a caption pushed towards an edge looks as wrong here as it
  *  will there.
  *
- *  Measured off a screenshot of the character select, so it is close rather
- *  than exact — the game scales its grid with the window. */
-export const GAP_X = Math.round(TILE_W * 0.03);
-export const GAP_Y = Math.round(TILE_H * 0.045);
+ *  One fraction for both axes, so the spacing reads as even. Measured off a
+ *  screenshot of the character select, so it is close rather than exact — the
+ *  game scales its grid with the window. One number to tune. */
+const GAP = 0.035;
+export const GAP_X = Math.round(TILE_W * GAP);
+export const GAP_Y = Math.round(TILE_H * GAP);
 
 /** Distance from one slot to the next, tile plus gap. */
 export const STEP_X = TILE_W + GAP_X;
