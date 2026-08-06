@@ -8,6 +8,7 @@ import { renderLayout } from "./layout";
 import {
   addToGroup,
   bakeMosaicInto,
+  clearBases,
   duplicateLayout,
   emptyManifest,
   findLayer,
@@ -562,6 +563,21 @@ function selectedMosaic(): ImageLayer | undefined {
 }
 
 export const canBakeMosaic = () => !!selectedMosaic();
+
+/** How many tiles are showing a baked mosaic instead of their own portrait —
+ *  the number on the button, so it says what it is about to touch. */
+export const bakedCount = () => Object.values(app.manifest.tiles).filter((t) => !!t.base).length;
+
+/** Takes every baked background off the wall at once. One mutation, so one
+ *  Ctrl+Z puts the whole mosaic back — which is why this asks nothing first. */
+export async function clearMosaic() {
+  const n = bakedCount();
+  if (!n) return;
+  await mutate(() => {
+    clearBases(app.manifest);
+    app.error = `${n} portrait(s) restored`;
+  });
+}
 
 /** Bakes the selected grid-space picture into every tile it fully covers, then
  *  removes it: a mosaic in place is a background, not a floating object, and

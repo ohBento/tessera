@@ -33,6 +33,7 @@ import {
   newTextLayer,
   overlayCovering,
   overlayOf,
+  clearBases,
   holdersUsingLayout,
   pruneToFolder,
   tilesUsingLayout,
@@ -492,6 +493,39 @@ describe("refreshStamps", () => {
 
     expect(refreshStamps(m, "L1", "new.png")).toBe(1);
     expect((tile.layers[0] as ImageLayer).asset).toBe("new.png");
+  });
+});
+
+describe("clearBases", () => {
+  const baked = (asset: string) => ({
+    ...emptyTile(),
+    base: { asset, crop: { x: 0, y: 0, w: 10, h: 10 } },
+  });
+
+  it("gives every baked tile its portrait back and counts them", () => {
+    /* background() in scene.ts never reads the portrait while a base is set,
+     * and baking was one-way: a wall carrying 44 baked backgrounds from an
+     * earlier session had no button anywhere that could clear one, which reads
+     * from the outside as an app that cannot load its own folder. */
+    const m = emptyManifest();
+    m.tiles = { t0: baked("mosaic.jpg"), t1: baked("mosaic.jpg"), t2: emptyTile() };
+
+    expect(clearBases(m)).toBe(2);
+    expect(Object.values(m.tiles).every((t) => t.base === null)).toBe(true);
+  });
+
+  it("leaves the layers alone — only the background was baked", () => {
+    const m = emptyManifest();
+    const tile = baked("mosaic.jpg");
+    tile.layers = [newTextLayer()];
+    m.tiles = { t0: tile };
+
+    clearBases(m);
+    expect(m.tiles.t0.layers).toHaveLength(1);
+  });
+
+  it("reports zero when no tile is baked", () => {
+    expect(clearBases(emptyManifest())).toBe(0);
   });
 });
 

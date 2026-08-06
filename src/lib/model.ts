@@ -839,6 +839,30 @@ export function bakeMosaicInto(
   if (overlay) removeLayerFrom(overlay.layers, layerId);
 }
 
+/** Drops every baked mosaic background, so each tile shows its own portrait
+ *  again. Returns how many had one.
+ *
+ *  bakeMosaicInto was deliberately one-way — a mosaic in place is a background,
+ *  and repositioning it means baking a new picture over the old. That held
+ *  until a wall came back from an earlier session with all forty-four
+ *  backgrounds set and nothing anywhere that could clear one: undo had long
+ *  since been dropped with the session, and `background()` never even reads the
+ *  portrait while a base is there. From the outside that is indistinguishable
+ *  from an app that cannot load its own folder.
+ *
+ *  The pixels were never at risk — the originals sit in the vault and in the
+ *  game folder, and the mosaic keeps its content-addressed asset — so this
+ *  gives back the only thing that was actually lost, which is the way out. */
+export function clearBases(m: Manifest): number {
+  let n = 0;
+  for (const tile of Object.values(m.tiles)) {
+    if (!tile.base) continue;
+    tile.base = null;
+    n++;
+  }
+  return n;
+}
+
 type Raw = Record<string, unknown>;
 
 /** Anything older than v6 arrives as a clean slate.

@@ -19,12 +19,14 @@
     app,
     assignLayout,
     assignTileLayout,
+    bakedCount,
     bakeMosaic,
     canBakeMosaic,
     canGroupLayers,
     captionsNeedOneTile,
     canSaveLayout,
     claimedCount,
+    clearMosaic,
     clearTileAsset,
     clearTileText,
     clearTiles,
@@ -535,6 +537,19 @@
         title="Bakes the selected wall picture into every fully covered tile; no object remains"
       >
         Apply
+      </button>
+      <!-- The way back out of that bake. A baked background hides the portrait
+           completely — background() never reads the file while one is set — so
+           without this a mosaic applied in some earlier session leaves a wall
+           that looks like the app cannot load its own folder. The count is in
+           the label because the button takes the whole wall at once; one
+           Ctrl+Z puts it back. -->
+      <button
+        onclick={clearMosaic}
+        disabled={!bakedCount() || !!app.busy}
+        title="Removes the baked mosaic from every tile, so the portraits show again"
+      >
+        Restore portraits{#if bakedCount()}&nbsp;({bakedCount()}){/if}
       </button>
       <button onclick={saveToGame} disabled={!app.dir || !!app.busy}>Write to game</button>
     {/if}
