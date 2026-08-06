@@ -53,7 +53,7 @@ vi.stubGlobal("createImageBitmap", vi.fn(async () => ({ width: 1, height: 1 })))
 // constructor, and Vite's own module resolution needs `new URL` to work.
 URL.createObjectURL = () => "blob:x";
 
-const { loadOriginal, assetUrl, saveManifest } = await import("./project");
+const { loadOriginal, assetUrl, saveManifest, loadManifest } = await import("./project");
 
 describe("saveManifest survives overlapping writes", () => {
   /** Dragging a multi-selection fires one save per member in the same tick.
@@ -102,5 +102,29 @@ describe("a failed read does not poison the cache", () => {
 
     readFile.mockResolvedValueOnce(new Uint8Array([1]));
     await expect(assetUrl("/dir", "a.png")).resolves.toBe("blob:x");
+  });
+});
+
+describe("loadManifest lines the project up with the folder", () => {
+  /* The folder is the authority: characters come and go between sessions, and
+   * the whole folder can be deleted and regenerated. Groups were the one thing
+   * that did not follow — they kept ids nothing had and listed them as
+   * members, which is what left junk behind after a folder was deleted. Driven
+   * through the real entry point, because the pruning being *called* is the
+   * half a unit test of the pruning cannot show. */
+  const stored = (tiles: string[]) => {
+    const m = emptyManifest();
+    m.order = ["a", "b", "c"];
+    m.tiles = { a: { base: null, layers: [], text: {} }, b: { base: null, layers: [], text: {} }, c: { base: null, layers: [], text: {} } };
+    m.overlays = [{ id: "g1", name: "G", tiles, layers: [] }];
+    return JSON.stringify(m);
+  };
+
+  it("drops group members the folder no longer has", async () => {
+    const platform = await import("./platform");
+    vi.mocked(platform.readTextFile).mockResolvedValueOnce(stored(["a", "b"]));
+    const m = await loadManifest("/docs/FaceTexture", ["a", "c"]);
+    expect(m.overlays[0].tiles).toEqual(["a"]);
+    expect(m.order).toEqual(["a", "c"]);
   });
 });

@@ -775,6 +775,31 @@ export function syncLiveLayers(overlay: Overlay, layout: Layout): number {
   return live.length;
 }
 
+/** Brings a manifest into line with the folder it belongs to.
+ *
+ *  Characters get created and deleted between sessions — and a folder can be
+ *  deleted wholesale, which BDO answers by regenerating it with different ids.
+ *  The folder always wins: what it no longer has, the manifest stops naming.
+ *
+ *  Groups are pruned too, which they were not: they kept ids nothing had, and
+ *  listed them as members. An emptied group is left standing rather than
+ *  removed — deleting someone's group because a character was is a decision
+ *  the folder does not get to make, and an empty group is one click away from
+ *  gone. An "all" overlay is the wall axis and follows the folder by
+ *  construction, so it has no list to prune.
+ *
+ *  Pure surgery, no filesystem: loadManifest supplies the ids. */
+export function pruneToFolder(m: Manifest, ids: string[]): Manifest {
+  m.order = [...m.order.filter((id) => ids.includes(id)), ...ids.filter((id) => !m.order.includes(id))];
+  m.hidden = m.hidden.filter((id) => ids.includes(id));
+  for (const id of Object.keys(m.tiles)) if (!ids.includes(id)) delete m.tiles[id];
+  for (const id of ids) m.tiles[id] ??= emptyTile();
+  for (const o of m.overlays) {
+    if (o.tiles !== "all") o.tiles = o.tiles.filter((id) => ids.includes(id));
+  }
+  return m;
+}
+
 /** Writes baked crops into their tiles' `base` and removes the mosaic layer
  *  that produced them — a mosaic in place is a background, not a floating
  *  object, and should not keep sitting on top of other layers once it is

@@ -34,6 +34,7 @@ import {
   overlayCovering,
   overlayOf,
   overlaysUsingLayout,
+  pruneToFolder,
   tilesUsingLayout,
   refreshStamps,
   relocateLayer,
@@ -1105,5 +1106,52 @@ describe("layerAsset", () => {
     /* "No picture on this tile" has to survive. `||` here would put the
      * default straight back — the same trap the caption text fell into. */
     expect(layerAsset({ L1: "" }, layer())).toBe("");
+  });
+});
+
+describe("pruneToFolder", () => {
+  /** A manifest naming three tiles, with a group holding two of them. */
+  const withGroup = () => {
+    const m = emptyManifest();
+    m.order = ["a", "b", "c"];
+    m.hidden = ["c"];
+    for (const id of m.order) m.tiles[id] = emptyTile();
+    m.overlays = [newOverlay("G", ["a", "b"]), newOverlay("Alle")];
+    return m;
+  };
+
+  it("takes tiles the folder no longer has out of their group", () => {
+    /* The gap that left junk behind: order, hidden and tiles were pruned
+     * against the folder and groups were not, so a deleted character stayed
+     * on as a member of a group nothing could point at. */
+    const m = pruneToFolder(withGroup(), ["a", "c"]);
+    expect(m.overlays[0].tiles).toEqual(["a"]);
+  });
+
+  it("leaves a group standing once its last tile is gone", () => {
+    // Emptied, not deleted: losing a character is not a reason to throw away
+    // the group someone built, and an empty one is a click from gone.
+    const m = pruneToFolder(withGroup(), ["c"]);
+    expect(m.overlays).toHaveLength(2);
+    expect(m.overlays[0].tiles).toEqual([]);
+  });
+
+  it("does not touch an all-tiles overlay", () => {
+    // The wall axis follows the folder by construction; it has no list.
+    const m = pruneToFolder(withGroup(), ["a"]);
+    expect(m.overlays[1].tiles).toBe("all");
+  });
+
+  it("still prunes order, hidden and tiles, and adopts new ids", () => {
+    const m = pruneToFolder(withGroup(), ["b", "d"]);
+    expect(m.order).toEqual(["b", "d"]);
+    expect(m.hidden).toEqual([]);
+    expect(Object.keys(m.tiles).sort()).toEqual(["b", "d"]);
+  });
+
+  it("keeps the folder's own order for ids it did not know", () => {
+    const m = pruneToFolder(withGroup(), ["c", "a", "z"]);
+    // Known ids keep the manifest's order, newcomers follow in folder order.
+    expect(m.order).toEqual(["a", "c", "z"]);
   });
 });

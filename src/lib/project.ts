@@ -16,7 +16,7 @@ import {
   writeTextFile,
 } from "./platform";
 
-import { emptyManifest, emptyTile, migrate, type Manifest, type Tile } from "./model";
+import { emptyManifest, migrate, pruneToFolder, type Manifest, type Tile } from "./model";
 import type { SceneDeps } from "./scene";
 
 export async function defaultDir() {
@@ -47,11 +47,7 @@ export async function loadManifest(dir: string, ids: string[]): Promise<Manifest
     // no project yet, or unreadable — start clean rather than block the folder
   }
   // Characters get created and deleted between sessions; the folder wins.
-  m.order = [...m.order.filter((id) => ids.includes(id)), ...ids.filter((id) => !m.order.includes(id))];
-  m.hidden = m.hidden.filter((id) => ids.includes(id));
-  for (const id of Object.keys(m.tiles)) if (!ids.includes(id)) delete m.tiles[id];
-  for (const id of ids) m.tiles[id] ??= emptyTile();
-  return m;
+  return pruneToFolder(m, ids);
 }
 
 /** What was last written into the game folder. Kept out of the manifest on
