@@ -403,6 +403,8 @@ export function readBack(obj: Tagged, tileCount: number, index: number) {
     y: ((obj.top ?? 0) - box.y) / box.h,
     scale: obj.getScaledWidth() / box.w,
     scaleH: obj.getScaledHeight() / box.h,
+    fx: obj.scaleX ?? 1,
+    fy: obj.scaleY ?? 1,
     rotation: obj.angle ?? 0,
   };
 }
@@ -427,6 +429,14 @@ export function readBackLayout(obj: fabric.Object) {
     // Read separately rather than assumed equal: a shape keeps width and
     // height apart, so stretching one side has to survive the round trip.
     scaleH: (scaleY * (obj.height ?? 0)) / TILE_H,
+    /* The raw factors, for layers whose size is written straight onto the
+     * object rather than derived from it. A shape is built at its exact w×h
+     * with no scaling, so after a plain drag these are 1 and its size must not
+     * change — deriving the size from obj.width instead shrank a polygon by
+     * 13% on every drag, because a regular n-gon's bounding box is smaller
+     * than the box it is inscribed in. */
+    fx: scaleX,
+    fy: scaleY,
     rotation: angle,
   };
 }

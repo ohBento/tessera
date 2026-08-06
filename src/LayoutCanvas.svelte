@@ -123,10 +123,21 @@
       // would cancel the drag in progress that caused the change.
       if (shown.length === objs.length && shown.every((o, i) => o === objs[i])) return;
 
-      canvas.discardActiveObject();
-      if (objs.length === 1) canvas.setActiveObject(objs[0]);
-      else if (objs.length > 1) {
-        canvas.setActiveObject(new fabric.ActiveSelection(objs, { canvas }));
+      /* Swapping the active object is this component obeying the model, not
+       * the user choosing — and discardActiveObject fires selection:cleared,
+       * which reported an empty pick back into the model. That emptied the
+       * "already covered" set, so the setActiveObject on the next line then
+       * looked like a fresh pick of the group's children: selecting a group
+       * moved the selection onto its members after every structural edit. */
+      rebuilding = true;
+      try {
+        canvas.discardActiveObject();
+        if (objs.length === 1) canvas.setActiveObject(objs[0]);
+        else if (objs.length > 1) {
+          canvas.setActiveObject(new fabric.ActiveSelection(objs, { canvas }));
+        }
+      } finally {
+        rebuilding = false;
       }
       canvas.requestRenderAll();
     });
@@ -354,9 +365,13 @@
       if (!target) return;
       const members =
         (target as fabric.ActiveSelection).getObjects?.() ?? ([target] as fabric.Object[]);
+      /* One run key for the whole gesture: a multi-selection writes back once
+       * per member, and without this a single drag of a group of three cost
+       * three undo steps — so one Ctrl+Z pulled the group apart on screen. */
+      const gesture = `drag:${members.map((o) => (o as { layerId?: string }).layerId).join(",")}`;
       for (const obj of members) {
         const id = (obj as { layerId?: string }).layerId;
-        if (id) void applyLayoutTransform(id, readBackLayout(obj));
+        if (id) void applyLayoutTransform(id, readBackLayout(obj), gesture);
       }
     });
 

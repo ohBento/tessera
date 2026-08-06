@@ -278,8 +278,21 @@ async function mutate(fn: () => void, structural = true, run?: string) {
    * else happened to overwrite it. Anything a mutation wants to say sets it
    * inside fn, after this. */
   app.error = "";
-  checkpoint(history, plain(app.manifest), run);
-  fn();
+  const before = plain(app.manifest);
+  checkpoint(history, before, run);
+  try {
+    fn();
+  } catch (e) {
+    /* An edit that throws part-way used to leave the manifest half-changed
+     * with no version bump and no save: the sidebar showed the change, the
+     * canvas did not, and the file on disk was a third answer. Putting the
+     * recorded state back is the only way all three stay in step. */
+    app.manifest = before;
+    app.error = `Änderung fehlgeschlagen: ${e}`;
+    app.version++;
+    undo(history, before);
+    return;
+  }
   if (structural) app.version++;
   await persist();
 }
@@ -486,7 +499,7 @@ export async function addGridImage() {
  *  the canvas shows another until something redraws them. */
 export async function applyTransform(
   obj: Tagged,
-  patch: Pick<Layer, "x" | "y" | "rotation"> & { scale: number; scaleH: number },
+  patch: Pick<Layer, "x" | "y" | "rotation"> & Transform,
 ) {
   const list = listOf(obj.layerId) ?? app.manifest.tiles[obj.tileId]?.layers ?? [];
   const layer = findLayer(list, obj.layerId);
@@ -496,7 +509,7 @@ export async function applyTransform(
     layer.x = patch.x;
     layer.y = patch.y;
     layer.rotation = patch.rotation;
-    resize(layer, patch.scale, patch.scaleH);
+    resize(layer, patch);
   }, shared);
 }
 
@@ -555,11 +568,15 @@ export async function newLayoutDoc(name: string) {
  * selection on either transition would break exactly that. */
 export const openLayoutDoc = (id: string) => {
   app.openLayoutId = id;
-  app.layoutSelected = "";
+  // Both, not just the one: leaving layoutSelection behind carried the
+  // previous document's layer id into the next one, where a Ctrl-click then
+  // built a two-layer selection out of one visible row and the properties
+  // panel quietly stayed away.
+  setLayoutSelection([]);
 };
 export const closeLayoutDoc = () => {
   app.openLayoutId = "";
-  app.layoutSelected = "";
+  setLayoutSelection([]);
 };
 
 /** Copies a Layout and opens the copy, which is what you wanted it for.
@@ -749,7 +766,10 @@ export async function setLayerField(id: string, key: LayerField, value: unknown)
  *  left showing a stale position. */
 export async function applyLayoutTransform(
   layerId: string,
-  patch: Pick<Layer, "x" | "y" | "rotation"> & { scale: number; scaleH: number },
+  patch: Pick<Layer, "x" | "y" | "rotation"> & Transform,
+  /** Names the gesture, so a multi-selection's one write per member collapses
+   *  into a single undo step instead of one per layer. */
+  gesture?: string,
 ) {
   const layout = openLayout();
   const layer = findLayer(layout?.layers ?? [], layerId);
@@ -763,8 +783,8 @@ export async function applyLayoutTransform(
     layer.x = patch.x - shift.dx;
     layer.y = patch.y - shift.dy;
     layer.rotation = patch.rotation;
-    resize(layer, patch.scale, patch.scaleH);
-  }, false);
+    resize(layer, patch);
+  }, false, gesture);
 }
 
 /** Folds a canvas resize back into whatever field a layer keeps its size in.
@@ -774,17 +794,26 @@ export async function applyLayoutTransform(
  *  — an image scales its picture, a caption its font size, a shape its box.
  *  Fabric's own scaleX is deliberately not stored: the scene is rebuilt from
  *  the model, so anything left in scaleX would be applied twice. */
-function resize(layer: Layer, scale: number, scaleH: number) {
+/** What the canvas reports back after a transform: absolute sizes for layers
+ *  whose size is measured off the object, raw factors for those whose size is
+ *  written onto it. */
+type Transform = { scale: number; scaleH: number; fx: number; fy: number };
+
+function resize(layer: Layer, patch: Transform) {
   if (layer.kind === "image") {
-    layer.scale = scale;
+    layer.scale = patch.scale;
   } else if (layer.kind === "text") {
     // A caption's box is one tile wide, so the width fraction *is* the factor.
-    layer.size *= scale || 1;
+    layer.size *= patch.scale || 1;
   } else if (layer.kind === "shape") {
-    // Both axes on their own: a shape is the one kind that can be stretched,
-    // and tying height to width is what made every shape square forever.
-    layer.w = scale;
-    layer.h = scaleH;
+    /* Multiplied by what Fabric actually scaled, not set from the object's
+     * measured width. A shape is built at exactly w×h with scaleX 1, so a
+     * plain drag reports 1 and leaves the size alone — measuring instead made
+     * a polygon shrink on every drag, since a regular n-gon's bounding box is
+     * smaller than the box it is inscribed in. Both axes on their own: a shape
+     * is the one kind that can be stretched. */
+    layer.w *= patch.fx || 1;
+    layer.h *= patch.fy || 1;
   }
 }
 

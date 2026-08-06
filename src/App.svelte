@@ -557,7 +557,13 @@
                   title="Doppelklick zum Umbenennen"
                 >
                   {group.name}
-                  <span class="usage">{tiles.length} Kacheln · {group.layers.length} Layouts</span>
+                  <!-- Stamps, not every layer: a live caption sits in here too,
+                       and counting it made a group with one design read
+                       "2 Layouts". -->
+                  <span class="usage">
+                    {tiles.length} Kacheln · {group.layers.filter((l) => l.kind === "image").length}
+                    Layouts
+                  </span>
                 </button>
               {/if}
               <button
@@ -567,7 +573,12 @@
               >
               <button
                 title="Gruppe löschen"
-                onclick={() => removeGroup(group.id, group.name, group.layers.length)}>×</button
+                onclick={() =>
+                  removeGroup(
+                    group.id,
+                    group.name,
+                    group.layers.filter((l) => l.kind === "image").length,
+                  )}>×</button
               >
             </div>
 

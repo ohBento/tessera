@@ -15,8 +15,10 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import App from "./App.svelte";
 import {
+  addLayoutShape,
   addLayoutText,
   app,
+  applyLayoutTransform,
   canGroupLayers,
   canStampLayout,
   dropLayoutLayer,
@@ -31,6 +33,7 @@ import {
   newGroup,
   setLayoutSelection,
   stampLayout,
+  tileCaptions,
   toggleLayoutPick,
 } from "./lib/editor.svelte";
 import { addLayoutImage, assignLayout, newLayoutDoc, openLayout } from "./lib/editor.svelte";
@@ -132,6 +135,33 @@ describe("the wall", () => {
     // So is a set of entirely free tiles, which makes its own group.
     app.selectedTiles = [c, d];
     expect(canStampLayout()).toBe(true);
+  });
+
+  it("stamps a per-tile caption onto the group, live", async () => {
+    /* Through the editor, not the model: the unit tests hand syncLiveLayers
+     * plain objects, and the app hands it Svelte $state proxies — which is a
+     * different thing entirely, and the difference silently broke the whole
+     * feature. Anything reachable only through a real edit belongs here. */
+    const [a, b] = app.manifest.order;
+    app.selectedTiles = [a, b];
+    await newGroup();
+
+    await newLayoutDoc("Mit Text");
+    await addLayoutText();
+    const caption = openLayout()!.layers[0];
+    await setLayerField(caption.id, "perTile", true);
+    await setLayerField(caption.id, "text", "Kachel {{id}}");
+
+    await stampLayout(openLayout()!.id);
+
+    expect(app.error).toBe("");
+    const kinds = groups()[0].layers.map((l) => l.kind);
+    expect(kinds).toEqual(["image", "text"]);
+    // Recorded, or "Stempel aktualisieren" would be greyed out forever.
+    expect(openLayout()!.stamped).toBeTruthy();
+    // And the wording panel can find it.
+    app.selectedTiles = [a];
+    expect(tileCaptions()).toHaveLength(1);
   });
 
   it("makes a group from the picked tiles and counts only the free ones", async () => {
@@ -388,6 +418,53 @@ describe("the Layout editor", () => {
     expect(openLayout()!.layers.map((l) => l.id)).toEqual([group.id]);
     // And a refused move costs no undo step.
     expect(history.past.length).toBe(before);
+  });
+
+  it("does not resize a polygon just for being dragged", async () => {
+    await newLayoutDoc("Vieleck");
+    await addLayoutShape("polygon");
+    const shape = openLayout()!.layers[0];
+    const size = shape.kind === "shape" ? { w: shape.w, h: shape.h } : null;
+
+    /* A regular n-gon's bounding box is smaller than the box it is inscribed
+     * in, so deriving the size from the drawn object shrank it by 13% on every
+     * drag. A plain move reports a scale factor of 1 and must change nothing. */
+    await applyLayoutTransform(shape.id, {
+      x: 0.7,
+      y: 0.3,
+      rotation: 0,
+      scale: 0.26,
+      scaleH: 0.225,
+      fx: 1,
+      fy: 1,
+    });
+
+    const after = findLayer(openLayout()!.layers, shape.id)!;
+    expect(after.kind === "shape" && { w: after.w, h: after.h }).toEqual(size);
+    expect(after.x).toBeCloseTo(0.7);
+
+    // An actual scale still lands.
+    await applyLayoutTransform(shape.id, {
+      x: 0.7, y: 0.3, rotation: 0, scale: 0, scaleH: 0, fx: 2, fy: 0.5,
+    });
+    const scaled = findLayer(openLayout()!.layers, shape.id)!;
+    expect(scaled.kind === "shape" && scaled.w).toBeCloseTo(size!.w * 2);
+    expect(scaled.kind === "shape" && scaled.h).toBeCloseTo(size!.h * 0.5);
+  });
+
+  it("spends one undo step on dragging a whole multi-selection", async () => {
+    const [a, b] = await twoLayers();
+    const before = history.past.length;
+    // What LayoutCanvas does for an ActiveSelection: one write per member,
+    // under one gesture name.
+    for (const id of [a, b]) {
+      await applyLayoutTransform(
+        id,
+        { x: 0.6, y: 0.6, rotation: 0, scale: 0.3, scaleH: 0.3, fx: 1, fy: 1 },
+        `drag:${a},${b}`,
+      );
+    }
+    expect(history.past.length - before).toBe(1);
   });
 
   it("offers grouping only from two layers up", async () => {

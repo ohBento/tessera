@@ -30,8 +30,10 @@ TypeScript + Fabric.js, Windows only.
 Two documents share one shell: the **Wand** (the whole grid) and one open
 **Layout**. The header buttons and the right sidebar change with it.
 
-The manifest is the only truth; Fabric is a view that writes deltas back.
-Every edit is saved immediately — there is no unsaved state to lose.
+The manifest is the only truth; Fabric is a view that writes deltas back, and
+every edit is meant to reach disk immediately. Treat that as the invariant to
+**check**, not as a guarantee: it has been false before, and the way it fails
+is that the sidebar, the canvas and the file each show something different.
 
 Two traps worth knowing before judging behaviour:
 
@@ -44,8 +46,14 @@ Two traps worth knowing before judging behaviour:
 
 ## Running it
 
-A Vite dev server is normally already up at <http://localhost:1420>. Do not
-start or stop servers; ask if it is not running.
+The app needs a Vite dev server on <http://localhost:1420>. If nothing is
+listening, start one and say so in the report:
+
+```
+npm --prefix C:\Users\wsau\projects\tessera run dev
+```
+
+Leave it running when you finish. Do not start a second one.
 
 Outside Tauri the app falls back to an in-memory filesystem
 (`src/lib/platform.ts`) and opens a mock folder of 12 tiles `t00`..`t11`
@@ -64,6 +72,14 @@ filesystem** — do it between scenarios for a clean slate.
   returns a path
 - `tessera.queuePick(path)` → the next file-picker call returns that path
   instead of opening a chooser
+- `tessera.history` — `past`/`future`. The only way to count what an action
+  cost: "typing a word is one undo step" and "one per letter" look identical
+  from outside, and so do a group drag worth one step and one worth three.
+- `tessera.readTextFile(path)` — read the manifest back off the mock
+  filesystem, at `<dir>/../FaceTexture.tessera/manifest.json`. The claim that
+  the manifest is the only truth is worth checking rather than believing;
+  comparing it against `tessera.app.manifest` after a burst of edits is what
+  turns "an error appeared" into "the file on disk is behind the screen".
 
 There is no way to drive an OS file dialog, which is what `queuePick` exists
 for. Inserting a picture into a Layout:
@@ -79,7 +95,13 @@ await tessera.addLayoutImage();
 ```
 
 `window.confirm` blocks a headless run. Override it before anything that
-deletes: `window.confirm = () => true`.
+deletes — but record the message rather than only returning true, because two
+of the warnings are themselves worth checking:
+
+```js
+let asked = [];
+window.confirm = (m) => (asked.push(m), true);
+```
 
 Prefer real clicks over calling functions directly — the point is to exercise
 the interface. Use the handle to set state up quickly and to read results out.
@@ -96,6 +118,13 @@ sheet and to other layers (pink guides) with **Alt suppressing it**, shapes
 stretch freely while **Shift constrains**, right-click a layer row for
 grouping and moving.
 
+Reordering rows is **native HTML5 drag-and-drop**, which synthetic mouse
+events cannot drive at all — a coordinate drag there looks like a control that
+silently does nothing, and will be reported as broken. Dispatch `DragEvent`s
+instead: `dragstart` on the row being moved, then `dragover` on the target
+with a `clientY` in its top, middle or bottom third (before / into / after),
+then `drop`.
+
 ## Reading the noise
 
 - Vite HMR and WebSocket messages in the console are not findings.
@@ -111,6 +140,9 @@ grouping and moving.
   coalescing does not work" reading, off by a factor of twenty-five.
 - After a run of failed HMR updates the page can be left half-loaded, throwing
   `X is not defined` for things that do exist. Reload before believing it.
+- Screenshots lag the DOM by a frame after a click, and the coordinate-to-CSS
+  scale changes with the window size. Before deciding from a picture that a
+  control did nothing, confirm against `tessera.app`.
 
 ## What to report
 

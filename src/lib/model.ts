@@ -1,3 +1,13 @@
+/** A detached copy of any part of the document.
+ *
+ *  JSON and not `structuredClone`: the editor hands these functions its live
+ *  Svelte `$state` objects, which are Proxies, and structuredClone refuses a
+ *  Proxy outright with a DataCloneError. Thrown from inside an edit, that left
+ *  the manifest half-changed — so the rule is that nothing here may depend on
+ *  the caller having snapshotted first. A manifest is JSON by definition, so
+ *  the round trip loses nothing that was ever going to reach disk. */
+export const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
+
 /** Crop rectangle in source-image pixels. */
 export type Crop = { x: number; y: number; w: number; h: number };
 
@@ -381,16 +391,16 @@ export const newLayout = (name: string): Layout => ({ id: newId(), name, layers:
  *  a tile, so it has nothing to be out of date with. */
 export function duplicateLayout(layout: Layout, name: string): Layout {
   const swap = new Map<string, string>();
-  const clone = (layers: Layer[]): Layer[] =>
+  const renumber = (layers: Layer[]): Layer[] =>
     layers.map((l) => {
-      const copy = structuredClone(l) as Layer;
+      const copy = clone(l);
       copy.id = newId();
       swap.set(l.id, copy.id);
-      if (copy.kind === "group") copy.children = clone(copy.children);
+      if (copy.kind === "group") copy.children = renumber(copy.children);
       return copy;
     });
 
-  const layers = clone(layout.layers);
+  const layers = renumber(layout.layers);
   for (const l of walkLayers(layers)) if (l.maskId) l.maskId = swap.get(l.maskId);
   return { id: newId(), name, layers };
 }
@@ -688,7 +698,7 @@ export function syncLiveLayers(overlay: Overlay, layout: Layout): number {
   for (const src of live) {
     const shift = nestingShift(layout.layers, src.id) ?? { dx: 0, dy: 0 };
     const copy: TextLayer = {
-      ...structuredClone(src),
+      ...clone(src),
       x: src.x + shift.dx,
       y: src.y + shift.dy,
       layoutId: layout.id,
