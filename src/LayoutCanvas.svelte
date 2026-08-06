@@ -408,7 +408,10 @@
     canvas.on("after:render", (opt) => {
       const ctx = opt?.ctx ?? canvas?.getContext();
       const vt = canvas?.viewportTransform;
-      if (!ctx || !vt) return;
+      // Only the object canvas; see the same guard in GridCanvas. Here it is
+      // the snap guides that would have stuck: they exist only during a drag,
+      // which is exactly when Fabric renders the interaction layer.
+      if (!ctx || !vt || ctx !== canvas?.getContext()) return;
       ctx.save();
       // CSS pixels, not device pixels — same retina correction as GridCanvas,
       // or the sheet outline and every guide sit at 1/dpr scale off target.

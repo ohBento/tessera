@@ -7,3 +7,4 @@ node_modules
 
 # vitest browser mode writes failure screenshots here
 __screenshots__
+.vitest-attachments

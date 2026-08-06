@@ -320,7 +320,15 @@
     canvas.on("after:render", (opt) => {
       const ctx = opt?.ctx ?? canvas?.getContext();
       const vt = canvas?.viewportTransform;
-      if (!ctx || !vt) return;
+      /* Only the object canvas. Fabric fires this once per canvas — again for
+       * the interaction layer it draws handles and the selection box on — and
+       * that one is cleared only by the next renderTop(). A copy of the grid
+       * painted there therefore survives every zoom and pan happening
+       * underneath it: a second lattice frozen at the transform it was drawn
+       * at, and tile marks that outlive the selection that made them. Measured
+       * on the top canvas: 61456 opaque pixels after one renderTop, still
+       * 61456 after panning 180px. */
+      if (!ctx || !vt || ctx !== canvas?.getContext()) return;
       const ids = visibleIds();
       if (!ids.length) return;
       const picked = new Set(app.selectedTiles);

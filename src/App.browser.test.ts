@@ -104,6 +104,44 @@ describe("the wall", () => {
     expect(document.querySelector("canvas.lower-canvas")).toBeTruthy();
   });
 
+  it("keeps its guide grid off the interaction canvas", async () => {
+    /* Fabric has two canvases and fires after:render for both — once for the
+     * objects, once for the interaction layer it draws handles on. The guide
+     * hook answered both, so a copy of the whole lattice was painted onto the
+     * top canvas, which only renderTop() ever clears. Every later zoom or pan
+     * redrew the objects underneath while that copy stayed where it was: a
+     * second grid, offset from the real one, and tile marks that outlived the
+     * selection that made them.
+     *
+     * Measured on the top canvas rather than by eye: at 100% display scale the
+     * offset is small enough to look like anti-aliasing. */
+    const canvas = (window as { tesseraWall?: fabric.Canvas }).tesseraWall!;
+    await until(() => canvas.getObjects().length > 0);
+
+    const ink = () => {
+      const { width, height } = canvas.upperCanvasEl;
+      const pixels = canvas.contextTop.getImageData(0, 0, width, height).data;
+      let n = 0;
+      for (let i = 3; i < pixels.length; i += 4) if (pixels[i] > 0) n++;
+      return n;
+    };
+
+    /* Sized here on purpose. Mounted in a bare test document the stage collapses
+     * to one pixel wide and the wall is drawn at 0.02% zoom, where every guide
+     * is sub-pixel and the probe reads zero however broken the hook is — a test
+     * that passes by measuring nothing. */
+    canvas.setDimensions({ width: 900, height: 700 });
+    canvas.setViewportTransform([0.1, 0, 0, 0.1, 20, 20]);
+
+    canvas.clearContext(canvas.contextTop);
+    canvas.renderAll();
+    expect(ink()).toBe(0);
+
+    // What dragging a layer, or drawing a selection box, asks for.
+    canvas.renderTop();
+    expect(ink()).toBe(0);
+  });
+
   it("stamps a per-tile caption onto the group, live", async () => {
     /* Through the editor, not the model: the unit tests hand syncLiveLayers
      * plain objects, and the app hands it Svelte $state proxies — which is a
