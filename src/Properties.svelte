@@ -211,9 +211,23 @@
     </label>
   {/if}
 {:else if layer.kind === "image"}
+  <!-- Mirrored triangles across a dashed axis — the flip icon every editor
+       uses. The vertical one is the same drawing turned a quarter. -->
   <div class="row">
-    <button class:on={layer.flipX} onclick={() => set("flipX", !layer.flipX)}>↔ Flip</button>
-    <button class:on={layer.flipY} onclick={() => set("flipY", !layer.flipY)}>↕ Flip</button>
+    {#each [
+      { key: "flipX", title: "Flip horizontally", turn: 0 },
+      { key: "flipY", title: "Flip vertically", turn: 90 },
+    ] as const as f}
+      <button class:on={layer[f.key]} title={f.title} onclick={() => set(f.key, !layer[f.key])}>
+        <svg width="16" height="14" viewBox="0 0 16 14" aria-hidden="true">
+          <g transform="rotate({f.turn} 8 7)">
+            <path d="M6 2.5 L6 11.5 L1.5 11.5 Z" fill="currentColor" />
+            <path d="M10 2.5 L10 11.5 L14.5 11.5 Z" fill="none" stroke="currentColor" stroke-width="1.2" />
+            <line x1="8" y1="0.5" x2="8" y2="13.5" stroke="currentColor" stroke-width="1" stroke-dasharray="2 1.6" />
+          </g>
+        </svg>
+      </button>
+    {/each}
   </div>
 {:else}
   <p class="empty">A group has no properties of its own.</p>

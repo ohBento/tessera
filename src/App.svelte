@@ -40,9 +40,7 @@
     layoutGroups,
     layoutUsage,
     layouts,
-    moveLayer,
     moveLayersIntoGroup,
-    moveLayoutLayer,
     newGroup,
     newLayoutDoc,
     openFolder,
@@ -384,8 +382,6 @@
             {layer.kind === "group" ? "▾ " : ""}{layerLabel(layer)}
           </button>
         {/if}
-        <button title="Move up" onclick={() => moveLayoutLayer(layer.id, true)}>↑</button>
-        <button title="Move down" onclick={() => moveLayoutLayer(layer.id, false)}>↓</button>
         <button
           title={layer.kind === "group" ? "Ungroup, the layers stay" : "Delete"}
           onclick={() => deleteLayoutLayer(layer.id)}>×</button
@@ -468,7 +464,15 @@
       {@render tool("Undo (Ctrl+Z)", "↶", () => void undoEdit(), !undoable())}
       {@render tool("Redo (Ctrl+Y)", "↷", () => void redoEdit(), !redoable())}
       <span class="gap"></span>
-      {@render tool("Insert image", "🖻", () => void addLayoutImage(), !editing)}
+      <!-- Framed mountain and sun, the icon every editor uses for a picture —
+           no Unicode glyph reads as one at this size. -->
+      <button title="Insert image" disabled={!editing || !!app.busy} onclick={() => void addLayoutImage()}>
+        <svg width="16" height="14" viewBox="0 0 16 14" aria-hidden="true">
+          <rect x="1" y="1" width="14" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4" />
+          <circle cx="5.4" cy="5" r="1.4" fill="currentColor" />
+          <path d="M3 11.4 L7 7 L9.5 9.6 L11.5 7.6 L13.6 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" />
+        </svg>
+      </button>
       {@render tool("Insert text", "T", () => void addLayoutText(), !editing)}
       {@render tool("Rectangle", "▭", () => void addLayoutShape("rect"), !editing)}
       {@render tool("Ellipse", "◯", () => void addLayoutShape("ellipse"), !editing)}
@@ -476,10 +480,10 @@
       <span></span>
       <span class="gap"></span>
       {@render tool("Align left", "⇤", () => sheet?.alignTo("left"), noPick)}
-      {@render tool("Align top", "⤒", () => sheet?.alignTo("top"), noPick)}
+      {@render tool("Align right", "⇥", () => sheet?.alignTo("right"), noPick)}
       {@render tool("Center horizontally", "↔", () => sheet?.alignTo("centerX"), noPick)}
       {@render tool("Center vertically", "↕", () => sheet?.alignTo("centerY"), noPick)}
-      {@render tool("Align right", "⇥", () => sheet?.alignTo("right"), noPick)}
+      {@render tool("Align top", "⤒", () => sheet?.alignTo("top"), noPick)}
       {@render tool("Align bottom", "⤓", () => sheet?.alignTo("bottom"), noPick)}
       {@render tool("Equal horizontal gaps", "⇹", () => sheet?.spreadBy("x"), fewPicked)}
       {@render tool("Equal vertical gaps", "⇳", () => sheet?.spreadBy("y"), fewPicked)}
@@ -684,8 +688,6 @@
                           title="Layout changed — press Update stamps">●&nbsp;</span
                         >{/if}{stampName(layer)}
                     </button>
-                    <button title="Move up" onclick={() => moveLayer(layer.id, true)}>↑</button>
-                    <button title="Move down" onclick={() => moveLayer(layer.id, false)}>↓</button>
                     <button title="Delete" onclick={() => deleteLayer(layer.id)}>×</button>
                   </li>
                 {/each}
@@ -843,17 +845,20 @@
   .tools {
     flex: none;
     display: grid;
-    grid-template-columns: repeat(2, 30px);
-    gap: 2px;
+    grid-template-columns: repeat(2, 38px);
+    gap: 3px;
     align-content: start;
-    padding: 8px 6px;
+    padding: 8px;
     border-right: 1px solid #232b31;
     overflow-y: auto;
   }
   .tools button {
-    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 32px;
     padding: 0;
-    font: 14px/1 ui-sans-serif, system-ui, sans-serif;
+    font: 15px/1 ui-sans-serif, system-ui, sans-serif;
     color: #cfd6dc;
   }
   .tools button:disabled {

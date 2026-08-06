@@ -357,19 +357,6 @@ export async function deleteLayer(id: string) {
   });
 }
 
-/** `up` means visually on top, which is the end of the draw order — the list is
- *  shown topmost-first, so the two run in opposite directions. Movement stays
- *  inside the layer's own overlay; moving between overlays is reassignment, not
- *  reordering, and gets its own action. */
-export async function moveLayer(id: string, up: boolean) {
-  const list = listOf(id);
-  if (!list) return;
-  const at = list.findIndex((l) => l.id === id);
-  const to = at + (up ? 1 : -1);
-  if (at < 0 || to < 0 || to >= list.length) return;
-  await mutate(() => ([list[at], list[to]] = [list[to], list[at]]));
-}
-
 export const visibleIds = () => visibleTiles(app.manifest);
 
 async function run(label: string, fn: () => Promise<void>) {
@@ -642,17 +629,6 @@ export async function deleteLayoutLayer(id: string) {
     app.layoutSelection = app.layoutSelection.filter((x) => x !== id);
     if (app.layoutSelected === id) app.layoutSelected = "";
   });
-}
-
-/** Same top-first draw order as moveLayer, scoped to the list the layer sits
- *  in — a member moves within its group, not out of it. */
-export async function moveLayoutLayer(id: string, up: boolean) {
-  const list = openLayout() && findList(openLayout()!.layers, id);
-  if (!list) return;
-  const at = list.findIndex((l) => l.id === id);
-  const to = at + (up ? 1 : -1);
-  if (at < 0 || to < 0 || to >= list.length) return;
-  await mutate(() => ([list[at], list[to]] = [list[to], list[at]]));
 }
 
 export async function addLayoutImage() {
