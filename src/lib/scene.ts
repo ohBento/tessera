@@ -291,7 +291,33 @@ export async function buildGrid(
       // here yet.
       const obj = await layerObject(l, deps, box, id, texts);
       if (!obj) continue;
-      if (interactive) makeInteractive(obj, l);
+      /* Held inside its own cell. The wall is one continuous surface but the
+       * game's grid is not — it puts a gap between every portrait — so
+       * anything hanging over an edge is content the player will never see
+       * where the editor showed it. Export already dropped the overflow, by
+       * accident rather than by rule; clipping makes the preview tell the
+       * truth instead of inviting a placement that cannot survive.
+       *
+       * objectCaching off because a cached object is drawn from a bitmap that
+       * was rendered before the clip applied, which shows up as the clip
+       * simply not working. */
+      obj.clipPath = new fabric.Rect({
+        left: at.x,
+        top: at.y,
+        width: TILE_W,
+        height: TILE_H,
+        originX: "left",
+        originY: "top",
+        absolutePositioned: true,
+      });
+      obj.objectCaching = false;
+      /* Anything a Layout put here is positioned in the Layout, full stop. The
+       * wall would be the wrong place to judge it from — the game's grid has
+       * gaps, so a caption nudged towards an edge here can end up in a gap or
+       * on the neighbour in play — and "Stempel aktualisieren" would throw the
+       * nudge away anyway, since the Layout is where the position comes from.
+       * Better not to offer the drag than to revert it later. */
+      if (interactive) makeInteractive(obj, l.layoutId ? { ...l, locked: true } : l);
       else obj.selectable = obj.evented = false;
       Object.assign(obj, { layerId: l.id, tileId: id, space: "tile" });
       canvas.add(obj);

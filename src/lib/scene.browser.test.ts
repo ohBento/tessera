@@ -104,6 +104,64 @@ describe("tile base", () => {
   });
 });
 
+describe("a tile keeps its own content", () => {
+  /* The wall is one continuous canvas; the game's grid is not — it puts a gap
+   * between every portrait. So a layer that spills past its cell is not merely
+   * untidy on screen: export moves a tile-sized window across this same scene,
+   * so the neighbour's BMP gets the overflow. */
+  it("does not let a layer hang into the tile below", async () => {
+    const m = manifest(14);
+    const layer = newImageLayer("block:#ff00ff");
+    layer.scale = 0.4;
+    layer.x = 0.5;
+    // Well past the bottom edge. Without clipping this lands on the tile seven
+    // places later, which is the one directly underneath.
+    layer.y = 1.3;
+    m.overlays.push({ ...newOverlay("G", [m.order[0]]), layers: [layer] });
+
+    const tiles = await renderTiles(m, testDeps);
+    const below = tiles.get(m.order[7])!;
+    let magenta = 0;
+    for (let i = 54; i + 3 < below.length; i += 4) {
+      // BGRA, bottom-up — colour only, position does not matter here.
+      if (below[i] > 200 && below[i + 1] < 60 && below[i + 2] > 200) magenta++;
+    }
+    expect(magenta).toBe(0);
+  });
+
+  it("does not let a layer straddling the edge spill into its neighbour", async () => {
+    const m = manifest(14);
+    const layer = newImageLayer("block:#ff00ff");
+    layer.scale = 0.4;
+    // Centred on the seam between cell 0 and cell 1: half of it hangs over.
+    layer.x = 1;
+    layer.y = 0.5;
+    m.overlays.push({ ...newOverlay("G", [m.order[0]]), layers: [layer] });
+
+    const next = (await renderTiles(m, testDeps)).get(m.order[1])!;
+    let magenta = 0;
+    for (let i = 54; i + 3 < next.length; i += 4) {
+      if (next[i] > 200 && next[i + 1] < 60 && next[i + 2] > 200) magenta++;
+    }
+    expect(magenta).toBe(0);
+  });
+
+  it("still draws the layer on its own tile", async () => {
+    const m = manifest(14);
+    const layer = newImageLayer("block:#ff00ff");
+    layer.scale = 0.4;
+    layer.x = 0.5;
+    layer.y = 0.5;
+    m.overlays.push({ ...newOverlay("G", [m.order[0]]), layers: [layer] });
+
+    const own = (await renderTiles(m, testDeps)).get(m.order[0])!;
+    const [b, g, r] = pixel(own, TILE_W / 2, TILE_H / 2);
+    expect(r).toBeGreaterThan(200);
+    expect(g).toBeLessThan(60);
+    expect(b).toBeGreaterThan(200);
+  });
+});
+
 describe("grid-space layers", () => {
   it("land in the tile whose cell they sit over, and only there", async () => {
     const m = manifest(8);
