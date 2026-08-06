@@ -15,6 +15,7 @@
     canAssign,
     canBakeMosaic,
     canRestrict,
+    canSaveLayout,
     canStampLayout,
     clearTiles,
     closeLayoutDoc,
@@ -32,6 +33,7 @@
     redoEdit,
     redoable,
     restrictToSelection,
+    saveLayout,
     saveToGame,
     selectLayer,
     selectLayoutLayer,
@@ -41,7 +43,6 @@
     toggleLayoutLayerHidden,
     undoEdit,
     undoable,
-    updateLayoutStamps,
   } from "./lib/editor.svelte";
   import { layerLabel } from "./lib/model";
 
@@ -105,11 +106,13 @@
         {#if app.selectedTiles.length}({app.selectedTiles.length}){/if}
       </button>
       <button
-        onclick={() => updateLayoutStamps(editing.id)}
-        disabled={!layoutUsage(editing.id) || !!app.busy}
-        title="Rendert neu und frischt jeden vorhandenen Stempel dieses Layouts auf"
+        onclick={() => saveLayout(editing.id)}
+        disabled={!canSaveLayout(editing.id) || !!app.busy}
+        title={layoutUsage(editing.id)
+          ? `Überträgt die Änderungen auf ${layoutUsage(editing.id)} Stempel`
+          : "Noch nirgends gestempelt"}
       >
-        Stempel aktualisieren ({layoutUsage(editing.id)})
+        Speichern
       </button>
     {:else}
       <div class="modes" role="group" aria-label="Werkzeug">
@@ -145,6 +148,8 @@
         {app.busy}…
       {:else if app.error}
         {app.error}
+      {:else if editing && canSaveLayout(editing.id)}
+        Änderungen noch nicht auf den Kacheln
       {:else if editing && !app.selectedTiles.length}
         Kacheln auf der Wand wählen, um zu stempeln
       {:else if assignHint()}
@@ -202,11 +207,17 @@
           <p class="empty">Keine Ebenen.</p>
         {/if}
         {#each groups as { overlay, layers: rows } (overlay.id)}
-          <!-- The assignment, not overlay.name: the name is fixed at creation,
-               so an overlay made from every tile still called itself "Alle
-               Kacheln" after one was taken away. Renaming arrives later. -->
+          <!-- Named, not just counted: a bare "3 Kacheln" heading never said
+               what the thing under it was. "Kachelgruppe" and not "Gruppe",
+               because a layer group is a different axis entirely — a group is
+               which layers move together, a tile group is which tiles they
+               appear on — and one word for both would guarantee confusion.
+               The count comes from the assignment rather than overlay.name,
+               which is fixed at creation and goes stale the moment a tile is
+               added or removed. -->
           <h3 title={overlay.name}>
-            {overlay.tiles === "all" ? "alle Kacheln" : `${overlay.tiles.length} Kacheln`}
+            Kachelgruppe &middot;
+            {overlay.tiles === "all" ? "alle" : `${overlay.tiles.length} Kacheln`}
           </h3>
           <ul>
             {#each rows as layer (layer.id)}

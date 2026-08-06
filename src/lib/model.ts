@@ -252,9 +252,34 @@ export type Layout = {
   id: string;
   name: string;
   layers: Layer[];
+  /** Fingerprint of `layers` as they were when this Layout was last rendered
+   *  and stamped. Absent until the first stamp. Comparing it against the
+   *  current fingerprint is what tells "there are changes the tiles have not
+   *  seen yet" apart from "the tiles are already showing this". */
+  stamped?: string;
 };
 
 export const newLayout = (name: string): Layout => ({ id: newId(), name, layers: [] });
+
+/** Cheap content fingerprint of a Layout's layers.
+ *
+ *  A hash rather than the JSON itself: the comparison only ever needs to
+ *  detect difference, and keeping a second full copy of every layout inside
+ *  the manifest would be a lot of bytes to answer one yes/no question. */
+export function layoutFingerprint(layout: Layout): string {
+  const json = JSON.stringify(layout.layers);
+  let h = 5381;
+  for (let i = 0; i < json.length; i++) h = ((h * 33) ^ json.charCodeAt(i)) >>> 0;
+  // Length alongside the hash, so two different layouts colliding on the hash
+  // still have to also match in size before being called identical.
+  return `${h.toString(36)}-${json.length.toString(36)}`;
+}
+
+/** Whether this Layout has edits the stamps on the tiles do not show yet.
+ *  False for one never stamped: there is nothing to bring up to date, and the
+ *  action for that case is stamping it somewhere in the first place. */
+export const layoutNeedsRestamp = (layout: Layout) =>
+  layout.stamped !== undefined && layout.stamped !== layoutFingerprint(layout);
 
 export type Manifest = {
   version: 4;
@@ -297,6 +322,12 @@ export function stampInto(overlay: Overlay, layoutId: string, asset: string): Im
   }
   const stamp = newImageLayer(asset);
   stamp.layoutId = layoutId;
+  /* A stamp is rendered at exactly tile resolution, so 1 is the only scale that
+   * reproduces the Layout as it was composed. newImageLayer's smaller default
+   * is for a picture dropped in by hand, where landing full-bleed would be
+   * wrong — here it shrank the whole sheet to a patch in the middle of the
+   * tile, which reads as "the stamp did not arrive". */
+  stamp.scale = 1;
   overlay.layers.push(stamp);
   return stamp;
 }

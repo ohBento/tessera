@@ -19,6 +19,8 @@ import {
   nestingShift,
   newGroupLayer,
   newImageLayer,
+  layoutFingerprint,
+  layoutNeedsRestamp,
   newLayout,
   newOverlay,
   newShapeLayer,
@@ -287,6 +289,72 @@ describe("overlaysUsingLayout", () => {
   });
 });
 
+describe("layoutNeedsRestamp", () => {
+  const withImage = () => {
+    const layout = newLayout("L");
+    layout.layers.push(newImageLayer("a.png"));
+    return layout;
+  };
+
+  it("says no for a layout that was never stamped", () => {
+    // Nothing on any tile to bring up to date; the action for this case is
+    // stamping it somewhere, not saving.
+    expect(layoutNeedsRestamp(withImage())).toBe(false);
+  });
+
+  it("says no right after stamping", () => {
+    const layout = withImage();
+    layout.stamped = layoutFingerprint(layout);
+    expect(layoutNeedsRestamp(layout)).toBe(false);
+  });
+
+  it("says yes once a layer moves", () => {
+    const layout = withImage();
+    layout.stamped = layoutFingerprint(layout);
+    layout.layers[0].x = 0.9;
+    expect(layoutNeedsRestamp(layout)).toBe(true);
+  });
+
+  it("notices a layer being hidden, added, removed or reordered", () => {
+    const layout = withImage();
+    layout.layers.push(newImageLayer("b.png"));
+    layout.stamped = layoutFingerprint(layout);
+    layout.layers[0].hidden = true;
+    expect(layoutNeedsRestamp(layout)).toBe(true);
+
+    const reordered = withImage();
+    reordered.layers.push(newImageLayer("b.png"));
+    reordered.stamped = layoutFingerprint(reordered);
+    [reordered.layers[0], reordered.layers[1]] = [reordered.layers[1], reordered.layers[0]];
+    expect(layoutNeedsRestamp(reordered)).toBe(true);
+
+    const removed = withImage();
+    removed.stamped = layoutFingerprint(removed);
+    removed.layers.pop();
+    expect(layoutNeedsRestamp(removed)).toBe(true);
+  });
+
+  it("can report a change that turns out to look identical", () => {
+    // Hiding then unhiding leaves `hidden: false` where the key was absent
+    // before, which serialises differently even though it renders the same.
+    // Pinned rather than papered over with a normaliser: the cost is one
+    // redundant re-render of an identical picture, and the alternative is a
+    // second definition of "same" to keep in step with the layer types.
+    const layout = withImage();
+    layout.stamped = layoutFingerprint(layout);
+    layout.layers[0].hidden = true;
+    layout.layers[0].hidden = false;
+    expect(layoutNeedsRestamp(layout)).toBe(true);
+  });
+
+  it("ignores a rename, which changes nothing about the picture", () => {
+    const layout = withImage();
+    layout.stamped = layoutFingerprint(layout);
+    layout.name = "Anderer Name";
+    expect(layoutNeedsRestamp(layout)).toBe(false);
+  });
+});
+
 describe("stampInto", () => {
   it("adds a stamp carrying the layout it came from", () => {
     const overlay = newOverlay("A");
@@ -294,6 +362,17 @@ describe("stampInto", () => {
     expect(overlay.layers).toHaveLength(1);
     expect(stamp.layoutId).toBe("L1");
     expect(stamp.asset).toBe("render1.png");
+  });
+
+  it("lands the stamp filling the tile, not at the picture default", () => {
+    // A stamp is rendered at exactly tile resolution, so the only scale that
+    // reproduces the Layout as composed is 1. newImageLayer's 0.3 default is
+    // meant for a picture dropped in by hand and would shrink the whole sheet
+    // to a patch floating in the middle of the tile.
+    const stamp = stampInto(newOverlay("A"), "L1", "render.png");
+    expect(stamp.scale).toBe(1);
+    expect(stamp.x).toBe(0.5);
+    expect(stamp.y).toBe(0.5);
   });
 
   it("replaces the picture of an existing stamp rather than stacking a copy", () => {

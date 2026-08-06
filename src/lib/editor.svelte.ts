@@ -12,6 +12,8 @@ import {
   emptyManifest,
   findLayer,
   instanceCount,
+  layoutFingerprint,
+  layoutNeedsRestamp,
   newImageLayer,
   newLayout,
   newOverlay,
@@ -501,7 +503,14 @@ export async function stampLayout(layoutId: string) {
   await run("stamp", async () => {
     const bytes = await renderLayout(layout, app.deps!);
     const asset = await saveGeneratedAsset(app.dir, bytes);
-    await mutate(() => stampInto(overlayFor(app.selectedTiles), layoutId, asset));
+    const seen = layoutFingerprint(layout);
+    await mutate(() => {
+      stampInto(overlayFor(app.selectedTiles), layoutId, asset);
+      // Taken before the render, not after: it records the state that actually
+      // went into the picture, so an edit made while rendering still counts as
+      // unsaved rather than being silently marked as already stamped.
+      layout.stamped = seen;
+    });
   });
 }
 
@@ -509,17 +518,29 @@ export async function stampLayout(layoutId: string) {
  *  design nobody uses anymore is visibly safe to delete. */
 export const layoutUsage = (layoutId: string) => overlaysUsingLayout(app.manifest, layoutId).length;
 
+/** Whether saving would do anything: the Layout has to be stamped somewhere,
+ *  and changed since. Offering it otherwise gives a button that re-renders an
+ *  identical picture and looks like it did nothing. */
+export function canSaveLayout(layoutId: string): boolean {
+  const layout = app.manifest.layouts.find((l) => l.id === layoutId);
+  return !!layout && !!layoutUsage(layoutId) && layoutNeedsRestamp(layout);
+}
+
 /** Re-renders once and refreshes every existing stamp of this Layout across
  *  every overlay, so a design used in several places updates everywhere at
  *  once instead of being re-stamped by hand at each. */
-export async function updateLayoutStamps(layoutId: string) {
+export async function saveLayout(layoutId: string) {
   const layout = app.manifest.layouts.find((l) => l.id === layoutId);
-  const targets = overlaysUsingLayout(app.manifest, layoutId);
-  if (!layout || !app.deps || !targets.length) return;
-  await run("update", async () => {
+  if (!layout || !app.deps || !canSaveLayout(layoutId)) return;
+  await run("save", async () => {
     const bytes = await renderLayout(layout, app.deps!);
     const asset = await saveGeneratedAsset(app.dir, bytes);
-    await mutate(() => refreshStamps(app.manifest, layoutId, asset));
+    const seen = layoutFingerprint(layout);
+    await mutate(() => {
+      const n = refreshStamps(app.manifest, layoutId, asset);
+      layout.stamped = seen;
+      app.error = `${n} Stempel aktualisiert`;
+    });
   });
 }
 
