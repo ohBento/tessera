@@ -131,6 +131,69 @@ export function snapBox(moving: Box, targets: Box[], threshold: number): Snap {
   };
 }
 
+/* --- Align and distribute. GIMP's tool, reduced to what a tile sheet needs:
+ * six edges against a fixed reference, and equal gaps between three or more.
+ * Pure deltas in, deltas out, so the maths is testable without a canvas and
+ * the caller decides what a box actually is. --- */
+
+export type AlignEdge = "left" | "centerX" | "right" | "top" | "centerY" | "bottom";
+
+/** How far to move each box so the chosen edge lines up with `ref`'s.
+ *  One axis per call — the other delta is always 0 — because aligning
+ *  horizontally must not disturb vertical positions, and vice versa. */
+export function alignBoxes(boxes: Box[], edge: AlignEdge, ref: Box): { dx: number; dy: number }[] {
+  const want = {
+    left: ref.left,
+    centerX: ref.left + ref.width / 2,
+    right: ref.left + ref.width,
+    top: ref.top,
+    centerY: ref.top + ref.height / 2,
+    bottom: ref.top + ref.height,
+  }[edge];
+  return boxes.map((b) => {
+    const mine = {
+      left: b.left,
+      centerX: b.left + b.width / 2,
+      right: b.left + b.width,
+      top: b.top,
+      centerY: b.top + b.height / 2,
+      bottom: b.top + b.height,
+    }[edge];
+    const d = want - mine;
+    return edge === "left" || edge === "centerX" || edge === "right"
+      ? { dx: d, dy: 0 }
+      : { dx: 0, dy: d };
+  });
+}
+
+/** Equal gaps along one axis — GIMP's "distribute gaps". The outermost two
+ *  boxes stay where they are; the space left over between them is split into
+ *  identical gaps. Deltas come back in the order the boxes went in, so the
+ *  caller can zip them with whatever the boxes stand for. Fewer than three
+ *  boxes have no middle to spread, so nothing moves. */
+export function distributeBoxes(boxes: Box[], axis: "x" | "y"): { dx: number; dy: number }[] {
+  const none = boxes.map(() => ({ dx: 0, dy: 0 }));
+  if (boxes.length < 3) return none;
+
+  const start = axis === "x" ? (b: Box) => b.left : (b: Box) => b.top;
+  const size = axis === "x" ? (b: Box) => b.width : (b: Box) => b.height;
+
+  const order = boxes.map((b, i) => i).sort((a, b) => start(boxes[a]) - start(boxes[b]));
+  const first = boxes[order[0]];
+  const last = boxes[order[order.length - 1]];
+  const span = start(last) + size(last) - start(first);
+  const gap = (span - order.reduce((sum, i) => sum + size(boxes[i]), 0)) / (order.length - 1);
+
+  let at = start(first);
+  const out = none;
+  for (const i of order) {
+    const d = at - start(boxes[i]);
+    out[i] = axis === "x" ? { dx: d, dy: 0 } : { dx: 0, dy: d };
+    at += size(boxes[i]) + gap;
+  }
+  return out;
+}
+
 /** Fabric's own Text default. Anything laying out multi-line text has to agree
  *  with this or lines sit at different heights than Fabric draws them. */
 export const LINE_HEIGHT = 1.16;

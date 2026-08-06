@@ -17,7 +17,15 @@
     setLayoutSelection,
   } from "./lib/editor.svelte";
   import { TILE_H, TILE_W } from "./lib/bmp";
-  import { isTyping, snapBox, type Guide } from "./lib/geometry";
+  import {
+    alignBoxes,
+    distributeBoxes,
+    isTyping,
+    snapBox,
+    type AlignEdge,
+    type Box,
+    type Guide,
+  } from "./lib/geometry";
   import { findLayer, walkLayers } from "./lib/model";
   import { buildLayout, freeScale, readBackLayout } from "./lib/scene";
 
@@ -154,6 +162,58 @@
     });
   }
 
+  /* GIMP's align tool, reduced to what a sheet needs: the reference is always
+   * the sheet itself, distribute always works on the picked set. The moves go
+   * through exactly the code path a finished drag takes — shift the Fabric
+   * object, read it back, write the model — so nesting shifts, per-kind size
+   * fields and undo grouping are the same one implementation. */
+  function realign(compute: (boxes: Box[]) => { dx: number; dy: number }[]) {
+    const c = canvas;
+    if (!c) return;
+    const objs = objectsFor(app.layoutSelection);
+    if (!objs.length) return;
+
+    /* Loose objects first: inside an ActiveSelection, left/top are relative to
+     * the selection frame and the maths is in sheet coordinates. Discarding is
+     * this component rearranging, not the user deselecting — same guard as the
+     * selection effect above. */
+    rebuilding = true;
+    try {
+      c.discardActiveObject();
+    } finally {
+      rebuilding = false;
+    }
+    for (const o of objs) o.setCoords();
+
+    const deltas = compute(objs.map((o) => o.getBoundingRect()));
+    const gesture = `align:${app.layoutSelection.join(",")}`;
+    objs.forEach((o, i) => {
+      const { dx, dy } = deltas[i];
+      if (dx || dy) {
+        o.set({ left: (o.left ?? 0) + dx, top: (o.top ?? 0) + dy });
+        o.setCoords();
+      }
+      const id = (o as { layerId?: string }).layerId;
+      if (id) void applyLayoutTransform(id, readBackLayout(o), gesture);
+    });
+    endGesture();
+
+    // Put the selection frame back where the user had it.
+    rebuilding = true;
+    try {
+      if (objs.length === 1) c.setActiveObject(objs[0]);
+      else c.setActiveObject(new fabric.ActiveSelection(objs, { canvas: c }));
+    } finally {
+      rebuilding = false;
+    }
+    scalingRules();
+    c.requestRenderAll();
+  }
+
+  const align = (edge: AlignEdge) =>
+    realign((boxes) => alignBoxes(boxes, edge, { left: 0, top: 0, width: TILE_W, height: TILE_H }));
+  const spread = (axis: "x" | "y") => realign((boxes) => distributeBoxes(boxes, axis));
+
   /* List selection -> canvas, re-run after a rebuild replaced every object.
    * More than one picked layer becomes an ActiveSelection, which is what gives
    * the whole set one transform frame and moves it as a unit. */
@@ -227,6 +287,13 @@
     let panning = false;
     let last = { x: 0, y: 0 };
     let spaceHeld = false;
+    /** A drag/scale/rotate is in flight — the window in which Esc can still
+     *  take it back, because the model is only written at the end of it. */
+    let transforming = false;
+    /** Swallows the write-back a cancelled gesture's mouse release still
+     *  fires. Cleared at mouse:up either way, so it can never go stale and
+     *  eat a later, legitimate transform. */
+    let cancelled = false;
 
     canvas.on("mouse:down", (opt) => {
       if (!(opt.e instanceof MouseEvent)) return;
@@ -245,7 +312,13 @@
     canvas.on("mouse:up", () => {
       panning = false;
       canvas!.selection = true;
+      // Fabric fires object:modified before mouse:up within the same release,
+      // so by here a cancelled gesture has already been swallowed.
+      transforming = false;
+      cancelled = false;
     });
+    canvas.on("object:scaling", () => (transforming = true));
+    canvas.on("object:rotating", () => (transforming = true));
 
     /* Snapping. Fabric has none of its own, so the pull happens here: on every
      * step of a drag, line the moving box up with the sheet and with every
@@ -277,6 +350,7 @@
     });
 
     canvas.on("object:moving", (opt) => {
+      transforming = true;
       guides = [];
       const target = opt.target;
       if (!target || (opt.e as MouseEvent | undefined)?.altKey) return;
@@ -428,6 +502,11 @@
      * writes back every member, since Fabric moved all of them and each one's
      * own position and angle changed. */
     canvas.on("object:modified", (opt) => {
+      // The release of a gesture Esc already took back — nothing to record.
+      if (cancelled) {
+        cancelled = false;
+        return;
+      }
       const target = opt.target as fabric.Object | undefined;
       if (!target) return;
       const members =
@@ -446,6 +525,22 @@
     });
 
     const key = (e: KeyboardEvent, down: boolean) => {
+      /* Esc mid-gesture takes the transform back, the reading GIMP and Krita
+       * both use. Cheap here because the model is only written when the
+       * gesture ends: cancelling is redrawing from the model and swallowing
+       * the write-back the mouse release still fires. Registered in the
+       * capture phase and stopped, because App's own Escape — close the
+       * document — listens on the same window and must not win mid-drag. */
+      if (down && e.key === "Escape" && transforming) {
+        cancelled = true;
+        transforming = false;
+        guides = [];
+        built = "";
+        if (app.deps) void rebuild(app.deps);
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       if (e.code !== "Space") return;
       if (isTyping(document.activeElement)) return;
       spaceHeld = down;
@@ -454,13 +549,13 @@
     };
     const onDown = (e: KeyboardEvent) => key(e, true);
     const onUp = (e: KeyboardEvent) => key(e, false);
-    addEventListener("keydown", onDown);
-    addEventListener("keyup", onUp);
+    addEventListener("keydown", onDown, true);
+    addEventListener("keyup", onUp, true);
 
     return () => {
       ro.disconnect();
-      removeEventListener("keydown", onDown);
-      removeEventListener("keyup", onUp);
+      removeEventListener("keydown", onDown, true);
+      removeEventListener("keyup", onUp, true);
       const dying = canvas;
       canvas = undefined;
       // Cleared, not left dangling: a Layout canvas comes and goes, and a
@@ -476,6 +571,28 @@
   <div class="hud">
     {Math.round(zoom * 100)}% &middot; {TILE_W}&times;{TILE_H}
     <button onclick={fit}>Einpassen</button>
+    {#if app.layoutSelection.length}
+      <span class="sep"></span>
+      <button title="Links ans Blatt" onclick={() => align("left")}>⇤</button>
+      <button title="Horizontal zentrieren" onclick={() => align("centerX")}>↔</button>
+      <button title="Rechts ans Blatt" onclick={() => align("right")}>⇥</button>
+      <button title="Oben ans Blatt" onclick={() => align("top")}>⤒</button>
+      <button title="Vertikal zentrieren" onclick={() => align("centerY")}>↕</button>
+      <button title="Unten ans Blatt" onclick={() => align("bottom")}>⤓</button>
+      <span class="sep"></span>
+      <!-- Distribution needs a middle to spread; the maths refuses below three
+           anyway, this just says so instead of doing nothing. -->
+      <button
+        title="Gleiche Abstände horizontal"
+        disabled={app.layoutSelection.length < 3}
+        onclick={() => spread("x")}>⇹</button
+      >
+      <button
+        title="Gleiche Abstände vertikal"
+        disabled={app.layoutSelection.length < 3}
+        onclick={() => spread("y")}>⇳</button
+      >
+    {/if}
   </div>
 </div>
 
@@ -507,5 +624,14 @@
     background: #1b2228;
     color: inherit;
     cursor: pointer;
+  }
+  .hud button:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  .sep {
+    width: 1px;
+    align-self: stretch;
+    background: #3a444c;
   }
 </style>

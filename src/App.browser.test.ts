@@ -10,6 +10,7 @@
  * It runs at all because platform.ts falls back to an in-memory filesystem
  * outside Tauri — the app opens its mock FaceTexture folder on mount, exactly
  * as it would open the real one. */
+import type * as fabric from "fabric";
 import { mount, unmount } from "svelte";
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -492,6 +493,44 @@ describe("the Layout editor", () => {
       endGesture();
     }
     expect(history.past.length - before).toBe(2);
+  });
+
+  it("takes a gesture back when Escape is pressed mid-drag", async () => {
+    await newLayoutDoc("EscProbe");
+    await addLayoutText();
+    const id = openLayout()!.layers[0].id;
+    setLayoutSelection([id]);
+    const live = () =>
+      (window as { tesseraLayout?: fabric.Canvas }).tesseraLayout as fabric.Canvas;
+    await until(() => !!live()?.getObjects().some((o) => (o as { layerId?: string }).layerId === id));
+
+    const canvas = live();
+    const obj = canvas.getObjects().find((o) => (o as { layerId?: string }).layerId === id)!;
+    const xBefore = findLayer(openLayout()!.layers, id)!.x;
+
+    /* Mid-drag: Fabric has moved the object and reported it. Alt held, so
+     * snapping cannot vary what the numbers come out as. */
+    canvas.setActiveObject(obj);
+    obj.set({ left: (obj.left ?? 0) + 120 });
+    obj.setCoords();
+    canvas.fire("object:moving", {
+      target: obj,
+      e: new MouseEvent("mousemove", { altKey: true }),
+    } as never);
+
+    /* Esc lands on the body, as a real key does — aiming at the window itself
+     * would skip the capture phase and reach App's own Escape first. */
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await new Promise((r) => setTimeout(r, 300));
+
+    // The release that still follows must write nothing.
+    canvas.fire("object:modified", { target: obj } as never);
+    canvas.fire("mouse:up", {} as never);
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(findLayer(openLayout()!.layers, id)!.x).toBe(xBefore);
+    // And Esc mid-gesture means "drop the drag", never "close the document".
+    expect(app.openLayoutId).not.toBe("");
   });
 
   it("does not resize a polygon just for being dragged", async () => {

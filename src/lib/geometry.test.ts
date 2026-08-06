@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { cellsIn, GAP_X, GAP_Y, snapBox } from "./geometry";
+import { alignBoxes, cellsIn, distributeBoxes, GAP_X, GAP_Y, snapBox } from "./geometry";
 import { TILE_H as H, TILE_W as W } from "./bmp";
 
 describe("snapBox", () => {
@@ -312,5 +312,78 @@ describe("polygonPoints", () => {
     const xs = pts.map((p) => Math.abs(p.x));
     const ys = pts.map((p) => Math.abs(p.y));
     expect(Math.max(...xs)).toBeGreaterThan(Math.max(...ys) * 5);
+  });
+});
+
+describe("alignBoxes", () => {
+  const b = (left: number, top: number, w = 40, h = 20) => ({ left, top, width: w, height: h });
+  const sheet = { left: 0, top: 0, width: 624, height: 804 };
+
+  it("brings every left edge onto the reference's", () => {
+    const d = alignBoxes([b(10, 5), b(100, 200)], "left", sheet);
+    expect(d).toEqual([
+      { dx: -10, dy: 0 },
+      { dx: -100, dy: 0 },
+    ]);
+  });
+
+  it("centres horizontally without touching the vertical", () => {
+    const d = alignBoxes([b(0, 123)], "centerX", sheet);
+    // Box centre 20 must land on 312: shift by 292 and leave y alone.
+    expect(d).toEqual([{ dx: 292, dy: 0 }]);
+  });
+
+  it("puts a right edge flush with the sheet's", () => {
+    const d = alignBoxes([b(0, 0)], "right", sheet);
+    expect(d).toEqual([{ dx: 584, dy: 0 }]);
+  });
+
+  it("handles the three vertical edges on the other axis", () => {
+    expect(alignBoxes([b(7, 50)], "top", sheet)).toEqual([{ dx: 0, dy: -50 }]);
+    expect(alignBoxes([b(7, 0)], "centerY", sheet)).toEqual([{ dx: 0, dy: 392 }]);
+    expect(alignBoxes([b(7, 0)], "bottom", sheet)).toEqual([{ dx: 0, dy: 784 }]);
+  });
+});
+
+describe("distributeBoxes", () => {
+  const b = (left: number, top: number, w = 40, h = 20) => ({ left, top, width: w, height: h });
+
+  it("moves nothing below three boxes", () => {
+    expect(distributeBoxes([b(0, 0), b(500, 0)], "x")).toEqual([
+      { dx: 0, dy: 0 },
+      { dx: 0, dy: 0 },
+    ]);
+  });
+
+  it("makes the gaps equal and pins the outermost two", () => {
+    // Widths 40 each, outer edges at 0 and 340: 220px of air over two gaps.
+    const boxes = [b(0, 0), b(50, 0), b(300, 0)];
+    const d = distributeBoxes(boxes, "x");
+    expect(d[0]).toEqual({ dx: 0, dy: 0 });
+    expect(d[2]).toEqual({ dx: 0, dy: 0 });
+    // Middle box: 40 + gap 110 -> starts at 150, and both gaps come out 110.
+    expect(d[1]).toEqual({ dx: 100, dy: 0 });
+  });
+
+  it("does not care what order the boxes arrive in", () => {
+    // Same three boxes, middle one listed first: its delta must follow it.
+    const d = distributeBoxes([b(50, 0), b(0, 0), b(300, 0)], "x");
+    expect(d[0]).toEqual({ dx: 100, dy: 0 });
+    expect(d[1]).toEqual({ dx: 0, dy: 0 });
+    expect(d[2]).toEqual({ dx: 0, dy: 0 });
+  });
+
+  it("respects differing sizes when splitting the air", () => {
+    // Sizes 10, 30, 20 between edges 0 and 120: air = 120-60 = 60, gap 30.
+    const d = distributeBoxes([b(0, 0, 10, 10), b(20, 0, 30, 10), b(100, 0, 20, 10)], "x");
+    // Second starts at 10+30=40, third at 40+30+30=100 (already there).
+    expect(d[1]).toEqual({ dx: 20, dy: 0 });
+    expect(d[2]).toEqual({ dx: 0, dy: 0 });
+  });
+
+  it("distributes vertically on the other axis", () => {
+    const d = distributeBoxes([b(0, 0), b(0, 30), b(0, 200)], "y");
+    expect(d[1].dx).toBe(0);
+    expect(d[1].dy).not.toBe(0);
   });
 });
