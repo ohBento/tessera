@@ -162,13 +162,15 @@ describe("the wall", () => {
     await closeLayoutDoc();
     await until(() => !app.openLayoutId);
 
-    /* Through the DOM, because the bug was in the DOM: rename used to hang off
-     * a double-click whose first click opened the document and unmounted the
-     * row — the second click could never land, so layouts were unrenamable. */
-    const pencil = [...document.querySelectorAll("aside button")].find(
-      (b) => (b as HTMLElement).title === "Rename",
+    /* Through the DOM, because the bug was in the DOM: rename and open cannot
+     * share the name button — the first click of a double-click would open
+     * the document and unmount the row, so the second click landed on nothing
+     * and layouts were unrenamable. Double-click renames (like a group row),
+     * the pencil opens. */
+    const name = [...document.querySelectorAll("aside button.name")].find((b) =>
+      b.textContent!.includes("Alt"),
     ) as HTMLButtonElement;
-    pencil.click();
+    name.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     await until(() => !!document.querySelector("aside input.rename"));
 
     const input = document.querySelector("aside input.rename") as HTMLInputElement;
@@ -177,6 +179,13 @@ describe("the wall", () => {
     await until(() => layouts()[0]?.name === "Neu");
     // Renaming must not have opened the document as a side effect.
     expect(app.openLayoutId).toBe("");
+
+    // And the pencil is what opens the editor now.
+    const pencil = [...document.querySelectorAll("aside button")].find(
+      (b) => (b as HTMLElement).title === "Edit layout",
+    ) as HTMLButtonElement;
+    pencil.click();
+    await until(() => app.openLayoutId === layouts()[0].id);
   });
 
   it("spends nothing on a rename that changes nothing", async () => {
