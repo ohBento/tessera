@@ -199,6 +199,66 @@ export function tileCaptions(): TextLayer[] {
   return (group?.layers ?? []).filter((l): l is TextLayer => l.kind === "text");
 }
 
+/** The live pictures on the tile currently picked — the same bargain as a
+ *  caption, one kind over: the Layout owns where and how big, the tile owns
+ *  which picture. One tile at a time, for the same reason. */
+export function tileImages(): ImageLayer[] {
+  if (app.selectedTiles.length !== 1) return [];
+  const group = groupOf(app.manifest, app.selectedTiles[0]);
+  return (group?.layers ?? []).filter((l): l is ImageLayer => l.kind === "image" && !!l.live);
+}
+
+/** This tile's picture for a live image layer, or undefined when it shows the
+ *  layer's own. "" is a choice, not an absence: no picture here. */
+export const tileAsset = (tileId: string, layerId: string): string | undefined =>
+  app.manifest.tiles[tileId]?.swap?.[layerId];
+
+/** Every picture already in play for this layer, newest last — the gallery.
+ *
+ *  Class logos repeat across a wall: roughly twenty-five of them over forty-odd
+ *  characters, so the second tile onwards is almost always a picture already
+ *  imported. Offering those to click is the difference between one file dialog
+ *  and forty. The layer's own picture leads, since that is the default every
+ *  tile falls back to. */
+export function tileImageChoices(layerId: string): string[] {
+  const layer = tileImages().find((l) => l.id === layerId);
+  const seen = new Set<string>(layer ? [layer.asset] : []);
+  for (const tile of Object.values(app.manifest.tiles)) {
+    const a = tile.swap?.[layerId];
+    if (a) seen.add(a);
+  }
+  return [...seen];
+}
+
+/** Points one tile's live picture at an asset. "" means none — see layerAsset. */
+export async function setTileAsset(tileId: string, layerId: string, asset: string) {
+  const tile = app.manifest.tiles[tileId];
+  if (!tile) return;
+  await mutate(() => {
+    // The map is optional on Tile, so a manifest written before per-tile
+    // pictures existed has to grow one on first use.
+    (tile.swap ??= {})[layerId] = asset;
+  });
+}
+
+/** Back to the layer's own picture — the absence of a key, not "" which is the
+ *  deliberate "none". */
+export async function clearTileAsset(tileId: string, layerId: string) {
+  const tile = app.manifest.tiles[tileId];
+  if (!tile?.swap || tile.swap[layerId] === undefined) return;
+  await mutate(() => delete tile.swap![layerId]);
+}
+
+/** Imports a picture and gives it to this one tile. */
+export async function pickTileImage(tileId: string, layerId: string) {
+  const path = await pickFile({ filters: [IMAGE_FILTER] });
+  if (typeof path !== "string") return;
+  await run("import", async () => {
+    const asset = await importAsset(app.dir, path);
+    await setTileAsset(tileId, layerId, asset);
+  });
+}
+
 /** Whether the wording panel is hiding only because several tiles are picked.
  *
  *  The panel needs exactly one tile — a field showing several tiles' differing
@@ -208,7 +268,9 @@ export function tileCaptions(): TextLayer[] {
 export const captionsNeedOneTile = () =>
   app.selectedTiles.length > 1 &&
   app.selectedTiles.some((id) =>
-    (groupOf(app.manifest, id)?.layers ?? []).some((l) => l.kind === "text"),
+    (groupOf(app.manifest, id)?.layers ?? []).some(
+      (l) => l.kind === "text" || (l.kind === "image" && !!l.live),
+    ),
   );
 
 /** This tile's wording for a caption, or undefined when it has none of its own

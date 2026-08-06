@@ -19,6 +19,7 @@ import {
   instanceCount,
   isDetached,
   layerLabel,
+  layerAsset,
   layerText,
   migrate,
   nestingShift,
@@ -1022,5 +1023,87 @@ describe("nestingShift", () => {
 describe("newTextLayer", () => {
   it("defaults to a plain word, so clearing the field cannot strand a placeholder", () => {
     expect(newTextLayer().text).toBe("Text");
+  });
+});
+
+describe("per-tile pictures", () => {
+  /** A Layout with one live image, stamped onto an overlay. */
+  const stamped = () => {
+    const layout = newLayout("Klassen");
+    const logo = newImageLayer("default-logo.png");
+    logo.perTile = true;
+    layout.layers.push(logo);
+    const overlay = newOverlay("G", ["t0", "t1"]);
+    stampInto(overlay, layout.id, "sheet.png");
+    syncLiveLayers(overlay, layout);
+    return { layout, overlay, logo };
+  };
+
+  it("keeps a live picture out of the stamp and beside it", () => {
+    const { overlay, logo } = stamped();
+    expect(overlay.layers.map((l) => l.kind)).toEqual(["image", "image"]);
+    const [stamp, live] = overlay.layers as ImageLayer[];
+    expect(stamp.asset).toBe("sheet.png");
+    expect(stamp.live).toBeFalsy();
+    // The copy keeps the layout layer's id, which is what the per-tile map
+    // is keyed by.
+    expect(live.id).toBe(logo.id);
+    expect(live.live).toBe(true);
+  });
+
+  it("leaves the live picture alone when the stamp is re-rendered", () => {
+    /* The trap: both carry the same layoutId and both are images, so a lookup
+     * written on those two facts alone would overwrite a per-tile logo with
+     * the whole flattened sheet.
+     *
+     * The live copy is put first on purpose. Fresh from syncLiveLayers it sits
+     * behind the stamp, and a lookup taking the first match then finds the
+     * right layer by luck — but the layer list is drag-sortable, so that order
+     * is one drop away from reversing. */
+    const { layout, overlay, logo } = stamped();
+    overlay.layers.reverse();
+    stampInto(overlay, layout.id, "sheet-v2.png");
+    const live = overlay.layers.find((l) => l.id === logo.id) as ImageLayer;
+    const stamp = overlay.layers.find((l) => l.id !== logo.id) as ImageLayer;
+    expect(stamp.asset).toBe("sheet-v2.png");
+    expect(live.asset).toBe("default-logo.png");
+  });
+
+  it("withdraws the live picture without taking the stamp with it", () => {
+    // The same trap one step later: the cleanup pass must not mistake the
+    // stamp for a copy that is no longer live.
+    const { layout, overlay, logo } = stamped();
+    layout.layers = [];
+    syncLiveLayers(overlay, layout);
+    expect(overlay.layers).toHaveLength(1);
+    expect((overlay.layers[0] as ImageLayer).asset).toBe("sheet.png");
+    expect(overlay.layers.some((l) => l.id === logo.id)).toBe(false);
+  });
+
+  it("bakes everything except the live picture", () => {
+    const layout = newLayout("Gemischt");
+    const baked = newImageLayer("frame.png");
+    const live = newImageLayer("logo.png");
+    live.perTile = true;
+    layout.layers.push(baked, live);
+    expect(bakeable(layout).layers.map((l) => l.id)).toEqual([baked.id]);
+  });
+});
+
+describe("layerAsset", () => {
+  const layer = () => ({ ...newImageLayer("default.png"), id: "L1" });
+
+  it("falls back to the layer's own picture when the tile has none", () => {
+    expect(layerAsset({}, layer())).toBe("default.png");
+  });
+
+  it("takes the tile's picture over the layer's", () => {
+    expect(layerAsset({ L1: "witch.png" }, layer())).toBe("witch.png");
+  });
+
+  it('treats "" as a choice, not as absence', () => {
+    /* "No picture on this tile" has to survive. `||` here would put the
+     * default straight back — the same trap the caption text fell into. */
+    expect(layerAsset({ L1: "" }, layer())).toBe("");
   });
 });

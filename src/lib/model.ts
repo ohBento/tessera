@@ -66,6 +66,20 @@ type Common = {
    * every overlay and bring them all up to date in one pass. Absent on a layer
    * created by hand. */
   layoutId?: string;
+  /* Inside a Layout: keep this layer out of the rendered stamp and copy it
+   * onto the tiles as a live layer instead. Baked pixels are the same pixels
+   * on every tile, and the whole point here is that they should not be — a
+   * caption naming the character, a logo for their class. Meaningless on a
+   * layer already sitting on a tile, where a live layer is live by
+   * construction. */
+  perTile?: boolean;
+  /* On a tile: this is such a copy, not the stamp. Both carry the same
+   * layoutId and both can be images, so without this the cleanup pass that
+   * removes withdrawn live layers could not tell them apart and would delete
+   * the stamp. Absent on manifests written before live pictures existed —
+   * there an image with a layoutId is always the stamp, which is exactly what
+   * absence means here. */
+  live?: boolean;
 };
 
 export type ImageLayer = Common & {
@@ -104,12 +118,6 @@ export type TextLayer = Common & {
   /* Likewise absent means off, matching everything written before these. */
   bold?: boolean;
   italic?: boolean;
-  /* Inside a Layout: keep this caption out of the rendered stamp and copy it
-   * onto the tiles as a live layer instead. Baked text is pixels, and pixels
-   * cannot say a different word on every tile — which is the whole reason
-   * "{{id}}" exists. Meaningless on a layer that is already on a tile, where
-   * every caption is live by construction. */
-  perTile?: boolean;
   color: Paint;
   strokeColor: string;
   strokeWidth: number;
@@ -260,6 +268,11 @@ export type Tile = {
   layers: Layer[];
   /** Text content per shared layer — style syncs across tiles, wording does not. */
   text: Record<string, string>;
+  /** Picture per shared image layer, the same idea one kind over: the layout
+   *  owns where and how big, the tile owns which picture. "" means this tile
+   *  deliberately shows none. Optional so manifests written before per-tile
+   *  pictures existed still load unchanged. */
+  swap?: Record<string, string>;
 };
 
 /** A named stack of layers and the tiles it is painted on.
@@ -472,8 +485,11 @@ export function tilesUsingLayout(m: Manifest, layoutId: string): number {
  *  picture rather than stacking a second copy on top of the first — which
  *  would look like nothing happened while quietly doubling the layer count. */
 export function stampInto(overlay: Overlay, layoutId: string, asset: string): ImageLayer {
+  // Not a live picture the same Layout keeps on these tiles: that also carries
+  // this layoutId, and grabbing it here would overwrite a per-tile logo with
+  // the whole flattened sheet.
   const existing = overlay.layers.find(
-    (l): l is ImageLayer => l.kind === "image" && l.layoutId === layoutId,
+    (l): l is ImageLayer => l.kind === "image" && l.layoutId === layoutId && !l.live,
   );
   if (existing) {
     existing.asset = asset;
@@ -679,9 +695,25 @@ export const overlayOf = (m: Manifest, layerId: string) =>
 export const layerText = (texts: Record<string, string>, layer: TextLayer, tileId: string) =>
   (texts[layer.id] ?? layer.text).replaceAll("{{id}}", tileId);
 
-/** The captions a Layout keeps live instead of baking into its stamp. */
-export const perTileLayers = (layout: Layout): TextLayer[] =>
-  [...walkLayers(layout.layers)].filter((l): l is TextLayer => l.kind === "text" && !!l.perTile);
+/** Which picture one tile shows for a live image layer, or "" for none.
+ *
+ *  Same `??` reasoning as layerText: "" is a real answer — this tile shows no
+ *  logo on purpose — and only an absent key falls back to the layer's own
+ *  picture. `||` here would put the default back the moment someone chose
+ *  "none". */
+export const layerAsset = (swaps: Record<string, string>, layer: ImageLayer) =>
+  swaps[layer.id] ?? layer.asset;
+
+/** A layer a Layout keeps live on the tiles instead of baking into its stamp.
+ *  Text carries its own wording per tile, an image its own picture — the same
+ *  bargain either way: the Layout owns how it looks, the tile owns what it
+ *  says or shows. */
+export type LiveLayer = TextLayer | ImageLayer;
+
+export const perTileLayers = (layout: Layout): LiveLayer[] =>
+  [...walkLayers(layout.layers)].filter(
+    (l): l is LiveLayer => (l.kind === "text" || l.kind === "image") && !!l.perTile,
+  );
 
 /** The Layout as it goes into the stamp: everything except the live captions.
  *
@@ -690,7 +722,7 @@ export const perTileLayers = (layout: Layout): TextLayer[] =>
 export function bakeable(layout: Layout): Layout {
   const keep = (layers: Layer[]): Layer[] =>
     layers
-      .filter((l) => !(l.kind === "text" && l.perTile))
+      .filter((l) => !((l.kind === "text" || l.kind === "image") && l.perTile))
       .map((l) => (l.kind === "group" ? { ...l, children: keep(l.children) } : l));
   return { ...layout, layers: keep(layout.layers) };
 }
@@ -712,24 +744,33 @@ export function syncLiveLayers(overlay: Overlay, layout: Layout): number {
 
   for (const src of live) {
     const shift = nestingShift(layout.layers, src.id) ?? { dx: 0, dy: 0 };
-    const copy: TextLayer = {
+    const copy: LiveLayer = {
       ...clone(src),
       x: src.x + shift.dx,
       y: src.y + shift.dy,
       layoutId: layout.id,
-      // Meaningless once it is on a tile, where every caption is already live.
+      // Meaningless once it is on a tile, where a live layer is live by
+      // construction — and `live` is what says so.
       perTile: undefined,
+      live: true,
     };
     const at = overlay.layers.findIndex((l) => l.id === src.id);
     if (at >= 0) overlay.layers[at] = copy;
     else overlay.layers.push(copy);
   }
 
+  /* Withdraw the copies this Layout no longer keeps live. `live` is what keeps
+   * the stamp out of it: the stamp is an image carrying the same layoutId, and
+   * a rule written on kind and layoutId alone would delete the whole design
+   * the moment a per-tile picture was switched off. */
   for (let i = overlay.layers.length - 1; i >= 0; i--) {
     const l = overlay.layers[i];
-    if (l.kind === "text" && l.layoutId === layout.id && !wanted.has(l.id)) {
-      overlay.layers.splice(i, 1);
-    }
+    /* Text counts as a copy whether or not it carries the flag: a stamp is
+     * never text, and captions stamped before `live` existed would otherwise
+     * be orphaned here forever — a withdrawn caption is only ever replaced
+     * while it is still live, so it can never gain the flag afterwards. */
+    const copy = l.live || l.kind === "text";
+    if (copy && l.layoutId === layout.id && !wanted.has(l.id)) overlay.layers.splice(i, 1);
   }
   return live.length;
 }

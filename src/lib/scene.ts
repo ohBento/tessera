@@ -11,6 +11,7 @@ import { TILE_H, TILE_W } from "./bmp";
 import {
   groupShift,
   isGradient,
+  layerAsset,
   layerText,
   resolveLayers,
   visibleTiles,
@@ -311,8 +312,18 @@ export async function buildGrid(
 
     const box = { w: TILE_W, h: TILE_H, x: at.x, y: at.y };
     const texts = m.tiles[id]?.text ?? {};
-    for (const l of resolveLayers(m, id)) {
-      if (l.hidden || l.space === "grid") continue;
+    const swaps = m.tiles[id]?.swap ?? {};
+    for (const raw of resolveLayers(m, id)) {
+      if (raw.hidden || raw.space === "grid") continue;
+      /* This tile's own picture, where it has one. Resolved before the object
+       * is built rather than inside imageObject, so the swap map stays a wall
+       * concern: a Layout has no tiles and nothing to swap. "" is a real
+       * answer — no picture on this tile — and the layer simply does not
+       * render, which is why the check is on the resolved value and not on
+       * whether a key exists. */
+      const l =
+        raw.kind === "image" && raw.live ? { ...raw, asset: layerAsset(swaps, raw) } : raw;
+      if (l.kind === "image" && !l.asset) continue;
       // Groups are a wall-side concept only in Layouts; on a tile they would
       // need the same flattening layoutObjects does, and nothing creates one
       // here yet.

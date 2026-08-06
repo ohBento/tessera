@@ -211,6 +211,23 @@
     </label>
   {/if}
 {:else if layer.kind === "image"}
+  {#if inLayout}
+    <div class="row">
+      <button
+        class:on={layer.perTile}
+        onclick={() => set("perTile", !layer.perTile)}
+        title="Kept out of the stamp — laid on every tile as a live layer, so each tile can carry its own picture"
+      >
+        {layer.perTile ? "✓ " : ""}per tile
+      </button>
+    </div>
+    {#if layer.perTile}
+      <p class="hint">
+        Stays out of the stamp. Swappable per tile once stamped — this picture is
+        the default the others fall back to.
+      </p>
+    {/if}
+  {/if}
   <!-- Mirrored triangles across a dashed axis — the flip icon every editor
        uses. The vertical one is the same drawing turned a quarter. -->
   <div class="row">

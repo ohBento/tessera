@@ -24,6 +24,7 @@
     captionsNeedOneTile,
     canSaveLayout,
     claimedCount,
+    clearTileAsset,
     clearTileText,
     clearTiles,
     closeLayoutDoc,
@@ -60,7 +61,12 @@
     selectLayer,
     selectLayoutLayer,
     setTileText,
+    pickTileImage,
+    setTileAsset,
+    tileAsset,
     tileCaptions,
+    tileImageChoices,
+    tileImages,
     tileText,
     toggleLayerHidden,
     toggleLayerLocked,
@@ -109,6 +115,11 @@
   /** The wall canvas, for the one thing App needs from it: which tile is under
    *  a right-click. */
   let grid: GridCanvas | undefined = $state();
+
+  /** An object URL for a stored asset, for the gallery thumbnails. Goes through
+   *  the same loader the canvas uses, which caches per asset — so showing the
+   *  same logo on twenty tiles costs one decode. */
+  const assetUrl = (asset: string) => app.deps?.asset(asset) ?? Promise.resolve("");
 
   /** The Layout canvas — the toolbar's align buttons act on its live objects. */
   let sheet: LayoutCanvas | undefined = $state();
@@ -745,6 +756,55 @@
           {/each}
         {/if}
 
+        {#if tileImages().length}
+          {@const tile = app.selectedTiles[0]}
+          <h2 class="spaced">Picture on {tile}</h2>
+          {#each tileImages() as pic (pic.id)}
+            {@const chosen = tileAsset(tile, pic.id)}
+            <p class="sub nolead">{layerLabel(pic)}</p>
+            <!-- A gallery rather than a file dialog per tile: class logos
+                 repeat across a wall, so from the second tile on the picture
+                 is almost always one already imported. The dialog stays, as
+                 the "+" that feeds the gallery. -->
+            <div class="gallery">
+              {#each tileImageChoices(pic.id) as asset (asset)}
+                <button
+                  class="swatch"
+                  class:on={(chosen ?? pic.asset) === asset}
+                  title={asset === pic.asset ? "The layer's own picture" : "Use this picture"}
+                  onclick={() => void setTileAsset(tile, pic.id, asset)}
+                >
+                  {#await assetUrl(asset) then url}
+                    <img src={url} alt="" />
+                  {/await}
+                </button>
+              {/each}
+              <button class="swatch" title="Pick a new picture…" onclick={() => void pickTileImage(tile, pic.id)}>
+                +
+              </button>
+              <!-- A circle with a slash: the sign for "none of them", which is
+                   a choice here and not the absence of one. -->
+              <button
+                class="swatch none"
+                class:on={chosen === ""}
+                title="Show no picture on this tile"
+                onclick={() => void setTileAsset(tile, pic.id, "")}
+              >
+                <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+                  <circle cx="9" cy="9" r="7" fill="none" stroke="currentColor" stroke-width="1.6" />
+                  <line x1="4" y1="14" x2="14" y2="4" stroke="currentColor" stroke-width="1.6" />
+                </svg>
+              </button>
+              <button
+                class="swatch"
+                title="Use the layer's own picture again"
+                disabled={chosen === undefined}
+                onclick={() => void clearTileAsset(tile, pic.id)}>↺</button
+              >
+            </div>
+          {/each}
+        {/if}
+
         <h2 class="spaced">Layouts</h2>
         {#if !layouts().length}
           <p class="empty">None yet.</p>
@@ -1038,12 +1098,49 @@
     background: none;
     color: #8b979f;
   }
+  /* Thumbnails on the app's chequerboard rather than on flat colour: a class
+     logo is usually transparent, and on a dark panel a dark logo is a dark
+     square. */
+  .gallery {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    margin-bottom: 6px;
+  }
+  .swatch {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 2px;
+    background:
+      linear-gradient(45deg, #20272d 25%, transparent 25%) 0 0 / 10px 10px,
+      linear-gradient(-45deg, #20272d 25%, transparent 25%) 0 5px / 10px 10px,
+      #171d22;
+  }
+  .swatch img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+  }
+  .swatch.on {
+    border-color: #78dcff;
+    box-shadow: inset 0 0 0 1px #78dcff;
+  }
+  .swatch.none {
+    color: #8b979f;
+  }
   .sub {
     margin: 4px 0 2px 18px;
     color: #6c777e;
     font-size: 10px;
     letter-spacing: 0.06em;
     text-transform: uppercase;
+  }
+  /* The gallery's own label sits flush, not indented under a group row. */
+  .sub.nolead {
+    margin-left: 0;
   }
   .indent {
     margin-left: 18px;
