@@ -23,15 +23,35 @@ export const isTyping = (el: EventTarget | Element | null): boolean =>
 
 export const rowsFor = (count: number) => Math.ceil(count / COLS);
 
+/** The space the game leaves between portraits, in tile pixels.
+ *
+ *  Not decoration. The character grid in play is not one continuous surface,
+ *  and a picture spread across the wall is cut by those gaps — the strips
+ *  falling into them are never shown. Building them into the geometry is what
+ *  makes the wall a preview of the game rather than of itself: a spread lines
+ *  up in play, and a caption pushed towards an edge looks as wrong here as it
+ *  will there.
+ *
+ *  Measured off a screenshot of the character select, so it is close rather
+ *  than exact — the game scales its grid with the window. */
+export const GAP_X = Math.round(TILE_W * 0.03);
+export const GAP_Y = Math.round(TILE_H * 0.045);
+
+/** Distance from one slot to the next, tile plus gap. */
+export const STEP_X = TILE_W + GAP_X;
+export const STEP_Y = TILE_H + GAP_Y;
+
 export const gridSize = (count: number) => ({
-  w: COLS * TILE_W,
-  h: rowsFor(count) * TILE_H,
+  // The trailing gap is not part of the wall — there is nothing after the last
+  // column to be separated from.
+  w: COLS * STEP_X - GAP_X,
+  h: rowsFor(count) * STEP_Y - GAP_Y,
 });
 
 /** Top-left corner of the nth grid slot, in grid pixels. */
 export const cellAt = (index: number) => ({
-  x: (index % COLS) * TILE_W,
-  y: Math.floor(index / COLS) * TILE_H,
+  x: (index % COLS) * STEP_X,
+  y: Math.floor(index / COLS) * STEP_Y,
 });
 
 /** The slots a rectangle touches, in grid order — what a rubber band picks.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { cellsIn, snapBox } from "./geometry";
+import { cellsIn, GAP_X, GAP_Y, snapBox } from "./geometry";
 import { TILE_H as H, TILE_W as W } from "./bmp";
 
 describe("snapBox", () => {
@@ -79,7 +79,14 @@ describe("cellsIn", () => {
   });
 
   it("takes the two cells a band straddling their border touches", () => {
-    expect(cellsIn({ x: W - 5, y: 0, w: 10, h: 10 }, 12)).toEqual([0, 1]);
+    // Across the gap between them: the last few pixels of one, the first few
+    // of the next.
+    expect(cellsIn({ x: W - 5, y: 0, w: GAP_X + 10, h: 10 }, 12)).toEqual([0, 1]);
+  });
+
+  it("finds nothing in the gap between two cells", () => {
+    // The strip the game hides. A band wholly inside it touches no portrait.
+    expect(cellsIn({ x: W + 1, y: 0, w: GAP_X - 2, h: 10 }, 12)).toEqual([]);
   });
 
   it("finds nothing outside the grid", () => {
@@ -145,14 +152,16 @@ describe("mosaicBakeCrops", () => {
   it("bakes every tile when the picture exactly covers the whole grid", () => {
     const crops = mosaicBakeCrops({ x: 0.5, y: 0.5, scale: 1 }, natural, 60);
     expect(crops.size).toBe(60);
-    // Adjacent tiles' crops tile the source without gaps or overlap.
+    /* Adjacent tiles' crops skip exactly the strip the game hides between
+     * them — that is what makes a spread line up in play rather than on the
+     * wall only. */
     const c0 = crops.get(0)!;
     const c1 = crops.get(1)!;
-    expect(c1.x).toBeCloseTo(c0.x + c0.w, 6);
+    expect(c1.x).toBeCloseTo(c0.x + c0.w + GAP_X, 6);
     expect(c1.y).toBeCloseTo(c0.y, 6);
     const c7 = crops.get(7)!; // first tile of the second row
     expect(c7.x).toBeCloseTo(c0.x, 6);
-    expect(c7.y).toBeCloseTo(c0.y + c0.h, 6);
+    expect(c7.y).toBeCloseTo(c0.y + c0.h + GAP_Y, 6);
   });
 
   it("matches each tile's own aspect, not the source's", () => {
