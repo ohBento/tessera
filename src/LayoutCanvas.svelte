@@ -10,6 +10,7 @@
 
   import { app, applyLayoutTransform, openLayout, setLayoutSelection } from "./lib/editor.svelte";
   import { TILE_H, TILE_W } from "./lib/bmp";
+  import { snapBox, type Guide } from "./lib/geometry";
   import { findLayer, walkLayers } from "./lib/model";
   import { buildLayout, readBackLayout } from "./lib/scene";
 
@@ -20,6 +21,11 @@
 
   const MIN_ZOOM = 0.05;
   const MAX_ZOOM = 8;
+  /** How close, in screen pixels, before a drag is pulled into line. */
+  const SNAP_PX = 8;
+
+  /** Alignment guides for the drag in progress, in scene coordinates. */
+  let guides: Guide[] = [];
 
   /** Centre the sheet with a little breathing room around it. */
   function fit() {
@@ -161,6 +167,56 @@
       canvas!.selection = true;
     });
 
+    /* Snapping. Fabric has none of its own, so the pull happens here: on every
+     * step of a drag, line the moving box up with the sheet and with every
+     * layer that is not being dragged, then nudge it by the difference.
+     *
+     * It only ever attracts — outside the threshold nothing happens, and Alt
+     * turns it off entirely — so a layer can still be pushed anywhere,
+     * including off the sheet. */
+    canvas.on("object:moving", (opt) => {
+      guides = [];
+      const target = opt.target;
+      if (!target || (opt.e as MouseEvent | undefined)?.altKey) return;
+
+      const moving = new Set(
+        ((target as fabric.ActiveSelection).getObjects?.() ?? [target]).map(
+          (o) => (o as { layerId?: string }).layerId,
+        ),
+      );
+      const others = canvas!
+        .getObjects()
+        .filter((o) => !moving.has((o as { layerId?: string }).layerId))
+        .map((o) => o.getBoundingRect());
+
+      /* Fabric has already written the new left/top by now but not refreshed
+       * the cached corner coordinates getBoundingRect reads, so without this
+       * the box is one drag-step stale and the correction lands short — by
+       * however far the pointer travelled in that step. */
+      target.setCoords();
+
+      // Threshold in screen pixels, converted here, so the pull feels the same
+      // however far in or out the view is zoomed.
+      const snap = snapBox(
+        target.getBoundingRect(),
+        [{ left: 0, top: 0, width: TILE_W, height: TILE_H }, ...others],
+        SNAP_PX / canvas!.getZoom(),
+      );
+      if (!snap.dx && !snap.dy) return;
+
+      target.set({ left: (target.left ?? 0) + snap.dx, top: (target.top ?? 0) + snap.dy });
+      target.setCoords();
+      guides = snap.guides;
+    });
+
+    const dropGuides = () => {
+      if (!guides.length) return;
+      guides = [];
+      canvas?.requestRenderAll();
+    };
+    canvas.on("mouse:up", dropGuides);
+    canvas.on("selection:cleared", dropGuides);
+
     /* The sheet's own edge, drawn in screen space after Fabric is done. A
      * Layout renders on transparency, so without this outline there is no way
      * to tell where the tile ends and empty space begins. Screen space keeps it
@@ -205,6 +261,28 @@
           );
         }
         ctx.setLineDash([]);
+      }
+
+      /* Alignment guides, drawn full-height/width so it is obvious what the
+       * layer just lined up with. They exist only while a drag is in flight,
+       * and only on this canvas — renderLayout uses a StaticCanvas that has no
+       * after:render hook at all, so they can never reach a stamp. */
+      if (guides.length) {
+        ctx.strokeStyle = "rgba(255, 90, 200, 0.95)";
+        ctx.lineWidth = 1;
+        for (const g of guides) {
+          ctx.beginPath();
+          if (g.axis === "x") {
+            const x = Math.round(g.at * vt[0] + vt[4]) + 0.5;
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, ctx.canvas.height);
+          } else {
+            const y = Math.round(g.at * vt[3] + vt[5]) + 0.5;
+            ctx.moveTo(0, y);
+            ctx.lineTo(ctx.canvas.width, y);
+          }
+          ctx.stroke();
+        }
       }
       ctx.restore();
     });

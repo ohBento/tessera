@@ -18,13 +18,16 @@ import {
   app,
   canGroupLayers,
   freeCount,
+  groupLayoutLayers,
   groups,
   layouts,
+  moveLayersIntoGroup,
   newGroup,
+  setLayoutSelection,
   toggleLayoutPick,
 } from "./lib/editor.svelte";
 import { addLayoutImage, assignLayout, newLayoutDoc, openLayout } from "./lib/editor.svelte";
-import { emptyManifest } from "./lib/model";
+import { emptyManifest, findLayer, groupShift } from "./lib/model";
 import { queuePick, resetMockFiles, stashPickedFile } from "./lib/platform";
 
 /** Waits for a condition instead of a fixed delay: the app loads tiles and
@@ -150,6 +153,31 @@ describe("the Layout editor", () => {
 
     expect(app.layoutSelection).toHaveLength(2);
     expect(canGroupLayers()).toBe(true);
+  });
+
+  it("moves a layer into an existing group without moving it on screen", async () => {
+    const [a, b] = await twoLayers();
+    queuePick(await magentaSquare("drei"));
+    await addLayoutImage();
+    const loose = openLayout()!.layers.at(-1)!;
+    loose.x = 0.5;
+    loose.y = 0.8;
+
+    setLayoutSelection([a, b]);
+    await groupLayoutLayers();
+    const group = openLayout()!.layers.find((l) => l.kind === "group")!;
+    // Displace the group, so entering it has something to compensate for.
+    group.x = 0.65;
+    group.y = 0.35;
+    const shift = groupShift(group);
+
+    await moveLayersIntoGroup(group.id, [loose.id]);
+
+    const inside = findLayer(openLayout()!.layers, loose.id)!;
+    expect(inside.x + shift.dx).toBeCloseTo(0.5, 5);
+    expect(inside.y + shift.dy).toBeCloseTo(0.8, 5);
+    // And it really is inside now, not merely renamed.
+    expect(openLayout()!.layers.some((l) => l.id === loose.id)).toBe(false);
   });
 
   it("offers grouping only from two layers up", async () => {

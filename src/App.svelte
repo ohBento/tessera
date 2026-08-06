@@ -6,6 +6,7 @@
   import { onMount } from "svelte";
   import { ask } from "./lib/platform";
 
+  import ContextMenu, { type Item } from "./ContextMenu.svelte";
   import GridCanvas from "./GridCanvas.svelte";
   import LayoutCanvas from "./LayoutCanvas.svelte";
   import {
@@ -19,6 +20,7 @@
     canGroupLayers,
     canSaveLayout,
     canStampLayout,
+    claimedCount,
     clearTiles,
     closeLayoutDoc,
     deleteGroup,
@@ -28,9 +30,11 @@
     freeCount,
     groupLayoutLayers,
     groups,
+    layoutGroups,
     layoutUsage,
     layouts,
     moveLayer,
+    moveLayersIntoGroup,
     moveLayoutLayer,
     newGroup,
     newLayoutDoc,
@@ -39,6 +43,7 @@
     openLayoutDoc,
     redoEdit,
     redoable,
+    releaseSelectedTiles,
     removeTileFromGroup,
     renameGroup,
     renameLayer,
@@ -46,6 +51,7 @@
     saveLayout,
     saveToGame,
     selectLayer,
+    selectLayoutLayer,
     stampLayout,
     toggleLayerHidden,
     toggleLayerLocked,
@@ -54,7 +60,7 @@
     undoEdit,
     undoable,
   } from "./lib/editor.svelte";
-  import { layerLabel, layoutNeedsRestamp, type Layer } from "./lib/model";
+  import { findLayer, layerLabel, layoutNeedsRestamp, type Layer } from "./lib/model";
 
   const editing = $derived(openLayout());
 
@@ -131,6 +137,69 @@
   );
 
   const layoutLayers = $derived(editing ? [...editing.layers].reverse() : []);
+
+  /* One context menu serves both documents: the wall right-clicks tiles, the
+     Layout editor right-clicks layers, and only the item list differs. */
+  let menu: { x: number; y: number; items: Item[] } | null = $state(null);
+
+  function wallMenu(e: MouseEvent) {
+    if (editing || !app.selectedTiles.length) return;
+    e.preventDefault();
+    const claimed = claimedCount();
+    menu = {
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        { label: "Neue Gruppe aus Auswahl", run: () => void newGroup(), disabled: !freeCount() },
+        ...(groups().length ? [{ separator: true } as Item] : []),
+        ...groups().map((g) => ({
+          label: `Zu „${g.name}" hinzufügen`,
+          run: () => void addTilesToGroup(g.id),
+          disabled: !freeCount(),
+        })),
+        ...(claimed
+          ? [
+              { separator: true } as Item,
+              {
+                label: claimed === 1 ? "Aus Gruppe entfernen" : `${claimed} aus Gruppe entfernen`,
+                run: () => void releaseSelectedTiles(),
+              },
+            ]
+          : []),
+      ],
+    };
+  }
+
+  /** Right-click in the Layout's layer list. Picks the row first when it is
+   *  not already part of the selection, the way every list does. */
+  function layerMenu(e: MouseEvent, layerId: string) {
+    e.preventDefault();
+    if (!app.layoutSelection.includes(layerId)) selectLayoutLayer(layerId);
+    const picked = [...app.layoutSelection];
+    const targets = layoutGroups().filter((g) => !picked.includes(g.id));
+    menu = {
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        {
+          label: picked.length > 1 ? `${picked.length} Ebenen gruppieren` : "Gruppieren",
+          run: () => void groupLayoutLayers(),
+          disabled: !canGroupLayers(),
+        },
+        ...(targets.length ? [{ separator: true } as Item] : []),
+        ...targets.map((g) => ({
+          label: `In „${layerLabel(g)}" verschieben`,
+          run: () => void moveLayersIntoGroup(g.id, picked),
+        })),
+        { separator: true },
+        { label: "Umbenennen", run: () => (renaming = layerId) },
+        {
+          label: findLayer(editing?.layers ?? [], layerId)?.kind === "group" ? "Auflösen" : "Löschen",
+          run: () => void deleteLayoutLayer(layerId),
+        },
+      ],
+    };
+  }
 </script>
 
 <svelte:window onkeydown={shortcut} />
@@ -141,7 +210,10 @@
 {#snippet layerRows(rows: Layer[], nested: boolean)}
   <ul class:indent={nested}>
     {#each rows as layer (layer.id)}
-      <li class:selected={app.layoutSelection.includes(layer.id)}>
+      <li
+        class:selected={app.layoutSelection.includes(layer.id)}
+        oncontextmenu={(e) => layerMenu(e, layer.id)}
+      >
         <button
           class="eye"
           title={layer.hidden ? "Einblenden" : "Ausblenden"}
@@ -269,17 +341,23 @@
           davon frei{/if}
         <button class="link" onclick={clearTiles}>aufheben</button>
       {:else if app.dir}
-        {app.manifest.order.length} Kacheln &middot; klicken zum Wählen, Strg für mehrere, ziehen zum Tauschen
+        {app.manifest.order.length} Kacheln &middot; ziehen wählt aus, Strg addiert, Alt+ziehen tauscht
       {/if}
     </span>
   </header>
 
   <div class="body">
-    {#if editing}
-      <LayoutCanvas />
-    {:else}
-      <GridCanvas />
-    {/if}
+    <!-- Capture phase: Fabric stops contextmenu on its own canvas, so a
+         bubbling listener out here never sees a right-click on the wall.
+         Capture runs on the way down, before the target's own handlers. -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="stage" oncontextmenucapture={wallMenu}>
+      {#if editing}
+        <LayoutCanvas />
+      {:else}
+        <GridCanvas />
+      {/if}
+    </div>
 
     <aside>
       {#if editing}
@@ -288,6 +366,7 @@
           <p class="empty">Keine Ebenen.</p>
         {/if}
         {@render layerRows(layoutLayers, false)}
+        <p class="empty">Rechtsklick auf eine Ebene für Gruppieren, Verschieben, Umbenennen.</p>
       {:else}
         {#if wallLayers.length}
           <h2>Wand</h2>
@@ -486,6 +565,10 @@
       {/if}
     </aside>
   </div>
+
+  {#if menu}
+    <ContextMenu {...menu} onclose={() => (menu = null)} />
+  {/if}
 </main>
 
 <style>
@@ -503,6 +586,12 @@
   .body {
     display: flex;
     flex: 1;
+    min-height: 0;
+  }
+  .stage {
+    display: flex;
+    flex: 1;
+    min-width: 0;
     min-height: 0;
   }
   header {

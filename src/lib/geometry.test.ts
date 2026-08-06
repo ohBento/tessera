@@ -1,4 +1,91 @@
 import { describe, expect, it } from "vitest";
+
+import { cellsIn, snapBox } from "./geometry";
+import { TILE_H as H, TILE_W as W } from "./bmp";
+
+describe("snapBox", () => {
+  const box = (left: number, top: number, w = 100, h = 100) => ({ left, top, width: w, height: h });
+  /** The sheet itself: left/centre/right and top/middle/bottom. */
+  const sheet = [{ left: 0, top: 0, width: W, height: H }];
+
+  it("does nothing when nothing is near", () => {
+    // Well clear of every sheet stop on both axes: the nearest is the vertical
+    // middle at 402, a hundred pixels below this box's bottom edge.
+    const s = snapBox(box(200, 200), sheet, 8);
+    expect([s.dx, s.dy]).toEqual([0, 0]);
+    expect(s.guides).toEqual([]);
+  });
+
+  it("pulls a near edge flush with the sheet", () => {
+    const s = snapBox(box(5, 300), sheet, 8);
+    expect(s.dx).toBe(-5);
+    expect(s.guides).toContainEqual({ axis: "x", at: 0 });
+  });
+
+  it("centres a box that is nearly centred", () => {
+    const s = snapBox(box(W / 2 - 50 + 3, 300), sheet, 8);
+    expect(s.dx).toBe(-3);
+  });
+
+  it("decides the two axes independently", () => {
+    // Left edge near a neighbour's left, vertical centre near the sheet's.
+    const neighbour = box(200, 700);
+    const s = snapBox(box(204, H / 2 - 50 + 2), [...sheet, neighbour], 8);
+    expect(s.dx).toBe(-4);
+    expect(s.dy).toBe(-2);
+    expect(s.guides).toHaveLength(2);
+  });
+
+  it("lines an edge up with a neighbour's opposite edge", () => {
+    // Moving box's left is 6 away from the neighbour's right — butt them up.
+    const neighbour = box(100, 100);
+    const s = snapBox(box(206, 400), [neighbour], 8);
+    expect(s.dx).toBe(-6);
+    expect(s.guides).toContainEqual({ axis: "x", at: 200 });
+  });
+
+  it("takes the nearest candidate when several are in range", () => {
+    const s = snapBox(box(206, 400), [box(100, 100), box(203, 400)], 8);
+    // 203 is 3 away, 200 is 6 away.
+    expect(s.dx).toBe(-3);
+  });
+
+  it("never pulls further than the threshold", () => {
+    const s = snapBox(box(9, 300), sheet, 8);
+    expect(s.dx).toBe(0);
+  });
+});
+
+describe("cellsIn", () => {
+  /** A band across the middle of the first row, of the given width in tiles. */
+  const acrossRow = (tiles: number) => ({ x: 0, y: H / 2, w: tiles * W, h: 1 });
+
+  it("takes every cell a thin band sweeps, not only the ones it swallows", () => {
+    // One pixel tall — containment would find nothing here.
+    expect(cellsIn(acrossRow(7), 12)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+  });
+
+  it("stops at the tiles that exist, not at the row width", () => {
+    expect(cellsIn({ x: 0, y: 0, w: 7 * W, h: 2 * H }, 9)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
+  });
+
+  it("takes a column block out of both rows", () => {
+    expect(cellsIn({ x: 0, y: 0, w: 2 * W, h: 2 * H }, 12)).toEqual([0, 1, 7, 8]);
+  });
+
+  it("ignores a band that touches only a shared edge", () => {
+    // Exactly on the boundary between cell 0 and cell 1: neither is entered.
+    expect(cellsIn({ x: W, y: 0, w: 0, h: H }, 12)).toEqual([]);
+  });
+
+  it("takes the two cells a band straddling their border touches", () => {
+    expect(cellsIn({ x: W - 5, y: 0, w: 10, h: 10 }, 12)).toEqual([0, 1]);
+  });
+
+  it("finds nothing outside the grid", () => {
+    expect(cellsIn({ x: -3 * W, y: 0, w: W, h: H }, 12)).toEqual([]);
+  });
+});
 import {
   cellAt,
   coverCrop,

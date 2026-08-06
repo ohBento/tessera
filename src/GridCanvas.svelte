@@ -18,7 +18,7 @@
     visibleIds,
   } from "./lib/editor.svelte";
   import { TILE_H, TILE_W } from "./lib/bmp";
-  import { COLS } from "./lib/geometry";
+  import { cellsIn, COLS } from "./lib/geometry";
   import { buildGrid, cellAt, gridSize, readBack, type Tagged } from "./lib/scene";
 
   let host: HTMLDivElement;
@@ -27,6 +27,15 @@
   let zoom = $state(1);
   /** Tile a swap-drag is currently hovering, drawn by the after:render hook. */
   let dropTarget = "";
+  /** The rubber band being dragged, in scene coordinates, or null. */
+  let band: { x: number; y: number; w: number; h: number } | null = null;
+  let bandStart: fabric.Point | null = null;
+
+  /** Every visible tile the band touches. */
+  function tilesIn(r: { x: number; y: number; w: number; h: number }): string[] {
+    const ids = visibleIds();
+    return cellsIn(r, ids.length).map((i) => ids[i]);
+  }
 
   const MIN_ZOOM = 0.02;
   const MAX_ZOOM = 8;
@@ -186,10 +195,17 @@
       return inside ? ids[index] : "";
     }
 
-    /* Dragging one tile onto another swaps their places. Click and drag start
-     * the same way, so which it was is decided on mouse:up by whether the
-     * pointer ever left the tile it went down on. */
+    /* Two gestures share one drag, told apart by Alt.
+     *
+     * A bare drag sweeps a band and picks every tile it touches — the common
+     * one, so it gets the bare gesture. Alt+drag carries one tile onto another
+     * and swaps them. A modifier rather than "where did the drag start": the
+     * grid is dense, bare canvas exists only outside it, so a start-point rule
+     * would put a band across the middle out of reach. */
     let dragFrom = "";
+    let swapping = false;
+    /** Tiles already picked when a band started, so Shift/Ctrl can add to them. */
+    let bandBase: string[] = [];
 
     canvas.on("mouse:down", (opt) => {
       if (!(opt.e instanceof MouseEvent)) return;
@@ -204,8 +220,14 @@
       // other object is inert, so "no target" means bare wall.
       if (opt.e.button !== 0 || opt.target) return;
       dragFrom = tileAt(opt.e);
-      if (!dragFrom) clearAll();
+      swapping = opt.e.altKey && !!dragFrom;
+      band = null;
+      bandStart = canvas!.getScenePoint(opt.e);
+      const additive = opt.e.ctrlKey || opt.e.shiftKey;
+      bandBase = additive ? [...app.selectedTiles] : [];
+      if (!dragFrom && !additive) clearAll();
     });
+
     canvas.on("mouse:move", (opt) => {
       if (!(opt.e instanceof MouseEvent)) return;
       if (panning) {
@@ -213,29 +235,55 @@
         last = { x: opt.e.clientX, y: opt.e.clientY };
         return;
       }
-      if (!dragFrom) return;
-      const over = tileAt(opt.e);
-      const next = over && over !== dragFrom ? over : "";
-      if (next !== dropTarget) {
-        dropTarget = next;
-        canvas!.requestRenderAll();
+      if (!bandStart) return;
+
+      if (swapping) {
+        const over = tileAt(opt.e);
+        const next = over && over !== dragFrom ? over : "";
+        if (next !== dropTarget) {
+          dropTarget = next;
+          canvas!.requestRenderAll();
+        }
+        return;
       }
+
+      const now = canvas!.getScenePoint(opt.e);
+      // A few screen pixels of slop, so a click with a shaky hand stays a click.
+      if (!band && Math.hypot(now.x - bandStart.x, now.y - bandStart.y) * canvas!.getZoom() < 4)
+        return;
+      band = {
+        x: Math.min(bandStart.x, now.x),
+        y: Math.min(bandStart.y, now.y),
+        w: Math.abs(now.x - bandStart.x),
+        h: Math.abs(now.y - bandStart.y),
+      };
+      const swept = new Set([...bandBase, ...tilesIn(band)]);
+      // Kept in wall order rather than sweep order, so the selection reads the
+      // same however the band was drawn.
+      app.selectedTiles = visibleIds().filter((id) => swept.has(id));
+      canvas!.requestRenderAll();
     });
     canvas.on("mouse:up", (opt) => {
       panning = false;
       canvas!.selection = false;
-      if (!dragFrom || !(opt.e instanceof MouseEvent)) return;
       const from = dragFrom;
       const onto = dropTarget;
+      const wasBand = !!band;
+      const wasSwap = swapping;
       dragFrom = "";
       dropTarget = "";
-      if (onto) void swapTilePlaces(from, onto);
-      else if (tileAt(opt.e) === from) toggleTile(from, opt.e.ctrlKey || opt.e.shiftKey);
-      // Past the last tile: drop everything, layer included. Clearing only the
-      // tiles left the layer selected and its group still outlined, which reads
-      // as "something is still picked" with nothing to show for it.
-      else clearAll();
+      swapping = false;
+      band = null;
+      bandStart = null;
       canvas!.requestRenderAll();
+      if (!(opt.e instanceof MouseEvent)) return;
+
+      if (wasSwap && onto) void swapTilePlaces(from, onto);
+      // A band has already set the selection while it was dragged; a plain
+      // click toggles the tile it landed on. Mouse-down past the last tile
+      // already cleared everything, layer included.
+      else if (!wasBand && from && tileAt(opt.e) === from)
+        toggleTile(from, opt.e.ctrlKey || opt.e.shiftKey);
     });
 
     /* Tile boundaries. Drawn straight onto the context after Fabric has
@@ -292,6 +340,22 @@
           ctx.lineWidth = 1;
         }
         ctx.strokeRect(x, y, w, h);
+      }
+
+      /* The band itself, on top of the marks it is producing. Drawn here
+       * rather than through Fabric's own selection rectangle, because that one
+       * selects objects and this one selects tiles — different things that
+       * merely look alike. */
+      if (band) {
+        ctx.fillStyle = "rgba(120, 220, 255, 0.10)";
+        ctx.strokeStyle = "rgba(140, 225, 255, 0.9)";
+        ctx.lineWidth = 1;
+        const bx = Math.round(band.x * vt[0] + vt[4]) + 0.5;
+        const by = Math.round(band.y * vt[3] + vt[5]) + 0.5;
+        const bw = Math.round(band.w * vt[0]);
+        const bh = Math.round(band.h * vt[3]);
+        ctx.fillRect(bx, by, bw, bh);
+        ctx.strokeRect(bx, by, bw, bh);
       }
       ctx.restore();
     });

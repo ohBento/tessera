@@ -13,6 +13,7 @@ import {
   findList,
   freeTiles,
   groupOf,
+  groupShift,
   instanceCount,
   layoutFingerprint,
   layoutNeedsRestamp,
@@ -26,6 +27,7 @@ import {
   refreshStamps,
   removeFromGroup,
   removeLayerFrom,
+  shiftLayer,
   stampInto,
   swapTiles,
   visibleTiles,
@@ -154,6 +156,21 @@ export async function removeTileFromGroup(groupId: string, tileId: string) {
   if (!group) return;
   await mutate(() => removeFromGroup(group, tileId));
 }
+
+/** Frees every picked tile from whichever group holds it. */
+export async function releaseSelectedTiles() {
+  const owned = app.selectedTiles.filter((id) => groupOf(app.manifest, id));
+  if (!owned.length) return;
+  await mutate(() => {
+    for (const id of owned) {
+      const group = groupOf(app.manifest, id);
+      if (group) removeFromGroup(group, id);
+    }
+  });
+}
+
+export const claimedCount = () =>
+  app.selectedTiles.filter((id) => groupOf(app.manifest, id)).length;
 
 export async function renameGroup(groupId: string, name: string) {
   const group = findGroup(groupId);
@@ -618,6 +635,35 @@ export async function groupLayoutLayers() {
     layout.layers.splice(at, 0, group);
     app.layoutSelection = [group.id];
     app.layoutSelected = group.id;
+  });
+}
+
+/** The groups a Layout holds, for the "move into" menu. Top level only —
+ *  nesting a group inside a group is a level with no button to climb back out
+ *  of, so it is not offered. */
+export const layoutGroups = () =>
+  (openLayout()?.layers ?? []).filter((l): l is Layer & { kind: "group" } => l.kind === "group");
+
+/** Moves the picked layers into an existing group, keeping them where they
+ *  visibly are: a group's x/y is a displacement applied on top of its members,
+ *  so entering one has to subtract that displacement or everything jumps by
+ *  exactly the group's offset. The mirror of what removeLayerFrom folds in on
+ *  the way out. */
+export async function moveLayersIntoGroup(groupId: string, layerIds: string[]) {
+  const layout = openLayout();
+  const group = layout && findLayer(layout.layers, groupId);
+  if (!layout || group?.kind !== "group") return;
+  const moving = new Set(layerIds.filter((id) => id !== groupId));
+  if (!moving.size) return;
+  await mutate(() => {
+    const { dx, dy } = groupShift(group);
+    const taken = layout.layers.filter((l) => moving.has(l.id));
+    layout.layers = layout.layers.filter((l) => !moving.has(l.id));
+    for (const l of taken) {
+      shiftLayer(l, -dx, -dy);
+      group.children.push(l);
+    }
+    setLayoutSelection(taken.map((l) => l.id));
   });
 }
 

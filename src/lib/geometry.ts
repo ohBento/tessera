@@ -23,6 +23,81 @@ export const cellAt = (index: number) => ({
   y: Math.floor(index / COLS) * TILE_H,
 });
 
+/** The slots a rectangle touches, in grid order — what a rubber band picks.
+ *
+ *  Overlap, not containment: sweeping a thin band across a row should take the
+ *  whole row, and requiring a cell to be swallowed whole would mean drawing a
+ *  band taller than a tile to select anything at all. Zero-size bands touch
+ *  nothing, which is what keeps a click from counting as a sweep. */
+export function cellsIn(
+  r: { x: number; y: number; w: number; h: number },
+  count: number,
+): number[] {
+  if (r.w <= 0 || r.h <= 0) return [];
+  const out: number[] = [];
+  for (let i = 0; i < count; i++) {
+    const at = cellAt(i);
+    if (at.x < r.x + r.w && at.x + TILE_W > r.x && at.y < r.y + r.h && at.y + TILE_H > r.y)
+      out.push(i);
+  }
+  return out;
+}
+
+/* --- Snapping. Kept here, canvas-free, because it is the part that is easy to
+ * get subtly wrong and impossible to eyeball: an off-by-one in which edge
+ * lines up with which looks like "snapping feels a bit off" rather than a
+ * bug. --- */
+
+/** A box being dragged, or something to line it up against. */
+export type Box = { left: number; top: number; width: number; height: number };
+
+/** One line a box was pulled onto, in scene coordinates — what the editor
+ *  draws as a guide. */
+export type Guide = { axis: "x" | "y"; at: number };
+
+export type Snap = { dx: number; dy: number; guides: Guide[] };
+
+/** The three interesting positions along one axis: both edges and the middle. */
+const stops = (start: number, size: number) => [start, start + size / 2, start + size];
+
+/** Pulls `moving` onto whichever of `targets` lies within `threshold`.
+ *
+ *  Each axis is decided on its own — a box can be flush with one layer on the
+ *  left while its centre lines up with another vertically, and that pairing is
+ *  most of what makes snapping feel like it is helping rather than fighting.
+ *  The nearest candidate wins per axis; ties go to the first, which is the
+ *  sheet, because lining up with the page beats lining up with a neighbour.
+ *
+ *  `threshold` is in scene units and the caller converts from screen pixels,
+ *  so the pull stays the same size on screen at any zoom. */
+export function snapBox(moving: Box, targets: Box[], threshold: number): Snap {
+  const best = { x: { d: threshold, at: 0, from: 0, hit: false }, y: { d: threshold, at: 0, from: 0, hit: false } };
+
+  for (const t of targets) {
+    const pairs = [
+      ["x", stops(moving.left, moving.width), stops(t.left, t.width)],
+      ["y", stops(moving.top, moving.height), stops(t.top, t.height)],
+    ] as const;
+    for (const [axis, mine, theirs] of pairs) {
+      for (const m of mine) {
+        for (const o of theirs) {
+          const d = Math.abs(o - m);
+          if (d < best[axis].d) best[axis] = { d, at: o, from: m, hit: true };
+        }
+      }
+    }
+  }
+
+  const guides: Guide[] = [];
+  if (best.x.hit) guides.push({ axis: "x", at: best.x.at });
+  if (best.y.hit) guides.push({ axis: "y", at: best.y.at });
+  return {
+    dx: best.x.hit ? best.x.at - best.x.from : 0,
+    dy: best.y.hit ? best.y.at - best.y.from : 0,
+    guides,
+  };
+}
+
 /** Fabric's own Text default. Anything laying out multi-line text has to agree
  *  with this or lines sit at different heights than Fabric draws them. */
 export const LINE_HEIGHT = 1.16;
