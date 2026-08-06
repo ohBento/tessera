@@ -130,13 +130,26 @@ const place = (l: Layer, box: { w: number; h: number; x: number; y: number }) =>
  *  change of tile resolution, the same rule the rest of the model follows. */
 function textObject(l: TextLayer, box: { w: number; h: number; x: number; y: number }, tileId: string, texts: Record<string, string>) {
   const size = l.size * box.w;
-  const obj = new fabric.Textbox(layerText(texts, l, tileId), {
-    ...place(l, box),
-    width: box.w,
+  const words = layerText(texts, l, tileId);
+  const style = {
     fontSize: size,
     fontFamily: l.font,
     fontStyle: l.italic ? "italic" : "normal",
     fontWeight: l.bold ? "bold" : "normal",
+  } as const;
+
+  /* The box hugs short text and only wraps once it would leave the tile.
+   *
+   * A Textbox needs a width up front, and using the whole tile for it made the
+   * transform frame stretch far past a two-word caption — you grabbed a handle
+   * nowhere near the letters, and left-aligned text started at the tile's edge
+   * whatever x said. Measuring first costs one throwaway object and makes the
+   * frame mean what it looks like it means. */
+  const measured = new fabric.Text(words, style).width ?? box.w;
+  const obj = new fabric.Textbox(words, {
+    ...place(l, box),
+    width: Math.min(Math.max(measured, size), box.w),
+    ...style,
     textAlign: l.align ?? "center",
     lineHeight: LINE_HEIGHT,
     fill: paintOf(l.color, box.w, size),

@@ -4,6 +4,9 @@ import { describe, expect, it } from "vitest";
 
 import { TILE_H, TILE_W } from "./bmp";
 import { renderLayout } from "./layout";
+import * as fabric from "fabric";
+
+import { buildLayout } from "./scene";
 import { newGroupLayer, newImageLayer, newLayout, newShapeLayer, newTextLayer } from "./model";
 import { testDeps } from "../test/images";
 
@@ -182,6 +185,34 @@ describe("renderLayout", () => {
     const right = px(0.85, 0.5);
     expect(left[0]).toBeGreaterThan(left[2]); // red end
     expect(right[2]).toBeGreaterThan(right[0]); // blue end
+  });
+
+  it("gives a short caption a box no wider than the words need", async () => {
+    /* The frame is the grab target. A box the width of the whole tile put the
+     * handles nowhere near a two-word caption, and made left-aligned text
+     * start at the tile's edge whatever x said. */
+    const layout = newLayout("Kurz");
+    const short = newTextLayer();
+    short.text = "Hi";
+    short.size = 0.08;
+    layout.layers.push(short);
+
+    const canvas = new fabric.StaticCanvas(undefined, { width: TILE_W, height: TILE_H });
+    try {
+      await buildLayout(canvas, layout, testDeps);
+      const box = canvas.getObjects()[0];
+      expect(box.width).toBeLessThan(TILE_W / 3);
+
+      // And a caption too long for the tile still wraps at its edge.
+      canvas.remove(...canvas.getObjects());
+      const long = newTextLayer();
+      long.text = "Ein sehr viel längerer Satz, der über die Kachel hinausliefe";
+      long.size = 0.08;
+      await buildLayout(canvas, { ...layout, layers: [long] }, testDeps);
+      expect(canvas.getObjects()[0].width).toBe(TILE_W);
+    } finally {
+      await canvas.dispose();
+    }
   });
 
   it("keeps a per-tile caption out of the stamp but bakes an ordinary one", async () => {

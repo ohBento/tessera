@@ -90,6 +90,30 @@
     if (canvas && deps && app.openLayoutId && key !== built) void rebuild(deps);
   });
 
+  /* Everything but a shape is held proportional, and Fabric is told so up
+   * front rather than corrected mid-drag.
+   *
+   * Clamping inside object:scaling looked equivalent and was not: it forced
+   * the smaller axis up to the larger one on every pointer move, so a drag
+   * that wandered sideways made the object jump in height and shift on screen,
+   * and where it settled depended on the angle the pointer happened to come
+   * back at. Setting uniformScaling instead lets Fabric scale from the anchor
+   * it already keeps, which is what every editor does.
+   *
+   * uniScaleKey goes with it: Shift means "the other one", and for a layer
+   * that cannot store a stretch there is no other one. */
+  function scalingRules() {
+    if (!canvas) return;
+    const layout = openLayout();
+    const ids = canvas.getActiveObjects().map((o) => (o as { layerId?: string }).layerId);
+    const only = ids.length === 1 && layout ? findLayer(layout.layers, ids[0] ?? "") : undefined;
+    // A multi-selection has no single answer — hold it proportional, which
+    // cannot corrupt anything.
+    const free = !!only && freeScale(only);
+    canvas.uniformScaling = !free;
+    canvas.uniScaleKey = free ? "shiftKey" : null;
+  }
+
   /** Every canvas object standing for one of these layer ids. A layer inside a
    *  group has no object of its own — its members do — so picking a group in
    *  the list grabs the members, which is what makes a group draggable. */
@@ -102,7 +126,14 @@
       if (found?.kind === "group") for (const l of walkLayers(found.children)) wanted.add(l.id);
       else wanted.add(id);
     }
-    return canvas.getObjects().filter((o) => wanted.has((o as { layerId?: string }).layerId ?? ""));
+    /* Locked layers are left out. Fabric already refuses to catch one with a
+     * click, but nothing stopped the list from handing it over — and a locked
+     * layer inside an ActiveSelection is dragged and scaled with the rest,
+     * which is exactly what the lock was for. */
+    return canvas.getObjects().filter((o) => {
+      const id = (o as { layerId?: string }).layerId ?? "";
+      return wanted.has(id) && o.selectable !== false;
+    });
   }
 
   /* List selection -> canvas, re-run after a rebuild replaced every object.
@@ -139,6 +170,9 @@
       } finally {
         rebuilding = false;
       }
+      // The selection changed without a Fabric event, so the rules that hang
+      // off it have to be refreshed by hand.
+      scalingRules();
       canvas.requestRenderAll();
     });
   });
@@ -200,18 +234,18 @@
      * It only ever attracts — outside the threshold nothing happens, and Alt
      * turns it off entirely — so a layer can still be pushed anywhere,
      * including off the sheet. */
-    /* Everything but a shape is held proportional. A side handle is already
-     * hidden for those (makeInteractive), but a corner drag would still
-     * stretch — and the stretch has nowhere to be stored, so it would spring
-     * back on the next rebuild and look like the app fighting the user. */
-    canvas.on("object:scaling", (opt) => {
-      const layout = openLayout();
-      const id = (opt.target as { layerId?: string } | undefined)?.layerId;
-      const layer = id && layout && findLayer(layout.layers, id);
-      if (!opt.target || !layer || freeScale(layer)) return;
-      const uniform = Math.max(opt.target.scaleX ?? 1, opt.target.scaleY ?? 1);
-      opt.target.set({ scaleX: uniform, scaleY: uniform });
-    });
+    /* Everything but a shape is held proportional, and Fabric is told so up
+     * front rather than corrected mid-drag.
+     *
+     * Clamping inside object:scaling looked equivalent and was not: it forced
+     * the smaller axis up to the larger one on every pointer move, so a drag
+     * that wandered sideways made the object jump in height and shift on
+     * screen, and where it settled depended on the angle the pointer happened
+     * to come back at. Setting uniformScaling instead lets Fabric scale from
+     * the anchor it already keeps, which is what every editor does.
+     *
+     * uniScaleKey is dropped along with it: Shift means "the other one", and
+     * for a layer that cannot store a stretch there is no other one. */
 
     canvas.on("object:moving", (opt) => {
       guides = [];
@@ -351,8 +385,12 @@
       if (ids.length && ids.every((id) => covered.has(id))) return;
       setLayoutSelection(ids);
     };
-    canvas.on("selection:created", picked);
-    canvas.on("selection:updated", picked);
+    const pickedThenRule = () => {
+      picked();
+      scalingRules();
+    };
+    canvas.on("selection:created", pickedThenRule);
+    canvas.on("selection:updated", pickedThenRule);
     canvas.on("selection:cleared", () => {
       if (!rebuilding) setLayoutSelection([]);
     });
