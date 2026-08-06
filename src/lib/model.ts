@@ -51,6 +51,11 @@ type Common = {
    * unclipped — no cleanup pass needed on delete. Lives on Common so both
    * image and text layers can use it. */
   maskId?: string;
+  /* Set on anything a Layout put here: the picture rendered from it, and any
+   * caption it keeps live. Lets one Layout find every copy of itself across
+   * every overlay and bring them all up to date in one pass. Absent on a layer
+   * created by hand. */
+  layoutId?: string;
 };
 
 export type ImageLayer = Common & {
@@ -60,10 +65,6 @@ export type ImageLayer = Common & {
   /* Optional so manifests saved before flipping existed still load unchanged. */
   flipX?: boolean;
   flipY?: boolean;
-  /* Set when this picture is a stamp rendered from a Layout, so "Layout
-   * aktualisieren" can find every copy across every overlay and refresh its
-   * asset in one pass. Absent for an ordinarily imported picture. */
-  layoutId?: string;
 };
 
 export type ShapeKind = "rect" | "ellipse" | "polygon";
@@ -93,6 +94,12 @@ export type TextLayer = Common & {
   /* Likewise absent means off, matching everything written before these. */
   bold?: boolean;
   italic?: boolean;
+  /* Inside a Layout: keep this caption out of the rendered stamp and copy it
+   * onto the tiles as a live layer instead. Baked text is pixels, and pixels
+   * cannot say a different word on every tile — which is the whole reason
+   * "{{id}}" exists. Meaningless on a layer that is already on a tile, where
+   * every caption is live by construction. */
+  perTile?: boolean;
   color: Paint;
   strokeColor: string;
   strokeWidth: number;
@@ -555,8 +562,70 @@ export function overlayCovering(overlays: Overlay[], ids: string[]): Overlay | u
 export const overlayOf = (m: Manifest, layerId: string) =>
   m.overlays.find((o) => !!findLayer(o.layers, layerId));
 
+/** What one tile's copy of a caption actually says.
+ *
+ *  `??` and not `||`: an override of "" means the user emptied this tile's
+ *  caption on purpose and it has to stay empty. Falling back on a falsy value
+ *  would put the layer's default text back the moment the last character was
+ *  deleted — so an override is only absent when its key is absent, and
+ *  clearing the field stores "" rather than removing it. */
 export const layerText = (texts: Record<string, string>, layer: TextLayer, tileId: string) =>
   (texts[layer.id] ?? layer.text).replaceAll("{{id}}", tileId);
+
+/** The captions a Layout keeps live instead of baking into its stamp. */
+export const perTileLayers = (layout: Layout): TextLayer[] =>
+  [...walkLayers(layout.layers)].filter((l): l is TextLayer => l.kind === "text" && !!l.perTile);
+
+/** The Layout as it goes into the stamp: everything except the live captions.
+ *
+ *  Groups are rebuilt without their live members rather than dropped, so the
+ *  displacement a group applies to its remaining children still holds. */
+export function bakeable(layout: Layout): Layout {
+  const keep = (layers: Layer[]): Layer[] =>
+    layers
+      .filter((l) => !(l.kind === "text" && l.perTile))
+      .map((l) => (l.kind === "group" ? { ...l, children: keep(l.children) } : l));
+  return { ...layout, layers: keep(layout.layers) };
+}
+
+/** Puts a Layout's live captions on an overlay, beside its stamp, and takes
+ *  away the ones it no longer has.
+ *
+ *  Ids are carried over deliberately: per-tile wording lives in `tile.text`
+ *  keyed by layer id, so keeping the id is what lets a caption be repositioned
+ *  or restyled in the Layout without every tile losing what it says.
+ *
+ *  A caption nested in a group renders at its own position plus that group's
+ *  displacement; there is no group on the tile, so the displacement is folded
+ *  in on the way over — the same fold removeLayerFrom does when a group is
+ *  dissolved. */
+export function syncLiveLayers(overlay: Overlay, layout: Layout): number {
+  const live = perTileLayers(layout);
+  const wanted = new Set(live.map((l) => l.id));
+
+  for (const src of live) {
+    const shift = nestingShift(layout.layers, src.id) ?? { dx: 0, dy: 0 };
+    const copy: TextLayer = {
+      ...structuredClone(src),
+      x: src.x + shift.dx,
+      y: src.y + shift.dy,
+      layoutId: layout.id,
+      // Meaningless once it is on a tile, where every caption is already live.
+      perTile: undefined,
+    };
+    const at = overlay.layers.findIndex((l) => l.id === src.id);
+    if (at >= 0) overlay.layers[at] = copy;
+    else overlay.layers.push(copy);
+  }
+
+  for (let i = overlay.layers.length - 1; i >= 0; i--) {
+    const l = overlay.layers[i];
+    if (l.kind === "text" && l.layoutId === layout.id && !wanted.has(l.id)) {
+      overlay.layers.splice(i, 1);
+    }
+  }
+  return live.length;
+}
 
 /** Writes baked crops into their tiles' `base` and removes the mosaic layer
  *  that produced them — a mosaic in place is a background, not a floating

@@ -24,6 +24,7 @@
     canSaveLayout,
     canStampLayout,
     claimedCount,
+    clearTileText,
     clearTiles,
     closeLayoutDoc,
     deleteGroup,
@@ -55,7 +56,10 @@
     saveToGame,
     selectLayer,
     selectLayoutLayer,
+    setTileText,
     stampLayout,
+    tileCaptions,
+    tileText,
     toggleLayerHidden,
     toggleLayerLocked,
     toggleLayoutLayerHidden,
@@ -386,7 +390,7 @@
         {@render layerRows(layoutLayers, false)}
         <p class="empty">Rechtsklick auf eine Ebene für Gruppieren, Verschieben, Umbenennen.</p>
         {#if selectedLayoutLayer}
-          <Properties layer={selectedLayoutLayer} />
+          <Properties layer={selectedLayoutLayer} inLayout />
         {/if}
       {:else}
         {#if wallLayers.length}
@@ -539,6 +543,29 @@
             {/if}
           </div>
         {/each}
+
+        {#if tileCaptions().length}
+          {@const tile = app.selectedTiles[0]}
+          <h2 class="spaced">Text auf {tile}</h2>
+          {#each tileCaptions() as caption (caption.id)}
+            <label class="field">
+              <span>{layerLabel(caption)}</span>
+              <!-- The default shows as a placeholder, not as a value: typing
+                   over a real value and clearing a field look identical, and
+                   only one of them should mean "this tile says nothing". -->
+              <input
+                value={tileText(tile, caption.id) ?? ""}
+                placeholder={caption.text}
+                oninput={(e) => void setTileText(tile, caption.id, e.currentTarget.value)}
+              />
+              <button
+                title="Standardtext der Ebene wieder verwenden"
+                disabled={tileText(tile, caption.id) === undefined}
+                onclick={() => void clearTileText(tile, caption.id)}>↺</button
+              >
+            </label>
+          {/each}
+        {/if}
 
         <h2 class="spaced">Layouts</h2>
         {#if !layouts().length}
@@ -786,5 +813,30 @@
   }
   .dirty {
     color: #ffc45c;
+  }
+  .field {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 4px;
+  }
+  .field > span:first-child {
+    flex: none;
+    width: 56px;
+    overflow: hidden;
+    color: #8b979f;
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .field input {
+    flex: 1;
+    min-width: 0;
+    font: inherit;
+    padding: 2px 4px;
+    border: 1px solid #3a444c;
+    border-radius: 3px;
+    background: #0d1114;
+    color: inherit;
   }
 </style>

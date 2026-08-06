@@ -184,6 +184,23 @@ describe("renderLayout", () => {
     expect(right[2]).toBeGreaterThan(right[0]); // blue end
   });
 
+  it("keeps a per-tile caption out of the stamp but bakes an ordinary one", async () => {
+    const withCaption = (perTile: boolean) => {
+      const layout = newLayout("PT");
+      const l = newTextLayer();
+      l.text = "ABC";
+      l.size = 0.2;
+      l.y = 0.5;
+      l.perTile = perTile;
+      layout.layers.push(l);
+      return layout;
+    };
+    // Baked: real glyph pixels. Live: nothing at all in the picture, because
+    // it is copied onto the tiles as a layer instead.
+    expect(await opaqueCount(withCaption(false))).toBeGreaterThan(400);
+    expect(await opaqueCount(withCaption(true))).toBe(0);
+  });
+
   it("skips a hidden layer", async () => {
     const layout = newLayout("Versteckt");
     const l = newImageLayer("block:#ff00ff");

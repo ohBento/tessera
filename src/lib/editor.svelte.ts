@@ -32,6 +32,7 @@ import {
   shiftLayer,
   stampInto,
   swapTiles,
+  syncLiveLayers,
   visibleTiles,
   type ImageLayer,
   type Layer,
@@ -176,6 +177,45 @@ export async function releaseSelectedTiles() {
 
 export const claimedCount = () =>
   app.selectedTiles.filter((id) => groupOf(app.manifest, id)).length;
+
+/* --- Per-tile wording. A caption a Layout keeps live is one layer drawn on
+ * every tile of its group: position and style are shared, the words are
+ * not. --- */
+
+/** The live captions on the tiles currently picked, deduplicated — what the
+ *  wording panel offers to edit. Empty unless exactly one tile is picked,
+ *  since a field showing several tiles' differing words would have to invent
+ *  an answer for what typing into it means. */
+export function tileCaptions(): TextLayer[] {
+  if (app.selectedTiles.length !== 1) return [];
+  const group = groupOf(app.manifest, app.selectedTiles[0]);
+  return (group?.layers ?? []).filter((l): l is TextLayer => l.kind === "text");
+}
+
+/** This tile's wording for a caption, or undefined when it has none of its own
+ *  and shows the layer's default. */
+export const tileText = (tileId: string, layerId: string): string | undefined =>
+  app.manifest.tiles[tileId]?.text[layerId];
+
+/** Sets one tile's wording.
+ *
+ *  An emptied field stores "" and does not delete the key. Deleting it would
+ *  make layerText fall back to the layer's default, so the words the user just
+ *  cleared would reappear the moment the last character went — which is
+ *  exactly the bug this project has already had once. */
+export async function setTileText(tileId: string, layerId: string, text: string) {
+  const tile = app.manifest.tiles[tileId];
+  if (!tile || tile.text[layerId] === text) return;
+  await mutate(() => (tile.text[layerId] = text));
+}
+
+/** Drops the override so the tile follows the layer's default again — the only
+ *  way back, precisely because clearing the field does not do this. */
+export async function clearTileText(tileId: string, layerId: string) {
+  const tile = app.manifest.tiles[tileId];
+  if (!tile || !(layerId in tile.text)) return;
+  await mutate(() => delete tile.text[layerId]);
+}
 
 export async function renameGroup(groupId: string, name: string) {
   const group = findGroup(groupId);
@@ -777,6 +817,9 @@ export async function assignLayout(groupId: string, layoutId: string) {
     const { asset, seen } = await stampAsset(layout);
     await mutate(() => {
       stampInto(group, layoutId, asset);
+      // After the stamp, so a live caption sits on top of the picture it was
+      // composed over rather than behind it.
+      syncLiveLayers(group, layout);
       layout.stamped = seen;
     });
   });
@@ -802,6 +845,7 @@ export async function stampLayout(layoutId: string) {
         return;
       }
       stampInto(group, layoutId, asset);
+      syncLiveLayers(group, layout);
       layout.stamped = seen;
     });
   });
@@ -829,6 +873,9 @@ export async function saveLayout(layoutId: string) {
     const { asset, seen } = await stampAsset(layout);
     await mutate(() => {
       const n = refreshStamps(app.manifest, layoutId, asset);
+      // Live captions travel with the stamp: repositioning or restyling one in
+      // the Layout has to reach every group using it, the same as the picture.
+      for (const o of overlaysUsingLayout(app.manifest, layoutId)) syncLiveLayers(o, layout);
       layout.stamped = seen;
       app.error = `${n} Stempel aktualisiert`;
     });

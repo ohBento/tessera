@@ -10,6 +10,7 @@ import {
   emptyManifest,
   emptyTile,
   addToGroup,
+  bakeable,
   findLayer,
   findList,
   freeTiles,
@@ -35,6 +36,7 @@ import {
   removeFromGroup,
   stampInto,
   swapTiles,
+  syncLiveLayers,
   type ImageLayer,
   removeLayerFrom,
   setAssigned,
@@ -488,6 +490,102 @@ describe("layer groups keep members where they are", () => {
     removeLayerFrom(grouped, grouped[0].id);
     expect(grouped.map((l) => l.id)).toEqual(["a", "b"]);
     expect([at(grouped, "a"), at(grouped, "b")]).toEqual(before);
+  });
+});
+
+describe("per-tile captions", () => {
+  const liveCaption = (id: string, text = "Kachel {{id}}") => {
+    const l = { ...newTextLayer(), id, text, perTile: true };
+    return l;
+  };
+
+  it("keeps an emptied override empty instead of falling back", () => {
+    // The bug this project already had once: clearing the field put the
+    // layer's default text straight back, so it could not be cleared at all.
+    const layer = liveCaption("t1", "Standard");
+    expect(layerText({}, layer, "t00")).toBe("Standard");
+    expect(layerText({ t1: "" }, layer, "t00")).toBe("");
+    expect(layerText({ t1: "Eigen" }, layer, "t00")).toBe("Eigen");
+  });
+
+  it("expands {{id}} to the tile it lands on", () => {
+    expect(layerText({}, liveCaption("t1"), "t07")).toBe("Kachel t07");
+  });
+
+  it("leaves live captions out of what gets baked", () => {
+    const layout = newLayout("L");
+    layout.layers.push(newImageLayer("x.png"), liveCaption("t1"));
+    expect(bakeable(layout).layers.map((l) => l.kind)).toEqual(["image"]);
+    // The Layout itself is untouched — the editor still shows the caption.
+    expect(layout.layers).toHaveLength(2);
+  });
+
+  it("keeps a group's remaining children when a live member is dropped", () => {
+    const layout = newLayout("L");
+    const group = { ...newGroupLayer([newImageLayer("x.png"), liveCaption("t1")]), x: 0.7 };
+    layout.layers.push(group);
+    const baked = bakeable(layout).layers[0];
+    expect(baked.kind).toBe("group");
+    expect(baked.kind === "group" && baked.children.map((c) => c.kind)).toEqual(["image"]);
+    // The displacement survives, or the remaining children would jump.
+    expect(baked.x).toBe(0.7);
+  });
+
+  it("copies live captions onto the overlay and keeps their ids", () => {
+    const layout = newLayout("L");
+    layout.layers.push(liveCaption("t1"));
+    const overlay = newOverlay("G", ["a"]);
+
+    expect(syncLiveLayers(overlay, layout)).toBe(1);
+    expect(overlay.layers).toHaveLength(1);
+    expect(overlay.layers[0].id).toBe("t1");
+    expect(overlay.layers[0].layoutId).toBe(layout.id);
+    // perTile means nothing on a tile, where every caption is already live.
+    expect((overlay.layers[0] as TextLayer).perTile).toBeUndefined();
+  });
+
+  it("updates a copy in place rather than stacking a second one", () => {
+    const layout = newLayout("L");
+    layout.layers.push(liveCaption("t1"));
+    const overlay = newOverlay("G", ["a"]);
+    syncLiveLayers(overlay, layout);
+
+    (layout.layers[0] as TextLayer).size = 0.2;
+    syncLiveLayers(overlay, layout);
+    expect(overlay.layers).toHaveLength(1);
+    expect((overlay.layers[0] as TextLayer).size).toBe(0.2);
+  });
+
+  it("folds a group's displacement into the copy", () => {
+    const layout = newLayout("L");
+    const caption = { ...liveCaption("t1"), x: 0.3, y: 0.4 };
+    layout.layers.push({ ...newGroupLayer([caption]), x: 0.7, y: 0.2 });
+    const overlay = newOverlay("G", ["a"]);
+    syncLiveLayers(overlay, layout);
+    // group at 0.7/0.2 displaces by +0.2/-0.3 over the neutral 0.5/0.5
+    expect(overlay.layers[0].x).toBeCloseTo(0.5);
+    expect(overlay.layers[0].y).toBeCloseTo(0.1);
+  });
+
+  it("removes a copy once its source stops being per-tile", () => {
+    const layout = newLayout("L");
+    layout.layers.push(liveCaption("t1"));
+    const overlay = newOverlay("G", ["a"]);
+    syncLiveLayers(overlay, layout);
+
+    (layout.layers[0] as TextLayer).perTile = false;
+    expect(syncLiveLayers(overlay, layout)).toBe(0);
+    expect(overlay.layers).toHaveLength(0);
+  });
+
+  it("leaves another layout's copies alone", () => {
+    const mine = newLayout("A");
+    mine.layers.push(liveCaption("t1"));
+    const theirs = newLayout("B");
+    const overlay = newOverlay("G", ["a"]);
+    syncLiveLayers(overlay, mine);
+    syncLiveLayers(overlay, theirs);
+    expect(overlay.layers).toHaveLength(1);
   });
 });
 

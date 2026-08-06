@@ -6,7 +6,7 @@
 import * as fabric from "fabric";
 
 import { TILE_H, TILE_W } from "./bmp";
-import type { Layout } from "./model";
+import { bakeable, type Layout } from "./model";
 import { buildLayout, type SceneDeps } from "./scene";
 
 /** Renders a Layout at tile resolution and returns it as PNG bytes.
@@ -22,7 +22,11 @@ export async function renderLayout(layout: Layout, deps: SceneDeps): Promise<Uin
     enableRetinaScaling: false,
   });
   try {
-    await buildLayout(canvas, layout, deps);
+    /* Live captions are left out here and copied onto the tiles instead — see
+     * syncLiveLayers. Baking one would turn it into pixels, and pixels cannot
+     * say a different word on every tile. The editor still shows it, so what
+     * you compose is what you get; only this one path drops it. */
+    await buildLayout(canvas, bakeable(layout), deps);
     const blob = await new Promise<Blob | null>((resolve) =>
       canvas.getElement().toBlob(resolve, "image/png"),
     );

@@ -6,7 +6,9 @@
   import { setLayerField, type LayerField } from "./lib/editor.svelte";
   import { isGradient, type Layer, type Paint } from "./lib/model";
 
-  let { layer }: { layer: Layer } = $props();
+  /** Some fields only mean something in a Layout — "pro Kachel" is about what
+   *  happens at stamp time, and a layer already on a tile is past that. */
+  let { layer, inLayout = false }: { layer: Layer; inLayout?: boolean } = $props();
 
   const set = (key: LayerField, value: unknown) => void setLayerField(layer.id, key, value);
 
@@ -40,6 +42,23 @@
       oninput={(e) => set("size", num(e))}
     />
   </label>
+  {#if inLayout}
+    <div class="row">
+      <button
+        class:on={layer.perTile}
+        onclick={() => set("perTile", !layer.perTile)}
+        title="Nicht in den Stempel einbrennen — als lebende Ebene auf jede Kachel legen, damit jede ihren eigenen Wortlaut haben kann"
+      >
+        {layer.perTile ? "✓ " : ""}pro Kachel
+      </button>
+    </div>
+    {#if layer.perTile}
+      <p class="hint">
+        Bleibt aus dem Stempel heraus. Nach dem Stempeln pro Kachel bearbeitbar; „{"{{id}}"}" wird
+        die Kachel-ID.
+      </p>
+    {/if}
+  {/if}
   <div class="row">
     <button class:on={layer.bold} onclick={() => set("bold", !layer.bold)}>F</button>
     <button class:on={layer.italic} onclick={() => set("italic", !layer.italic)}>K</button>
@@ -228,5 +247,10 @@
   .empty {
     margin: 0;
     color: #6c777e;
+  }
+  .hint {
+    margin: 0 0 6px;
+    color: #6c777e;
+    font-size: 11px;
   }
 </style>
