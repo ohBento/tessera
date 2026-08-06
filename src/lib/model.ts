@@ -368,6 +368,33 @@ export type Layout = {
 
 export const newLayout = (name: string): Layout => ({ id: newId(), name, layers: [] });
 
+/** A copy of a Layout under a new name, with fresh ids all the way down.
+ *
+ *  The ids have to change. Per-tile wording lives in `tile.text` keyed by layer
+ *  id, and `syncLiveLayers` finds the copy of a caption by id — so a duplicate
+ *  that kept them would quietly share both with the original, and editing one
+ *  would move the other's captions. Mask references are remapped as they are
+ *  copied, so they keep pointing inside the duplicate rather than back at the
+ *  layer they were cloned from.
+ *
+ *  `stamped` is deliberately not carried over: the copy has never been put on
+ *  a tile, so it has nothing to be out of date with. */
+export function duplicateLayout(layout: Layout, name: string): Layout {
+  const swap = new Map<string, string>();
+  const clone = (layers: Layer[]): Layer[] =>
+    layers.map((l) => {
+      const copy = structuredClone(l) as Layer;
+      copy.id = newId();
+      swap.set(l.id, copy.id);
+      if (copy.kind === "group") copy.children = clone(copy.children);
+      return copy;
+    });
+
+  const layers = clone(layout.layers);
+  for (const l of walkLayers(layers)) if (l.maskId) l.maskId = swap.get(l.maskId);
+  return { id: newId(), name, layers };
+}
+
 /** Cheap content fingerprint of a Layout's layers.
  *
  *  A hash rather than the JSON itself: the comparison only ever needs to

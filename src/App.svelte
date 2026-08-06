@@ -33,6 +33,7 @@
     deleteLayoutLayer,
     dropGroupLayer,
     dropLayoutLayer,
+    duplicateLayoutDoc,
     freeCount,
     groupLayoutLayers,
     groups,
@@ -724,6 +725,7 @@
                   </span>
                 </button>
               {/if}
+              <button title="Duplizieren" onclick={() => duplicateLayoutDoc(layout.id)}>⧉</button>
               <button title="Löschen" onclick={() => removeLayout(layout.id, layout.name)}>×</button
               >
             </li>

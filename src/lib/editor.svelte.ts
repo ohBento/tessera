@@ -8,6 +8,7 @@ import { renderLayout } from "./layout";
 import {
   addToGroup,
   bakeMosaicInto,
+  duplicateLayout,
   emptyManifest,
   findLayer,
   findList,
@@ -560,6 +561,25 @@ export const closeLayoutDoc = () => {
   app.openLayoutId = "";
   app.layoutSelected = "";
 };
+
+/** Copies a Layout and opens the copy, which is what you wanted it for.
+ *
+ *  The name gets a suffix rather than a counter: "Layout 1 Kopie 2" says which
+ *  one it came from, where "Layout 4" does not. */
+export async function duplicateLayoutDoc(id: string) {
+  const layout = app.manifest.layouts.find((l) => l.id === id);
+  if (!layout) return;
+  const taken = new Set(app.manifest.layouts.map((l) => l.name));
+  let name = `${layout.name} Kopie`;
+  for (let n = 2; taken.has(name); n++) name = `${layout.name} Kopie ${n}`;
+
+  await mutate(() => {
+    const copy = duplicateLayout($state.snapshot(layout), name);
+    app.manifest.layouts.push(copy);
+    app.openLayoutId = copy.id;
+    setLayoutSelection([]);
+  });
+}
 
 export async function deleteLayoutDoc(id: string) {
   await mutate(() => {
