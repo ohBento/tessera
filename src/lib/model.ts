@@ -752,6 +752,19 @@ export const layerAsset = (swaps: Record<string, string>, layer: ImageLayer) =>
  *  says or shows. */
 export type LiveLayer = TextLayer | ImageLayer;
 
+/** Is this layer on a tile a Layout's live copy, rather than its stamp?
+ *
+ *  Both carry the same layoutId and both can be images, so kind alone cannot
+ *  tell them apart — `live` is what says which is which. Text counts either
+ *  way: a stamp is never text, and captions stamped before `live` existed
+ *  carry no flag at all.
+ *
+ *  One rule, because three places ask it: the withdrawal pass below, and the
+ *  tile list, which speaks for a Layout with a single row. Written twice, the
+ *  list's copy said "text" where this one says "a copy" — so a per-tile
+ *  picture appeared as a second row for the same layout. */
+export const isLiveCopy = (l: Layer) => !!l.layoutId && (!!l.live || l.kind === "text");
+
 export const perTileLayers = (layout: Layout): LiveLayer[] =>
   [...walkLayers(layout.layers)].filter(
     (l): l is LiveLayer => (l.kind === "text" || l.kind === "image") && !!l.perTile,
@@ -807,12 +820,7 @@ export function syncLiveLayers(into: { layers: Layer[] }, layout: Layout): numbe
    * the moment a per-tile picture was switched off. */
   for (let i = into.layers.length - 1; i >= 0; i--) {
     const l = into.layers[i];
-    /* Text counts as a copy whether or not it carries the flag: a stamp is
-     * never text, and captions stamped before `live` existed would otherwise
-     * be orphaned here forever — a withdrawn caption is only ever replaced
-     * while it is still live, so it can never gain the flag afterwards. */
-    const copy = l.live || l.kind === "text";
-    if (copy && l.layoutId === layout.id && !wanted.has(l.id)) into.layers.splice(i, 1);
+    if (isLiveCopy(l) && l.layoutId === layout.id && !wanted.has(l.id)) into.layers.splice(i, 1);
   }
   return live.length;
 }

@@ -216,6 +216,37 @@ describe("the wall", () => {
     await until(() => document.body.textContent!.includes("Mein Layout"));
   });
 
+  it("shows one row for a layout, not a second for the picture it keeps live", async () => {
+    /* A layout with a per-tile picture puts two layers on the tile: the stamp
+     * and the live copy. Both are images carrying the same layoutId, so a rule
+     * written on kind alone kept both — the tile read "2 layout(s)" and the
+     * two rows marked different things on the wall. Live captions were already
+     * hidden; the picture is the same kind of copy. */
+    const a = app.folderIds[0];
+
+    queuePick(await magentaSquare("logo"));
+    await newLayoutDoc("Mit Logo");
+    await addLayoutImage();
+    const pic = openLayout()!.layers[0];
+    await setLayerField(pic.id, "perTile", true);
+    await assignTileLayout(a, openLayout()!.id);
+    await until(() => tileLayers(a).length === 2);
+
+    // Through the list, because the list is where it was wrong.
+    await closeLayoutDoc();
+    const section = [...document.querySelectorAll("aside button.name")].find((b) =>
+      b.textContent!.includes("In the inbox"),
+    ) as HTMLButtonElement;
+    section.click();
+
+    const row = () =>
+      [...document.querySelectorAll("aside button.name")].find((b) =>
+        b.textContent!.trim().startsWith(a),
+      );
+    await until(() => !!row());
+    expect(row()!.textContent).toContain("1 layout(s)");
+  });
+
   it("deleting a stamp takes its live caption with it", async () => {
     /* The defect this replaces: the caption survived, no list showed it —
      * they are hidden because the stamp row speaks for them — and it went on

@@ -99,7 +99,7 @@
     undoable,
   } from "./lib/editor.svelte";
   import { isTyping } from "./lib/geometry";
-  import { findLayer, layerLabel, layoutNeedsRestamp, type Layer } from "./lib/model";
+  import { findLayer, isLiveCopy, layerLabel, layoutNeedsRestamp, type Layer } from "./lib/model";
 
   const editing = $derived(openLayout());
 
@@ -332,9 +332,8 @@
   }
 
   /** A holder's rows as the list draws them: topmost first, and without the
-   *  live captions a Layout keeps there — the stamp row speaks for them. */
-  const stampsOf = (layers: Layer[]) =>
-    [...layers].reverse().filter((l) => !(l.kind === "text" && l.layoutId));
+   *  live copies a Layout keeps there — the stamp row speaks for them. */
+  const stampsOf = (layers: Layer[]) => [...layers].reverse().filter((l) => !isLiveCopy(l));
 
   /** A stamp shows its Layout's name; anything else falls back to layerLabel. */
   const stampName = (l: Layer) =>
