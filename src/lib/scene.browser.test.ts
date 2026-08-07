@@ -6,8 +6,8 @@ import { describe, expect, it } from "vitest";
 
 import { TILE_H, TILE_W } from "./bmp";
 import { renderTiles } from "./export";
-import { emptyManifest, emptyTile, migrate, newImageLayer, newOverlay, type Manifest } from "./model";
-import { buildGrid, cellAt, gridSize } from "./scene";
+import { emptyManifest, emptyTile, migrate, newImageLayer, newProject, type Manifest } from "./model";
+import { buildGrid, cellAt, gridSize, type Wall } from "./scene";
 import { testDeps } from "../test/images";
 
 const HEADER = 54;
@@ -20,10 +20,22 @@ function pixel(bmp: Uint8Array, x: number, y: number) {
 
 function manifest(count: number): Manifest {
   const m = emptyManifest();
-  m.order = Array.from({ length: count }, (_, i) => `4000000000000000${i}`);
-  for (const id of m.order) m.tiles[id] = emptyTile();
+  const p = newProject("Main");
+  p.order = Array.from({ length: count }, (_, i) => `4000000000000000${i}`);
+  m.projects = [p];
+  for (const id of p.order) m.tiles[id] = emptyTile();
   return m;
 }
+
+/** The tile ids of the manifest's only project, in grid order. */
+const order = (m: Manifest) => m.projects[0].order;
+
+/** What the renderer is pointed at: an ordered dense id list plus the layers
+ *  spread over the whole of it. A project supplies both. */
+const view = (m: Manifest): Wall => ({
+  ids: m.projects[0].order,
+  gridLayers: m.projects[0].gridLayers,
+});
 
 /** A flat magenta block, small enough to sit well inside one tile. */
 function gridBlock(m: Manifest, x: number, y: number, scale: number) {
@@ -32,7 +44,7 @@ function gridBlock(m: Manifest, x: number, y: number, scale: number) {
   l.x = x;
   l.y = y;
   l.scale = scale;
-  m.overlays.push({ ...newOverlay("Alle"), layers: [l] });
+  m.projects[0].gridLayers.push(l);
   return l;
 }
 
@@ -47,11 +59,11 @@ describe("locks on the wall", () => {
     const mine = newImageLayer("block:#00ff00");
     const stamp = newImageLayer("block:#ff00ff");
     stamp.layoutId = "L1";
-    m.overlays.push({ ...newOverlay("G", [m.order[0]]), layers: [mine, stamp] });
+    m.tiles[order(m)[0]].layers.push(mine, stamp);
 
     const canvas = new fabric.StaticCanvas(undefined, { width: 100, height: 100 });
     try {
-      await buildGrid(canvas, m, testDeps, true);
+      await buildGrid(canvas, view(m), m, testDeps, true);
       const by = (id: string) =>
         canvas.getObjects().find((o) => (o as { layerId?: string }).layerId === id) as
           | (fabric.Object & { locked?: boolean })
@@ -69,7 +81,7 @@ describe("locks on the wall", () => {
 describe("export", () => {
   it("writes one game-shaped BMP per visible tile", async () => {
     const m = manifest(8);
-    const tiles = await renderTiles(m, testDeps);
+    const tiles = await renderTiles(view(m), m, testDeps);
 
     expect(tiles.size).toBe(8);
     for (const bytes of tiles.values()) {
@@ -84,18 +96,29 @@ describe("export", () => {
   });
 
   it("moves the window per tile instead of exporting the same one twice", async () => {
-    const tiles = await renderTiles(manifest(4), testDeps);
+    const four = manifest(4);
+    const tiles = await renderTiles(view(four), four, testDeps);
     const [a, b, c] = [...tiles.values()];
     expect(a).not.toEqual(b);
     expect(b).not.toEqual(c);
   });
 
-  it("hidden tiles are neither exported nor counted as a grid slot", async () => {
+  it("a tile off the grid is neither exported nor counted as a slot", async () => {
+    /* v6 kept a `hidden` list and filtered it out at render time. v7 has no
+     * such list: the project's `order` IS the grid, so taking a tile out of it
+     * — onto the shelf — is the whole mechanism. What matters either way is
+     * that the slot closes up rather than being left blank: the neighbours
+     * shift, and the export keys follow them. */
     const m = manifest(4);
-    m.hidden = [m.order[1]];
-    const tiles = await renderTiles(m, testDeps);
+    const p = m.projects[0];
+    const off = p.order[1];
+    p.order = p.order.filter((id) => id !== off);
+    p.shelf = [off];
 
-    expect([...tiles.keys()]).toEqual([m.order[0], m.order[2], m.order[3]]);
+    const tiles = await renderTiles(view(m), m, testDeps);
+    expect([...tiles.keys()]).toEqual(p.order);
+    expect(tiles.size).toBe(3);
+    expect(tiles.has(off)).toBe(false);
   });
 });
 
@@ -104,9 +127,9 @@ describe("tile base", () => {
     const m = manifest(3);
     // Whole 200x200 block, so the crop covers the source exactly and the tile
     // ends up a flat colour — anything else means the crop maths is off.
-    m.tiles[m.order[1]].base = { asset: "block:#00ff00", crop: { x: 0, y: 0, w: 200, h: 200 } };
+    m.tiles[order(m)[1]].base = { asset: "block:#00ff00", crop: { x: 0, y: 0, w: 200, h: 200 } };
 
-    const tiles = [...(await renderTiles(m, testDeps)).values()];
+    const tiles = [...(await renderTiles(view(m), m, testDeps)).values()];
 
     for (const [x, y] of [[2, 2], [TILE_W / 2, TILE_H / 2], [TILE_W - 3, TILE_H - 3]]) {
       expect(pixel(tiles[1], x, y)).toEqual([0, 255, 0, 255]);
@@ -127,7 +150,8 @@ describe("tile base", () => {
         t1: { base: { asset: "block:#00ff00", crop: { x: 100, y: 0, w: 100, h: 200 } }, layers: [], text: {} },
       },
     };
-    const tiles = [...(await renderTiles(migrate(v2), testDeps)).values()];
+    const migrated = migrate(v2);
+    const tiles = [...(await renderTiles(view(migrated), migrated, testDeps)).values()];
 
     expect(tiles).toHaveLength(2);
     for (const t of tiles) expect(pixel(t, TILE_W / 2, TILE_H / 2)).toEqual([0, 255, 0, 255]);
@@ -147,10 +171,10 @@ describe("a tile keeps its own content", () => {
     // Well past the bottom edge. Without clipping this lands on the tile seven
     // places later, which is the one directly underneath.
     layer.y = 1.3;
-    m.overlays.push({ ...newOverlay("G", [m.order[0]]), layers: [layer] });
+    m.tiles[order(m)[0]].layers.push(layer);
 
-    const tiles = await renderTiles(m, testDeps);
-    const below = tiles.get(m.order[7])!;
+    const tiles = await renderTiles(view(m), m, testDeps);
+    const below = tiles.get(order(m)[7])!;
     let magenta = 0;
     for (let i = 54; i + 3 < below.length; i += 4) {
       // BGRA, bottom-up — colour only, position does not matter here.
@@ -166,9 +190,9 @@ describe("a tile keeps its own content", () => {
     // Centred on the seam between cell 0 and cell 1: half of it hangs over.
     layer.x = 1;
     layer.y = 0.5;
-    m.overlays.push({ ...newOverlay("G", [m.order[0]]), layers: [layer] });
+    m.tiles[order(m)[0]].layers.push(layer);
 
-    const next = (await renderTiles(m, testDeps)).get(m.order[1])!;
+    const next = (await renderTiles(view(m), m, testDeps)).get(order(m)[1])!;
     let magenta = 0;
     for (let i = 54; i + 3 < next.length; i += 4) {
       if (next[i] > 200 && next[i + 1] < 60 && next[i + 2] > 200) magenta++;
@@ -182,9 +206,9 @@ describe("a tile keeps its own content", () => {
     layer.scale = 0.4;
     layer.x = 0.5;
     layer.y = 0.5;
-    m.overlays.push({ ...newOverlay("G", [m.order[0]]), layers: [layer] });
+    m.tiles[order(m)[0]].layers.push(layer);
 
-    const own = (await renderTiles(m, testDeps)).get(m.order[0])!;
+    const own = (await renderTiles(view(m), m, testDeps)).get(order(m)[0])!;
     const [b, g, r] = pixel(own, TILE_W / 2, TILE_H / 2);
     expect(r).toBeGreaterThan(200);
     expect(g).toBeLessThan(60);
@@ -200,7 +224,7 @@ describe("grid-space layers", () => {
     const at = cellAt(target);
     gridBlock(m, (at.x + TILE_W / 2) / grid.w, (at.y + TILE_H / 2) / grid.h, 0.05);
 
-    const tiles = [...(await renderTiles(m, testDeps)).values()];
+    const tiles = [...(await renderTiles(view(m), m, testDeps)).values()];
 
     expect(pixel(tiles[target], TILE_W / 2, TILE_H / 2)).toEqual([255, 0, 255, 255]);
     for (const other of [0, 1, 3, 7]) {
@@ -213,7 +237,7 @@ describe("grid-space layers", () => {
     gridBlock(m, 0.5, 0.5, 0.05);
     const canvas = new fabric.StaticCanvas(undefined, { width: 10, height: 10, enableRetinaScaling: false });
     try {
-      await buildGrid(canvas, m, testDeps);
+      await buildGrid(canvas, view(m), m, testDeps);
       // 8 backgrounds + exactly one block, not 8 copies of it.
       expect(canvas.getObjects().length).toBe(9);
     } finally {
@@ -228,7 +252,7 @@ describe("export matches what the editor shows", () => {
     gridBlock(m, 0.3, 0.4, 0.08);
     const target = 2;
 
-    const exported = [...(await renderTiles(m, testDeps)).values()][target];
+    const exported = [...(await renderTiles(view(m), m, testDeps)).values()][target];
 
     // The whole wall in one go, no viewport trickery — the reference the
     // windowed export has to agree with.
@@ -240,7 +264,7 @@ describe("export matches what the editor shows", () => {
     });
     let wallPixels: Uint8ClampedArray;
     try {
-      await buildGrid(wall, m, testDeps);
+      await buildGrid(wall, view(m), m, testDeps);
       const at = cellAt(target);
       wallPixels = wall.getElement().getContext("2d")!.getImageData(at.x, at.y, TILE_W, TILE_H).data;
     } finally {

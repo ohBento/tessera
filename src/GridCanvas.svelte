@@ -14,6 +14,7 @@
     clearTiles,
     selectLayer,
     swapTilePlaces,
+    wall,
     toggleTile,
     visibleIds,
   } from "./lib/editor.svelte";
@@ -103,7 +104,12 @@
         if (built < 0) fit();
         rebuilding = true;
         try {
-          await buildGrid(canvas, $state.snapshot(app.manifest), deps, true);
+          /* Snapshotted together with the manifest. The id list is the grid's
+           * coordinate system — the index into it positions every cell — so it
+           * has to be the same list the hit-testing below reads, not a second
+           * derivation that could disagree by one. */
+          const view = $state.snapshot(wall());
+          await buildGrid(canvas, view, $state.snapshot(app.manifest), deps, true);
         } finally {
           rebuilding = false;
         }
@@ -134,7 +140,7 @@
   $effect(() => {
     app.selectedTiles.join();
     app.selected;
-    app.hoverGroup;
+    app.hoverFolder;
     canvas?.requestRenderAll();
   });
 

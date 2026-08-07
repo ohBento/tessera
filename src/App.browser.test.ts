@@ -24,21 +24,24 @@ import {
   closeLayoutDoc,
   dropLayoutLayer,
   endGesture,
+  deleteLayer,
   freeCount,
   history,
   setLayerField,
   undoEdit,
   groupLayoutLayers,
-  groups,
+  inbox,
   layouts,
   moveLayersIntoGroup,
-  newGroup,
+  newProjectFrom,
+  projects,
+  tileLayers,
   renameLayer,
   setLayoutSelection,
   tileCaptions,
   toggleLayoutPick,
 } from "./lib/editor.svelte";
-import { addLayoutImage, assignLayout, newLayoutDoc, openLayout } from "./lib/editor.svelte";
+import { addLayoutImage, assignTileLayout, newLayoutDoc, openLayout } from "./lib/editor.svelte";
 import { emptyManifest, findLayer, groupShift, layerLabel } from "./lib/model";
 import { queuePick, resetMockFiles, stashPickedFile } from "./lib/platform";
 
@@ -74,7 +77,7 @@ async function mountApp() {
   host.id = "app";
   document.body.append(host);
   ui = mount(App, { target: host });
-  await until(() => !!app.dir && app.manifest.order.length > 0 && !app.busy);
+  await until(() => !!app.dir && app.folderIds.length > 0 && !app.busy);
 }
 
 async function magentaSquare(name: string) {
@@ -100,7 +103,7 @@ beforeEach(async () => {
 describe("the wall", () => {
   it("opens its folder without being asked and shows every tile", () => {
     expect(app.dir).toContain("FaceTexture");
-    expect(app.manifest.order.length).toBeGreaterThan(0);
+    expect(app.folderIds.length).toBeGreaterThan(0);
     expect(document.querySelector("canvas.lower-canvas")).toBeTruthy();
   });
 
@@ -142,14 +145,12 @@ describe("the wall", () => {
     expect(ink()).toBe(0);
   });
 
-  it("stamps a per-tile caption onto the group, live", async () => {
+  it("stamps a per-tile caption onto the tile, live", async () => {
     /* Through the editor, not the model: the unit tests hand syncLiveLayers
      * plain objects, and the app hands it Svelte $state proxies — which is a
      * different thing entirely, and the difference silently broke the whole
      * feature. Anything reachable only through a real edit belongs here. */
-    const [a, b] = app.manifest.order;
-    app.selectedTiles = [a, b];
-    await newGroup();
+    const [a] = app.folderIds;
 
     await newLayoutDoc("Mit Text");
     await addLayoutText();
@@ -157,11 +158,10 @@ describe("the wall", () => {
     await setLayerField(caption.id, "perTile", true);
     await setLayerField(caption.id, "text", "Kachel {{id}}");
 
-    await assignLayout(groups()[0].id, openLayout()!.id);
+    await assignTileLayout(a, openLayout()!.id);
 
     expect(app.error).toBe("");
-    const kinds = groups()[0].layers.map((l) => l.kind);
-    expect(kinds).toEqual(["image", "text"]);
+    expect(tileLayers(a).map((l) => l.kind)).toEqual(["image", "text"]);
     // Recorded, or "Update stamps" would be greyed out forever.
     expect(openLayout()!.stamped).toBeTruthy();
     // And the wording panel can find it.
@@ -169,30 +169,50 @@ describe("the wall", () => {
     expect(tileCaptions()).toHaveLength(1);
   });
 
-  it("makes a group from the picked tiles and counts only the free ones", async () => {
-    const [a, b, c] = app.manifest.order;
+  it("makes a project from the picked tiles and counts only the free ones", async () => {
+    const [a, b, c] = app.folderIds;
     app.selectedTiles = [a, b, c];
     expect(freeCount()).toBe(3);
 
-    await newGroup();
-    expect(groups()).toHaveLength(1);
-    expect(groups()[0].tiles).toEqual([a, b, c]);
-    // Now claimed, so the same pick can no longer start a second group.
+    await newProjectFrom("Erstes");
+    expect(projects()).toHaveLength(1);
+    expect(projects()[0].order).toEqual([a, b, c]);
+    // Claimed now, so the same pick can no longer start a second project — and
+    // the three are out of the inbox.
+    app.selectedTiles = [a, b, c];
     expect(freeCount()).toBe(0);
+    expect(inbox()).not.toContain(a);
   });
 
   it("shows a stamp under its layout's name once one is assigned", async () => {
-    app.selectedTiles = [app.manifest.order[0]];
-    await newGroup();
+    const a = app.folderIds[0];
 
     queuePick(await magentaSquare("stempel"));
     await newLayoutDoc("Mein Layout");
     await addLayoutImage();
-    await assignLayout(groups()[0].id, openLayout()!.id);
+    await assignTileLayout(a, openLayout()!.id);
 
-    await until(() => groups()[0].layers.length === 1);
+    await until(() => tileLayers(a).length === 1);
     expect(layouts()[0].name).toBe("Mein Layout");
     await until(() => document.body.textContent!.includes("Mein Layout"));
+  });
+
+  it("deleting a stamp takes its live caption with it", async () => {
+    /* The defect this replaces: the caption survived, no list showed it —
+     * they are hidden because the stamp row speaks for them — and it went on
+     * rendering on the wall with no row and no way out. Four tiles on the real
+     * wall ended up like that. */
+    const a = app.folderIds[0];
+    await newLayoutDoc("Mit Text");
+    await addLayoutText();
+    const caption = openLayout()!.layers[0];
+    await setLayerField(caption.id, "perTile", true);
+    await assignTileLayout(a, openLayout()!.id);
+    await until(() => tileLayers(a).length === 2);
+
+    const stamp = tileLayers(a).find((l) => l.kind === "image")!;
+    await deleteLayer(stamp.id);
+    expect(tileLayers(a)).toEqual([]);
   });
 
   it("renames a layout from its row", async () => {

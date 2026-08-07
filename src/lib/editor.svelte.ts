@@ -6,18 +6,17 @@ import { mosaicBakeCrops } from "./geometry";
 import { canRedo, canUndo, checkpoint, emptyHistory, endRun, redo, undo } from "./history";
 import { renderLayout } from "./layout";
 import {
-  addToGroup,
   bakeMosaicInto,
   clearBases,
+  deleteStampCascade,
   duplicateLayout,
   emptyManifest,
   findLayer,
   findList,
-  freeTiles,
-  groupOf,
   groupShift,
   holdersUsingLayout,
-  instanceCount,
+  inboxIds,
+  moveToProject,
   layerLabel,
   layoutFingerprint,
   layoutNeedsRestamp,
@@ -25,26 +24,25 @@ import {
   newGroupLayer,
   newImageLayer,
   newLayout,
-  newOverlay,
+  newProject,
   newShapeLayer,
   newTextLayer,
-  overlayOf,
+  projectOf,
   refreshStamps,
+  removeFromProjectToInbox,
   relocateLayer,
-  removeFromGroup,
   removeLayerFrom,
   resolveLayers,
   shiftLayer,
   stampInto,
-  swapTiles,
+  swapPlaced,
   syncLiveLayers,
   tilesUsingLayout,
-  visibleTiles,
   type ImageLayer,
   type Layer,
   type Layout,
   type Manifest,
-  type Overlay,
+  type Project,
   type ShapeKind,
   type ShapeLayer,
   type TextLayer,
@@ -76,11 +74,19 @@ export const app = $state({
   version: 0,
   /** Layer picked in the list or on the canvas, "" for none. */
   selected: "",
-  /** Tiles picked on the canvas. What a new group gets built from. */
+  /** Tiles picked on the canvas. What a new project gets built from. */
   selectedTiles: [] as string[],
-  /** Group being hovered in the sidebar — its tiles get outlined on the wall,
-   *  so you can see what a group holds without clicking it. */
-  hoverGroup: "",
+  /** Folder being hovered in the sidebar — its tiles get outlined on the wall,
+   *  so you can see what a drawer holds without opening it. */
+  hoverFolder: "",
+  /** Which project's wall is showing, "" for the inbox — the tiles no project
+   *  has claimed. View state only: which wall you are looking at is not an edit
+   *  and has no business in the manifest or in undo. */
+  openProjectId: "",
+  /** Every tile id the folder has, newest read wins. The inbox is derived from
+   *  this and the projects, so it is never stored: the folder is where ids come
+   *  from, and a second copy of that list would drift from it. */
+  folderIds: [] as string[],
   /** Which Layout is open for editing, "" when looking at the wall instead.
    *  View state only, not persisted — a Layout's own content is. */
   openLayoutId: "",
@@ -111,81 +117,93 @@ export function toggleTile(id: string, additive: boolean) {
 
 export const clearTiles = () => (app.selectedTiles = []);
 
-/** Drops every pick on the wall — tiles, layer, and the group outline that
- *  follows the layer. What a click on empty canvas means. */
+/** Drops every pick on the wall — tiles, layer, and the outline that follows a
+ *  hovered drawer. What a click on empty canvas means. */
 export function clearAll() {
   app.selectedTiles = [];
   app.selected = "";
-  app.hoverGroup = "";
+  app.hoverFolder = "";
 }
 
-/** The tiles outlined on the wall: the hovered group's, else the selected
- *  layer's group. An "all" overlay reports nothing — outlining every cell says
+/** The tiles outlined on the wall: whichever cosmetic folder the pointer is
+ *  over in the sidebar. Nothing else outlines — a mark on every cell says
  *  nothing while drowning out the plain tile guides. */
 export function assignedTiles(): string[] {
-  const overlay = app.hoverGroup
-    ? app.manifest.overlays.find((o) => o.id === app.hoverGroup)
-    : app.selected
-      ? overlayOf(app.manifest, app.selected)
-      : undefined;
-  return !overlay || overlay.tiles === "all" ? [] : overlay.tiles;
+  if (!app.hoverFolder) return [];
+  return openProject()?.folders.find((f) => f.id === app.hoverFolder)?.tiles ?? [];
 }
 
-/* --- Tile groups. A group owns its tiles exclusively (see groupOf in
- * model.ts), which is what lets it be a thing you point at: name it, add tiles
- * to it, drop layouts on it. --- */
+/* --- Projects. One wall each; the FaceTexture folder holds several accounts'
+ * worth of portraits and a project is which of them belong together. The
+ * inbox is what no project has claimed, derived rather than stored. --- */
 
-/** The groups shown in the sidebar — "all" overlays are the wall axis, not
- *  groups, and hold the grid picture rather than anything tile-scoped. */
-export const groups = () => app.manifest.overlays.filter((o) => o.tiles !== "all");
+export const projects = () => app.manifest.projects;
 
-export const findGroup = (id: string) => app.manifest.overlays.find((o) => o.id === id);
+/** The project whose wall is showing, or undefined for the inbox. */
+export const openProject = (): Project | undefined =>
+  app.manifest.projects.find((p) => p.id === app.openProjectId);
 
-/** How many of the picked tiles are still unclaimed — drives both buttons and
- *  the status line, so a greyed button always has a readable reason. */
-export const freeCount = () => freeTiles(app.manifest, app.selectedTiles).length;
+/** Tiles the folder has that no project claims. */
+export const inbox = () => inboxIds(app.manifest, app.folderIds);
 
-export async function newGroup() {
-  const free = freeTiles(app.manifest, app.selectedTiles);
-  if (!free.length) return;
+/** What the canvas and the export are pointed at. The inbox is a wall too: the
+ *  unclaimed tiles, with no picture spread over them. */
+export function wall(): { ids: string[]; gridLayers: Layer[] } {
+  const p = openProject();
+  return p ? { ids: p.order, gridLayers: p.gridLayers } : { ids: inbox(), gridLayers: [] };
+}
+
+export function openProjectView(id: string) {
+  if (app.openProjectId === id) return;
+  app.openProjectId = id;
+  // The pick belongs to the wall it was made on; carrying it across would leave
+  // actions pointing at tiles that are no longer on screen.
+  clearAll();
+  app.version++;
+}
+
+/** The tile ids of the picked tiles that no project has claimed — what a new
+ *  project may be built from, and why a greyed button has a readable reason. */
+export const freeCount = () => inboxIds(app.manifest, app.selectedTiles).length;
+
+/** Hands the picked tiles to another project. Their layers, wording and
+ *  pictures go with them for free — those live under the tile id, which no
+ *  project owns. */
+export async function moveTilesToProject(projectId: string) {
+  const moving = [...app.selectedTiles];
+  if (!moving.length) return;
   await mutate(() => {
-    app.manifest.overlays.push(newOverlay(`Group ${groups().length + 1}`, free));
+    for (const id of moving) moveToProject(app.manifest, id, projectId);
+    clearAll();
   });
 }
 
-/** Adds the picked tiles that no other group has claimed. Reports the skipped
- *  ones rather than stealing them: moving a tile between groups silently would
- *  change a stamp the user cannot see from here. */
-export async function addTilesToGroup(groupId: string) {
-  const group = findGroup(groupId);
-  if (!group || !freeCount()) return;
-  const skipped = app.selectedTiles.length - freeCount();
-  await mutate(() => addToGroup(app.manifest, group, [...app.selectedTiles]));
-  // "vergeben", not "in einer anderen Gruppe": a tile already in *this* group
-  // is skipped too, and naming the wrong group is worse than naming none.
-  if (skipped) app.error = `${skipped} tile(s) skipped — already taken`;
-}
-
-export async function removeTileFromGroup(groupId: string, tileId: string) {
-  const group = findGroup(groupId);
-  if (!group) return;
-  await mutate(() => removeFromGroup(group, tileId));
-}
-
-/** Frees every picked tile from whichever group holds it. */
-export async function releaseSelectedTiles() {
-  const owned = app.selectedTiles.filter((id) => groupOf(app.manifest, id));
-  if (!owned.length) return;
+/** Sends the picked tiles back to the inbox, keeping every layer on them.
+ *  `wipe` is deliberately false: leaving a wall is not the same as the id
+ *  turning out to be a different character, and only the change-detection pass
+ *  knows which of the two happened. */
+export async function releaseTilesToInbox() {
+  const leaving = app.selectedTiles.filter((id) => projectOf(app.manifest, id));
+  if (!leaving.length) return;
   await mutate(() => {
-    for (const id of owned) {
-      const group = groupOf(app.manifest, id);
-      if (group) removeFromGroup(group, id);
-    }
+    for (const id of leaving) removeFromProjectToInbox(app.manifest, id, false);
+    clearAll();
   });
 }
 
-export const claimedCount = () =>
-  app.selectedTiles.filter((id) => groupOf(app.manifest, id)).length;
+export async function newProjectFrom(name: string) {
+  const free = inboxIds(app.manifest, app.selectedTiles);
+  await mutate(() => {
+    const p = newProject(name.trim() || `Project ${app.manifest.projects.length + 1}`);
+    // Straight onto the grid, in the order they sit on the inbox wall: the
+    // point of building a project from a selection is to have a wall, not a
+    // pile to place by hand afterwards.
+    p.order = free;
+    app.manifest.projects.push(p);
+    app.openProjectId = p.id;
+    clearAll();
+  });
+}
 
 /* --- Per-tile wording. A caption a Layout keeps live is one layer drawn on
  * every tile of its group: position and style are shared, the words are
@@ -304,24 +322,31 @@ export async function clearTileText(tileId: string, layerId: string) {
   await mutate(() => delete tile.text[layerId]);
 }
 
-export async function renameGroup(groupId: string, name: string) {
-  const group = findGroup(groupId);
-  if (!group || !name.trim() || group.name === name.trim()) return;
-  await mutate(() => (group.name = name.trim()), true, `rename:${groupId}`);
+export async function renameProject(projectId: string, name: string) {
+  const p = app.manifest.projects.find((x) => x.id === projectId);
+  if (!p || !name.trim() || p.name === name.trim()) return;
+  await mutate(() => (p.name = name.trim()), true, `rename:${projectId}`);
 }
 
-/** Deleting a group frees its tiles and takes its stamps with them — the
- *  layers live in the group, so there is nowhere for them to go. The caller
- *  asks first when there is something to lose. */
-export async function deleteGroup(groupId: string) {
+/** Deleting a project hands its tiles back to the inbox and keeps every layer
+ *  on them: artwork belongs to the tile, not to the wall it was arranged on.
+ *  That is the whole point of the split, and it is why this needs no warning
+ *  about losing work — there is none to lose. */
+export async function deleteProject(projectId: string) {
   await mutate(() => {
-    const at = app.manifest.overlays.findIndex((o) => o.id === groupId);
-    if (at >= 0) app.manifest.overlays.splice(at, 1);
+    const at = app.manifest.projects.findIndex((p) => p.id === projectId);
+    if (at >= 0) app.manifest.projects.splice(at, 1);
+    if (app.openProjectId === projectId) app.openProjectId = "";
+    clearAll();
   });
 }
 
+/** Swaps two placed tiles on the open project's grid. Only makes sense on a
+ *  project: the inbox is a heap in folder order, not an arrangement. */
 export async function swapTilePlaces(a: string, b: string) {
-  await mutate(() => swapTiles(app.manifest, a, b));
+  const p = openProject();
+  if (!p) return;
+  await mutate(() => swapPlaced(p, a, b));
 }
 
 /* Reactive so the toolbar can grey the buttons out. Exported so a test can
@@ -379,10 +404,7 @@ async function mutate(fn: () => void, structural = true, run?: string) {
   await persist();
 }
 
-const layerExists = (id: string) =>
-  !!id &&
-  (!!overlayOf(app.manifest, id) ||
-    Object.values(app.manifest.tiles).some((t) => !!findLayer(t.layers, id)));
+const layerExists = (id: string) => !!id && !!listOf(id);
 
 /** Undo and redo replace the whole manifest, so the scene always rebuilds.
  *
@@ -403,24 +425,16 @@ async function travel(step: typeof undo<Manifest>) {
 export const undoEdit = () => travel(undo);
 export const redoEdit = () => travel(redo);
 
-/** The project-wide overlay, created on first use. A grid-space layer covers
- *  the whole wall, so it only belongs somewhere that covers the whole wall. */
-function allTiles(): Overlay {
-  const existing = app.manifest.overlays.find((o) => o.tiles === "all");
-  if (existing) return existing;
-  app.manifest.overlays.push(newOverlay("All tiles"));
-  // Read it back out rather than using the value pushed: Svelte hands back a
-  // proxy, and mutating the raw object would not be reactive.
-  return app.manifest.overlays[app.manifest.overlays.length - 1];
-}
-
-/** The array a layer lives in: an overlay's, or the tile's own.
+/** The array a layer lives in: the open project's wall-spanning layers, or
+ *  whichever tile's own stack holds it.
  *
- *  Both, because a stamp can now sit in either — deleting or hiding one that
- *  belongs to a single tile used to find nothing and silently do nothing. */
-const listOf = (id: string) =>
-  overlayOf(app.manifest, id)?.layers ??
-  Object.values(app.manifest.tiles).find((t) => !!findLayer(t.layers, id))?.layers;
+ *  Both, because those are the only two places a layer can be — deleting or
+ *  hiding one and finding nothing used to silently do nothing at all. */
+const listOf = (id: string): Layer[] | undefined => {
+  const grid = openProject()?.gridLayers;
+  if (grid && findLayer(grid, id)) return grid;
+  return Object.values(app.manifest.tiles).find((t) => !!findLayer(t.layers, id))?.layers;
+};
 
 export function selectLayer(id: string) {
   if (app.selected !== id) app.selected = id;
@@ -432,14 +446,30 @@ export async function toggleLayerHidden(id: string) {
   await mutate(() => (l.hidden = !l.hidden));
 }
 
+/** Deletes a layer on the wall.
+ *
+ *  A stamp takes the Layout's live captions and pictures with it: they are
+ *  copies the Layout keeps beside it, no list shows them on their own, and
+ *  leaving them behind produced captions that drew on the wall with no row and
+ *  no way to remove them. One click, one undo step, the whole assignment. */
 export async function deleteLayer(id: string) {
+  const list = listOf(id);
+  const layer = list && findLayer(list, id);
+  if (!list || !layer) return;
   await mutate(() => {
-    removeLayerFrom(listOf(id), id);
+    // A group dissolves and hands its members back (removeLayerFrom); anything
+    // else goes through the cascade, which is a no-op beyond the layer itself
+    // unless that layer is a stamp.
+    if (layer.kind === "group") removeLayerFrom(list, id);
+    else deleteStampCascade(list, id);
     if (app.selected === id) app.selected = "";
   });
 }
 
-export const visibleIds = () => visibleTiles(app.manifest);
+/** The tiles on screen, in grid order. One funnel: the canvas hit-tests
+ *  through it, the band selection sorts through it, the export keys through
+ *  it — the index into this list *is* the grid coordinate. */
+export const visibleIds = () => wall().ids;
 
 async function run(label: string, fn: () => Promise<void>) {
   app.busy = label;
@@ -477,8 +507,17 @@ export async function openFolder(dir?: string) {
     // picture served as that tile's pristine state.
     await pruneVault(app.dir, ids);
     app.manifest = await loadManifest(app.dir, ids);
+    /* The folder's own list, kept because the inbox is derived from it rather
+     * than stored: what the folder has, minus what the projects claim. Storing
+     * the inbox instead would mean a second copy of this list drifting away
+     * from the directory it is supposed to describe. */
+    app.folderIds = ids;
     app.deps = tauriDeps(app.dir);
     app.selected = "";
+    /* Start on the overview rather than on a wall. With several accounts
+     * sharing the folder there is no single "the" wall to open, and a new
+     * character has to be visible somewhere the moment it appears. */
+    app.openProjectId = "";
     // Undo must not reach back into the folder that was open before.
     history.past.length = 0;
     history.future.length = 0;
@@ -500,8 +539,15 @@ const baseName = (path: string) =>
     ?.replace(/\.[^.]+$/, "") ?? "";
 
 /** Adds a picture spanning the whole wall — what used to be "the mosaic", now
- *  an ordinary layer that happens to live in grid space. */
+ *  an ordinary layer that happens to live in grid space.
+ *
+ *  Only on a project: a picture spread across the wall belongs to that wall,
+ *  and the inbox is a waiting room rather than an arrangement. */
+export const canAddGridImage = () => !!openProject();
+
 export async function addGridImage() {
+  const project = openProject();
+  if (!project) return;
   const path = await pickFile({ filters: [IMAGE_FILTER] });
   if (typeof path !== "string") return;
   await run("import", async () => {
@@ -513,7 +559,7 @@ export async function addGridImage() {
       layer.name = baseName(path);
       layer.space = "grid";
       layer.scale = 1;
-      allTiles().layers.push(layer);
+      project.gridLayers.push(layer);
       // Selected straight away, like every other insert: "Anwenden" acts on
       // the chosen layer, and leaving it unchosen meant the button stayed grey
       // until you went hunting for the thing you had just added.
@@ -524,11 +570,13 @@ export async function addGridImage() {
 
 /** Writes a finished drag/scale/rotate back into the model.
  *
- *  A single-instance layer skips the rebuild: Fabric has already moved the very
- *  object being dragged, so tearing the scene down would redraw what is already
- *  correct. A shared layer must rebuild, because Fabric moved one copy and the
- *  others are still sitting at the old position — the model says one thing and
- *  the canvas shows another until something redraws them. */
+ *  A plain move skips the rebuild: Fabric has already moved the very object
+ *  being dragged, so tearing the scene down would redraw what is already
+ *  correct. That used to need a second condition — a layer shared across an
+ *  overlay's tiles existed once in the model and many times on screen, so
+ *  moving one copy left the rest stale. Every layer lives on exactly one tile
+ *  now, so only `scaled` is left, and it is the half that was never optional:
+ *  see the note on it. */
 export async function applyTransform(
   obj: Tagged,
   patch: Pick<Layer, "x" | "y" | "rotation"> & Transform,
@@ -536,13 +584,12 @@ export async function applyTransform(
   const list = listOf(obj.layerId) ?? app.manifest.tiles[obj.tileId]?.layers ?? [];
   const layer = findLayer(list, obj.layerId);
   if (!layer) return;
-  const shared = instanceCount(app.manifest, obj.layerId, obj.space) > 1;
   await mutate(() => {
     layer.x = patch.x;
     layer.y = patch.y;
     layer.rotation = patch.rotation;
     resize(layer, patch);
-  }, shared || scaled(patch));
+  }, scaled(patch));
 }
 
 /** Did this gesture actually scale something?
@@ -586,17 +633,20 @@ export async function clearMosaic() {
  *  again — there is deliberately no "unbake". */
 export async function bakeMosaic() {
   const layer = selectedMosaic();
-  if (!layer) return;
+  const project = openProject();
+  if (!layer || !project) return;
   await run("bake", async () => {
     const bmp = await loadAsset(app.dir, layer.asset);
-    const ids = visibleIds();
-    const crops = mosaicBakeCrops(layer, { w: bmp.width, h: bmp.height }, ids.length);
+    /* Measured against the same project the bake writes into. The crop map is
+     * keyed by grid index, so a count from one wall and a placement on another
+     * would put crops on the wrong portraits. */
+    const crops = mosaicBakeCrops(layer, { w: bmp.width, h: bmp.height }, project.order.length);
     if (!crops.size) {
       app.error = "The picture does not fully cover any tile";
       return;
     }
     await mutate(() => {
-      bakeMosaicInto(app.manifest, layer.id, layer.asset, crops, ids);
+      bakeMosaicInto(app.manifest, project, layer.id, layer.asset, crops);
       app.selected = "";
     });
   });
@@ -996,7 +1046,7 @@ export async function dropLayoutLayer(id: string, parentId: string | null, befor
 
 /** The same for a stamp on the wall, which has no nesting to worry about —
  *  only the order things are drawn in. Takes the list rather than an owner, so
- *  a group's stack and a tile's own are the same call. */
+ *  the project's wall picture and a tile's own stack are the same call. */
 async function dropInto(layers: Layer[] | undefined, id: string, beforeId: string | null) {
   if (!layers) return;
   // Checked on a copy first, so a refused move costs neither an undo step nor
@@ -1008,9 +1058,6 @@ async function dropInto(layers: Layer[] | undefined, id: string, beforeId: strin
     app.selected = id;
   });
 }
-
-export const dropGroupLayer = (groupId: string, id: string, beforeId: string | null) =>
-  dropInto(findGroup(groupId)?.layers, id, beforeId);
 
 export const dropTileLayer = (tileId: string, id: string, beforeId: string | null) =>
   dropInto(app.manifest.tiles[tileId]?.layers, id, beforeId);
@@ -1030,16 +1077,14 @@ export async function ungroupLayoutLayers(groupId: string) {
   });
 }
 
-/** Renders `layout` and points a stamp at the result. Shared by stamping from
- *  the wall and assigning from a group's own row, which differ only in how the
- *  target group is found. */
+/** Renders `layout` and points a stamp at the result. */
 async function stampAsset(layout: Layout): Promise<{ asset: string; seen: string }> {
   const seen = layoutFingerprint(layout);
   const bytes = await renderLayout(layout, app.deps!);
   return { asset: await saveGeneratedAsset(app.dir, bytes), seen };
 }
 
-/** Puts a layout into a layer stack — a group's or a tile's own. */
+/** Puts a layout into a tile's own layer stack. */
 async function stampOnto(into: { layers: Layer[] } | undefined, layoutId: string) {
   const layout = app.manifest.layouts.find((l) => l.id === layoutId);
   if (!into || !layout || !app.deps) return;
@@ -1055,27 +1100,17 @@ async function stampOnto(into: { layers: Layer[] } | undefined, layoutId: string
   });
 }
 
-/** Puts a layout onto a named group — the sidebar's "Assign layout". */
-export const assignLayout = (groupId: string, layoutId: string) =>
-  stampOnto(findGroup(groupId), layoutId);
-
-/** The same for one portrait on its own, with no group in between.
- *
- *  A tile's own layers are drawn after every overlay's (see resolveLayers), so
- *  this lands on top of whatever a group already gives the tile rather than
- *  fighting it. The tile list only offers this on a free tile, so in practice
- *  there is nothing under it — but the ordering is what makes that a UI choice
- *  and not a rule the model has to enforce. */
+/** Stamps a layout onto one portrait — the only way a layout reaches a tile
+ *  now that groups no longer hold layers of their own. */
 export const assignTileLayout = (tileId: string, layoutId: string) =>
   stampOnto(app.manifest.tiles[tileId], layoutId);
 
 /** One tile's own layers — what the tile list shows under its row. */
 export const tileLayers = (tileId: string) => app.manifest.tiles[tileId]?.layers ?? [];
 
-/** The group holding this tile, if any. The tile list shows its name in place
- *  of the assign dropdown, so a tile's layout has exactly one place to come
- *  from and the two cannot be set against each other by accident. */
-export const tileGroup = (tileId: string) => groupOf(app.manifest, tileId);
+/** The project owning this tile, if any — what the tile list shows as context,
+ *  and what says whether a tile is still sitting in the inbox. */
+export const tileProject = (tileId: string) => projectOf(app.manifest, tileId);
 
 /** How many places hold a stamp of this Layout — what a refresh re-renders and
  *  what a delete leaves behind, so both are counted in the unit they act on. */
@@ -1113,10 +1148,23 @@ export async function saveLayout(layoutId: string) {
   });
 }
 
+/** Only a project can be written: the inbox is the tiles nobody has arranged
+ *  yet, and writing it would push unfinished portraits into the game. */
+export const canSaveToGame = () => !!openProject()?.order.length;
+
 export async function saveToGame() {
+  const project = openProject();
+  if (!project) return;
   await run("save", async () => {
     if (!app.deps) throw new Error("no folder open");
-    const n = await saveTiles(app.dir, plain(app.manifest), app.deps);
+    /* Snapshotted together: the id list positions the export window and keys
+     * the result, so it has to be the same list the scene is built from. */
+    const n = await saveTiles(
+      app.dir,
+      { ids: plain(project.order), gridLayers: plain(project.gridLayers) },
+      plain(app.manifest),
+      app.deps,
+    );
     app.error = `${n} tiles written`;
   });
 }

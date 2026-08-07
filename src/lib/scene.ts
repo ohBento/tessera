@@ -14,7 +14,6 @@ import {
   layerAsset,
   layerText,
   resolveLayers,
-  visibleTiles,
   type Base,
   type Layer,
   type Layout,
@@ -23,6 +22,16 @@ import {
   type ShapeLayer,
   type TextLayer,
 } from "./model";
+
+/** Which wall to draw: an ordered, dense list of tile ids — position n is grid
+ *  slot n — and the layers spread across the whole of it.
+ *
+ *  A structural type rather than `Project`, because the inbox is a wall too:
+ *  the tiles no project has claimed, with no picture over them. Passing the
+ *  list in also ends the old arrangement where the scene, the export and the
+ *  canvas each derived it from the manifest separately and had to agree by
+ *  luck — the index into it is the grid coordinate system. */
+export type Wall = { ids: string[]; gridLayers: Layer[] };
 /* cellAt/gridSize/rowsFor live in geometry.ts — pure grid maths that
  * mosaicBakeCrops also needs — and are re-exported here so every existing
  * caller of scene.ts keeps working unchanged. */
@@ -297,13 +306,14 @@ function makeInteractive(obj: fabric.Object, l: Layer, allowRotate = true) {
  *  (export, previews, golden tests). */
 export async function buildGrid(
   canvas: fabric.StaticCanvas,
+  wall: Wall,
   m: Manifest,
   deps: SceneDeps,
   interactive = false,
 ): Promise<void> {
   canvas.remove(...canvas.getObjects());
 
-  const ids = visibleTiles(m);
+  const ids = wall.ids;
   const grid = gridSize(ids.length);
 
   for (const [index, id] of ids.entries()) {
@@ -365,14 +375,10 @@ export async function buildGrid(
 
   /* Grid-space layers span the whole wall, so they are placed once on top of
    * everything — drawing them per tile would paint the same pixels COLS*rows
-   * times over.
-   *
-   * ponytail: an overlay's tile set does not restrict its grid-space layers;
-   * they always cover the full wall. Restricting one would mean clipping it to
-   * the union of the assigned cells. Nothing asks for that yet, and the editor
-   * only ever puts grid-space layers in the "all" overlay, so the two agree in
-   * practice. Add the clip when a subset overlay needs one. */
-  for (const l of m.overlays.flatMap((o) => o.layers)) {
+   * times over. They belong to the wall being drawn, which is why they arrive
+   * with the id list rather than being hunted for in the manifest: the inbox
+   * has ids and no wall picture, a project has both. */
+  for (const l of wall.gridLayers) {
     if (l.hidden || l.kind !== "image" || l.space !== "grid") continue;
     const obj = await imageObject(l, deps, { w: grid.w, h: grid.h, x: 0, y: 0 });
     if (interactive) makeInteractive(obj, l, false);

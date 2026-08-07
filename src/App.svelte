@@ -15,51 +15,52 @@
     addLayoutImage,
     addLayoutShape,
     addLayoutText,
-    addTilesToGroup,
     app,
-    assignLayout,
     assignTileLayout,
     bakedCount,
     bakeMosaic,
+    canAddGridImage,
     canBakeMosaic,
     canGroupLayers,
+    canSaveToGame,
     captionsNeedOneTile,
     canSaveLayout,
-    claimedCount,
     clearMosaic,
     clearTileAsset,
     clearTileText,
     clearTiles,
     closeLayoutDoc,
-    deleteGroup,
     deleteLayer,
     deleteLayoutDoc,
     deleteLayoutLayer,
-    dropGroupLayer,
+    deleteProject,
     dropLayoutLayer,
     dropTileLayer,
     duplicateLayoutDoc,
     endGesture,
     freeCount,
     groupLayoutLayers,
-    groups,
+    inbox,
     layoutGroups,
     layoutTiles,
     layoutUsage,
     layouts,
     moveLayersIntoGroup,
-    newGroup,
+    moveTilesToProject,
     newLayoutDoc,
+    newProjectFrom,
     openFolder,
     openLayout,
     openLayoutDoc,
+    openProject,
+    openProjectView,
+    projects,
     redoEdit,
     redoable,
-    releaseSelectedTiles,
-    removeTileFromGroup,
-    renameGroup,
+    releaseTilesToInbox,
     renameLayer,
     renameLayout,
+    renameProject,
     saveLayout,
     saveToGame,
     selectLayer,
@@ -69,11 +70,12 @@
     setTileAsset,
     tileAsset,
     tileCaptions,
-    tileGroup,
     tileImageChoices,
     tileImages,
     tileLayers,
+    tileProject,
     tileText,
+    visibleIds,
     toggleLayerHidden,
     toggleLayerLocked,
     toggleLayoutLayerHidden,
@@ -233,20 +235,27 @@
     await deleteLayoutDoc(id);
   }
 
-  async function removeGroup(id: string, name: string, stamps: number) {
+  /** Deleting a project hands its tiles back to the inbox with every layer
+   *  still on them — artwork belongs to the portrait, not to the wall it was
+   *  arranged on. What is actually lost is the arrangement, which is the one
+   *  thing worth asking about. */
+  async function removeProject(id: string, name: string) {
+    const p = projects().find((x) => x.id === id);
+    const placed = p?.order.length ?? 0;
     if (
-      stamps &&
+      placed &&
       !(await confirmed(
-        `"${name}" has ${stamps} layout(s) on its tiles. They go with it.`,
-        "Delete group?",
+        `"${name}" holds ${placed} tile(s). They go back to the inbox and keep their layouts; ` +
+          `the arrangement is what you lose.`,
+        "Delete project?",
       ))
     )
       return;
-    await deleteGroup(id);
+    await deleteProject(id);
   }
 
   /** A holder's rows as the list draws them: topmost first, and without the
-   *  live captions a Layout keeps there — see the note at the group's list. */
+   *  live captions a Layout keeps there — the stamp row speaks for them. */
   const stampsOf = (layers: Layer[]) =>
     [...layers].reverse().filter((l) => !(l.kind === "text" && l.layoutId));
 
@@ -261,11 +270,9 @@
     return !!layout && layoutNeedsRestamp(layout);
   };
 
-  /** The wall picture, if one is placed — it lives in an "all" overlay, which
-   *  is not a group, so it gets its own little section. */
-  const wallLayers = $derived(
-    app.manifest.overlays.filter((o) => o.tiles === "all").flatMap((o) => [...o.layers].reverse()),
-  );
+  /** The picture spread across the open project's wall, if one is placed. It
+   *  belongs to the wall rather than to any tile, so it gets its own section. */
+  const wallLayers = $derived([...(openProject()?.gridLayers ?? [])].reverse());
 
   const layoutLayers = $derived(editing ? [...editing.layers].reverse() : []);
 
@@ -293,24 +300,30 @@
       app.selectedTiles = [under];
     }
     e.preventDefault();
-    const claimed = claimedCount();
+    const picked = app.selectedTiles.length;
+    const elsewhere = projects().filter((p) => p.id !== app.openProjectId);
     menu = {
       x: e.clientX,
       y: e.clientY,
       items: [
-        { label: "New group from selection", run: () => void newGroup(), disabled: !freeCount() },
-        ...(groups().length ? [{ separator: true } as Item] : []),
-        ...groups().map((g) => ({
-          label: `Add to "${g.name}"`,
-          run: () => void addTilesToGroup(g.id),
+        {
+          label: picked > 1 ? `New project from ${freeCount()} tiles` : "New project from selection",
+          run: () => void newProjectFrom(""),
           disabled: !freeCount(),
+        },
+        ...(elsewhere.length ? [{ separator: true } as Item] : []),
+        // Moving carries the tile's layers with it: artwork belongs to the
+        // portrait, not to the wall it happens to be arranged on.
+        ...elsewhere.map((p) => ({
+          label: `Move to "${p.name}"`,
+          run: () => void moveTilesToProject(p.id),
         })),
-        ...(claimed
+        ...(app.openProjectId
           ? [
               { separator: true } as Item,
               {
-                label: claimed === 1 ? "Remove from group" : `Remove ${claimed} from group`,
-                run: () => void releaseSelectedTiles(),
+                label: picked === 1 ? "Back to inbox" : `Send ${picked} back to inbox`,
+                run: () => void releaseTilesToInbox(),
               },
             ]
           : []),
@@ -526,11 +539,19 @@
         Update stamps{#if layoutUsage(editing.id)}&nbsp;({layoutUsage(editing.id)}){/if}
       </button>
     {:else}
-      <button onclick={newGroup} disabled={!freeCount() || !!app.busy}>
-        Group from selection
+      <button onclick={() => newProjectFrom("")} disabled={!freeCount() || !!app.busy}>
+        Project from selection
         {#if freeCount()}({freeCount()}){/if}
       </button>
-      <button onclick={addGridImage} disabled={!app.dir || !!app.busy}>Image across the grid</button>
+      <button
+        onclick={addGridImage}
+        disabled={!canAddGridImage() || !!app.busy}
+        title={canAddGridImage()
+          ? "A picture spread across this wall"
+          : "Open a project first — a wall picture belongs to a wall"}
+      >
+        Image across the grid
+      </button>
       <button
         onclick={bakeMosaic}
         disabled={!canBakeMosaic() || !!app.busy}
@@ -551,7 +572,15 @@
       >
         Restore portraits{#if bakedCount()}&nbsp;({bakedCount()}){/if}
       </button>
-      <button onclick={saveToGame} disabled={!app.dir || !!app.busy}>Write to game</button>
+      <button
+        onclick={saveToGame}
+        disabled={!canSaveToGame() || !!app.busy}
+        title={canSaveToGame()
+          ? "Writes this project's placed tiles into the game folder"
+          : "Open a project with tiles on its grid — the inbox is not a wall"}
+      >
+        Write to game
+      </button>
     {/if}
 
     <span class="status">
@@ -565,10 +594,11 @@
         Saved
       {:else if app.selectedTiles.length}
         {app.selectedTiles.length} selected{#if freeCount() < app.selectedTiles.length}, {freeCount()}
-          of them free{/if}
+          of them unassigned{/if}
         <button class="link" onclick={clearTiles}>clear</button>
       {:else if app.dir}
-        {app.manifest.order.length} tiles &middot; drag selects, Ctrl adds, Alt+drag swaps
+        {openProject()?.name ?? "Inbox"} &middot; {visibleIds().length} tiles &middot; drag selects,
+        Ctrl adds, Alt+drag swaps
       {/if}
     </span>
   </header>
@@ -656,118 +686,62 @@
           </ul>
         {/if}
 
-        <h2 class:spaced={wallLayers.length}>Groups</h2>
-        {#if !groups().length}
-          <p class="empty">Select tiles, then "Group from selection".</p>
-        {/if}
-
-        {#each groups() as group (group.id)}
-          {@const tiles = group.tiles === "all" ? [] : group.tiles}
-          <!-- Hover outlines this group's tiles on the wall, so what a group
-               holds is readable without clicking into it. -->
-          <div
-            class="group"
-            role="presentation"
-            onmouseenter={() => (app.hoverGroup = group.id)}
-            onmouseleave={() => (app.hoverGroup = "")}
-          >
-            <div class="grouphead">
-              <button class="twisty" onclick={() => toggleOpen(group.id)}>
-                {open.has(group.id) ? "▾" : "▸"}
-              </button>
-              {#if renaming === group.id}
+        <!-- One wall per project. The FaceTexture folder is shared by every
+             account on the machine, so which portraits belong together is a
+             thing only the user knows — the inbox is whatever no project has
+             claimed, and it is where a newly created character turns up. -->
+        <h2 class:spaced={wallLayers.length}>Projects</h2>
+        <ul>
+          <li class:selected={!app.openProjectId}>
+            <button class="name" onclick={() => openProjectView("")}>
+              Inbox
+              <span class="usage">
+                {inbox().length} unassigned{#if !inbox().length} · all sorted{/if}
+              </span>
+            </button>
+          </li>
+          {#each projects() as project (project.id)}
+            <li class:selected={app.openProjectId === project.id}>
+              {#if renaming === project.id}
                 <!-- svelte-ignore a11y_autofocus -->
                 <input
                   class="rename"
                   autofocus
-                  value={group.name}
+                  value={project.name}
                   onblur={(e) => {
-                    void renameGroup(group.id, e.currentTarget.value);
+                    void renameProject(project.id, e.currentTarget.value);
                     renaming = "";
                   }}
-                  onkeydown={(e) => renameKey(e, group.name)}
+                  onkeydown={(e) => renameKey(e, project.name)}
                 />
               {:else}
                 <button
                   class="name"
-                  ondblclick={() => (renaming = group.id)}
-                  onclick={() => toggleOpen(group.id)}
-                  title="Double-click to rename"
+                  onclick={() => openProjectView(project.id)}
+                  ondblclick={() => (renaming = project.id)}
+                  title="Click opens this wall, double-click renames"
                 >
-                  {group.name}
-                  <!-- Stamps, not every layer: a live caption sits in here too,
-                       and counting it made a group with one design read
-                       "2 Layouts". -->
+                  {project.name}
                   <span class="usage">
-                    {tiles.length} tiles · {group.layers.filter((l) => l.kind === "image").length}
-                    layouts
+                    {project.order.length} placed{#if project.shelf.length}
+                      · {project.shelf.length} shelved{/if}
                   </span>
                 </button>
               {/if}
-              <button
-                title="Add the picked free tiles"
-                disabled={!freeCount()}
-                onclick={() => addTilesToGroup(group.id)}>+</button
+              <button title="Delete project" onclick={() => removeProject(project.id, project.name)}
+                >×</button
               >
-              <button
-                title="Delete group"
-                onclick={() =>
-                  removeGroup(
-                    group.id,
-                    group.name,
-                    group.layers.filter((l) => l.kind === "image").length,
-                  )}>×</button
-              >
-            </div>
-
-            {#if open.has(group.id)}
-              <p class="sub">Tiles</p>
-              {#if !tiles.length}
-                <p class="empty indent">None — pick tiles, then "+".</p>
-              {/if}
-              <ul class="indent">
-                {#each tiles as id (id)}
-                  <li class:selected={app.selectedTiles.includes(id)}>
-                    <button class="name" onclick={() => (app.selectedTiles = [id])}>{id}</button>
-                    <button title="Remove from group" onclick={() => removeTileFromGroup(group.id, id)}
-                      >×</button
-                    >
-                  </li>
-                {/each}
-              </ul>
-
-              <p class="sub">Layers</p>
-              {#if !group.layers.length}
-                <p class="empty indent">No layout assigned.</p>
-              {/if}
-              <!-- Live captions are left out on purpose. Their row offered
-                   nothing the stamp row does not: the layer is held (a wall
-                   edit would be overwritten by the next stamp update), its
-                   double-click opened the same Layout, and the per-tile
-                   wording lives in the "Text on …" panel. One row per
-                   assigned Layout is the whole story. -->
-              {@render stampRows(
-                stampsOf(group.layers),
-                (moving, beforeId) => void dropGroupLayer(group.id, moving, beforeId),
-              )}
-
-              <select
-                class="indent assign"
-                disabled={!layouts().length || !!app.busy}
-                onchange={(e) => {
-                  const id = e.currentTarget.value;
-                  e.currentTarget.value = "";
-                  if (id) void assignLayout(group.id, id);
-                }}
-              >
-                <option value="">+ Assign layout…</option>
-                {#each layouts() as layout (layout.id)}
-                  <option value={layout.id}>{layout.name}</option>
-                {/each}
-              </select>
-            {/if}
-          </div>
-        {/each}
+            </li>
+          {/each}
+        </ul>
+        <button
+          class="wide"
+          onclick={() => newProjectFrom("")}
+          disabled={!freeCount() || !!app.busy}
+          title="Builds a wall from the picked tiles that no project has claimed"
+        >
+          + New project{#if freeCount()}&nbsp;({freeCount()}){/if}
+        </button>
 
         <!-- Every portrait, whether or not a group ever claimed it. A tile in
              a group takes its layout from there, so its row shows the group's
@@ -780,16 +754,19 @@
               {open.has("tiles") ? "▾" : "▸"}
             </button>
             <button class="name" onclick={() => toggleOpen("tiles")}>
-              All tiles
-              <span class="usage">{app.manifest.order.length} · assign one at a time</span>
+              {app.openProjectId ? "On this wall" : "In the inbox"}
+              <span class="usage">{visibleIds().length} · assign one at a time</span>
             </button>
           </div>
 
           {#if open.has("tiles")}
             <div class="indent">
-              {#each app.manifest.order as id (id)}
-                {@const held = tileGroup(id)}
+              <!-- The tiles of whichever wall is showing. A project's grid, or
+                   the inbox — everything the folder has that no project has
+                   claimed. -->
+              {#each visibleIds() as id (id)}
                 {@const own = stampsOf(tileLayers(id))}
+                {@const owner = tileProject(id)}
                 <div class="group">
                   <div class="grouphead">
                     <button class="twisty" onclick={() => toggleOpen(id)}>
@@ -797,43 +774,35 @@
                     </button>
                     <button
                       class="name"
-                      class:dimmed={app.manifest.hidden.includes(id)}
                       onclick={() => (app.selectedTiles = [id])}
                       title="Picks this tile on the wall"
                     >
                       {id}
                       <span class="usage">
-                        {held ? held.name : own.length ? `${own.length} layout(s)` : "free"}
+                        {own.length ? `${own.length} layout(s)` : owner ? "no layout" : "unassigned"}
                       </span>
                     </button>
                   </div>
 
                   {#if open.has(id)}
-                    <!-- Shown even for a tile in a group: a layout stamped
-                         while the tile was still free stays on it, and a row
-                         with no × would be a picture with no way out. -->
                     {@render stampRows(
                       own,
                       (moving, beforeId) => void dropTileLayer(id, moving, beforeId),
                     )}
-                    {#if held}
-                      <p class="empty indent">In "{held.name}" — assign the layout there.</p>
-                    {:else}
-                      <select
-                        class="indent assign"
-                        disabled={!layouts().length || !!app.busy}
-                        onchange={(e) => {
-                          const layoutId = e.currentTarget.value;
-                          e.currentTarget.value = "";
-                          if (layoutId) void assignTileLayout(id, layoutId);
-                        }}
-                      >
-                        <option value="">+ Assign layout…</option>
-                        {#each layouts() as layout (layout.id)}
-                          <option value={layout.id}>{layout.name}</option>
-                        {/each}
-                      </select>
-                    {/if}
+                    <select
+                      class="indent assign"
+                      disabled={!layouts().length || !!app.busy}
+                      onchange={(e) => {
+                        const layoutId = e.currentTarget.value;
+                        e.currentTarget.value = "";
+                        if (layoutId) void assignTileLayout(id, layoutId);
+                      }}
+                    >
+                      <option value="">+ Assign layout…</option>
+                      {#each layouts() as layout (layout.id)}
+                        <option value={layout.id}>{layout.name}</option>
+                      {/each}
+                    </select>
                   {/if}
                 </div>
               {/each}

@@ -5,12 +5,21 @@ import * as fabric from "fabric";
 import { writeFile } from "./platform";
 
 import { encodeBmp32, TILE_H, TILE_W } from "./bmp";
-import { visibleTiles, type Manifest } from "./model";
+import { type Manifest } from "./model";
 import { tilePath, vaultOriginal } from "./project";
-import { buildGrid, cellAt, type SceneDeps } from "./scene";
+import { buildGrid, cellAt, type SceneDeps, type Wall } from "./scene";
 
-/** Every visible tile as finished BMP bytes, keyed by tile id. */
-export async function renderTiles(m: Manifest, deps: SceneDeps): Promise<Map<string, Uint8Array>> {
+/** Every placed tile of one wall as finished BMP bytes, keyed by tile id.
+ *
+ *  The same id list the scene was built from, not a second derivation of it:
+ *  the index positions the export window and the id keys the result, so the two
+ *  have to be the same array or a portrait is written under its neighbour's
+ *  name. */
+export async function renderTiles(
+  wall: Wall,
+  m: Manifest,
+  deps: SceneDeps,
+): Promise<Map<string, Uint8Array>> {
   const canvas = new fabric.StaticCanvas(undefined, {
     width: TILE_W,
     height: TILE_H,
@@ -19,9 +28,9 @@ export async function renderTiles(m: Manifest, deps: SceneDeps): Promise<Map<str
     enableRetinaScaling: false,
   });
   try {
-    await buildGrid(canvas, m, deps);
+    await buildGrid(canvas, wall, m, deps);
     const ctx = canvas.getElement().getContext("2d")!;
-    const ids = visibleTiles(m);
+    const ids = wall.ids;
 
     const out = new Map<string, Uint8Array>();
     for (const [index, id] of ids.entries()) {
@@ -41,8 +50,13 @@ export async function renderTiles(m: Manifest, deps: SceneDeps): Promise<Map<str
 /** Writes the rendered tiles into the game folder, vaulting each pristine
  *  original first. Vaulting before the first overwrite is the only thing
  *  standing between a user and unrecoverable portraits. */
-export async function saveTiles(dir: string, m: Manifest, deps: SceneDeps): Promise<number> {
-  const tiles = await renderTiles(m, deps);
+export async function saveTiles(
+  dir: string,
+  wall: Wall,
+  m: Manifest,
+  deps: SceneDeps,
+): Promise<number> {
+  const tiles = await renderTiles(wall, m, deps);
   for (const [id, bytes] of tiles) {
     await vaultOriginal(dir, id);
     await writeFile(await tilePath(dir, id), bytes);
