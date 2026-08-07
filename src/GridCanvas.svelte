@@ -27,6 +27,9 @@
   let el: HTMLCanvasElement;
   let canvas: fabric.Canvas | undefined = $state();
   let zoom = $state(1);
+  /** Wheel zoom switched off. View state, so it is gone again on restart —
+   *  the same rule every other "what am I looking at" flag in this app follows. */
+  let zoomLocked = $state(false);
   /** Tile a swap-drag is currently hovering, drawn by the after:render hook. */
   let dropTarget = "";
   /** The rubber band being dragged, in scene coordinates, or null. */
@@ -229,6 +232,16 @@
     ro.observe(host);
 
     canvas.on("mouse:wheel", (opt) => {
+      /* Still swallowed while locked, or the wheel would scroll the page
+       * behind the wall instead — the lock is against the accident, and
+       * trading one accident for another is not a lock. Panning keeps working:
+       * it needs a held key or the middle button, which nobody does by
+       * mistake. */
+      if (zoomLocked) {
+        opt.e.preventDefault();
+        opt.e.stopPropagation();
+        return;
+      }
       const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, canvas!.getZoom() * 0.999 ** opt.e.deltaY));
       canvas!.zoomToPoint(new fabric.Point(opt.e.offsetX, opt.e.offsetY), next);
       zoom = next;
@@ -546,7 +559,14 @@
 <div class="host" bind:this={host}>
   <canvas bind:this={el}></canvas>
   <div class="hud">
-    {Math.round(zoom * 100)}% &middot; Rad = Zoom &middot; Leertaste oder Mittelklick = Schieben
+    {Math.round(zoom * 100)}% &middot; {zoomLocked ? "Rad = gesperrt" : "Rad = Zoom"} &middot; Leertaste
+    oder Mittelklick = Schieben
+    <button
+      onclick={() => (zoomLocked = !zoomLocked)}
+      title={zoomLocked ? "Mausrad zoomt wieder" : "Mausrad zoomt nicht mehr"}
+    >
+      {zoomLocked ? "🔒" : "🔓"} Zoom
+    </button>
     <button onclick={fit}>Einpassen</button>
   </div>
 </div>
