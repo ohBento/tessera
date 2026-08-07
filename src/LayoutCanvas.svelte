@@ -289,7 +289,7 @@
 
   onMount(() => {
     canvas = new fabric.Canvas(el, {
-      backgroundColor: "#0d1114",
+      backgroundColor: "#161c21",
       preserveObjectStacking: true,
       /* Free by default, Shift constrains — the convention everywhere else,
        * and the common case should not need a key held down. Only shapes can

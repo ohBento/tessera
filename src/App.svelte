@@ -126,7 +126,10 @@
 
   /** Which group rows are expanded. View state only — collapsing a group is
    *  not an edit and has no business in the manifest or in undo. */
-  let open = $state(new Set<string>());
+  /* Projects starts open: it is the way into a wall, and a first run that
+     shows a collapsed heading and nothing else looks like an app that failed
+     to load its folder. Everything else earns its twisty by being long. */
+  let open = $state(new Set<string>(["projects"]));
   const toggleOpen = (id: string) => {
     open.has(id) ? open.delete(id) : open.add(id);
     open = new Set(open);
@@ -163,6 +166,11 @@
     if (!wasOpen) open.add(id);
     open = new Set(open);
   }
+
+  /** The sidebar's scroller, and whether it has travelled far enough that
+   *  getting back to the top is worth a button rather than a flick. */
+  let pane: HTMLElement | undefined = $state();
+  let scrolled = $state(false);
 
   /** The row being renamed, "" for none. One at a time by construction. */
   let renaming = $state("");
@@ -524,14 +532,14 @@
           title={layer.hidden ? "Show" : "Hide"}
           onclick={() => toggleLayoutLayerHidden(layer.id)}
         >
-          {layer.hidden ? "○" : "●"}
+          {@render eyeIcon(!!layer.hidden)}
         </button>
         <button
           class="eye"
           title={layer.locked ? "Unlock" : "Lock"}
           onclick={() => toggleLayerLocked(layer.id)}
         >
-          {layer.locked ? "🔒" : "🔓"}
+          {@render lockIcon(!!layer.locked)}
         </button>
         {#if renaming === layer.id}
           <!-- svelte-ignore a11y_autofocus -->
@@ -569,6 +577,48 @@
   </ul>
 {/snippet}
 
+<!-- Monochrome and drawn here, not typed as emoji. An emoji is rendered by the
+     system font in its own colours, which fights every theme it lands in and
+     changes shape between machines. These take currentColor and stay put. -->
+{#snippet eyeIcon(hidden: boolean)}
+  <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+    <path
+      d="M1 7c1.8-2.7 3.8-4 6-4s4.2 1.3 6 4c-1.8 2.7-3.8 4-6 4s-4.2-1.3-6-4z"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.2"
+    />
+    {#if hidden}
+      <line x1="2.5" y1="11.5" x2="11.5" y2="2.5" stroke="currentColor" stroke-width="1.2" />
+    {:else}
+      <circle cx="7" cy="7" r="1.9" fill="currentColor" />
+    {/if}
+  </svg>
+{/snippet}
+
+{#snippet lockIcon(locked: boolean)}
+  <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+    <rect
+      x="3"
+      y="6.2"
+      width="8"
+      height="6"
+      rx="1"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.2"
+    />
+    <!-- The shackle swings open to the right when it is unlocked, which is the
+         whole difference a glance has to catch. -->
+    <path
+      d={locked ? "M5 6.2V4.6a2 2 0 0 1 4 0v1.6" : "M5 6.2V4.6a2 2 0 0 1 4 0"}
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.2"
+    />
+  </svg>
+{/snippet}
+
 <!-- The stamps on one holder — a group's stack or a single tile's own. Same
      row either way, so `drop` is the only thing that differs: which list the
      reorder writes back to. -->
@@ -598,23 +648,7 @@
           title={layer.hidden ? "Show" : "Hide"}
           onclick={() => toggleLayerHidden(layer.id)}
         >
-          {layer.hidden ? "○" : "●"}
-        </button>
-        <!-- A layer a Layout put here is held whatever this says, so it says
-             so: the row used to show an open padlock on something the canvas
-             would not let you touch, and clicking it changed nothing either
-             way. -->
-        <button
-          class="eye"
-          disabled={!!layer.layoutId}
-          title={layer.layoutId
-            ? "Held by the layout — edit it there"
-            : layer.locked
-              ? "Unlock"
-              : "Lock"}
-          onclick={() => toggleLayerLocked(layer.id)}
-        >
-          {layer.layoutId || layer.locked ? "🔒" : "🔓"}
+          {@render eyeIcon(!!layer.hidden)}
         </button>
         <button
           class="name"
@@ -918,7 +952,7 @@
       {/if}
     </div>
 
-    <aside>
+    <aside bind:this={pane} onscroll={() => (scrolled = pane!.scrollTop > 200)}>
       {#if editing}
         <h2>Layers in the layout</h2>
         {#if !layoutLayers.length}
@@ -940,7 +974,7 @@
                   title={layer.hidden ? "Show" : "Hide"}
                   onclick={() => toggleLayerHidden(layer.id)}
                 >
-                  {layer.hidden ? "○" : "●"}
+                  {@render eyeIcon(!!layer.hidden)}
                 </button>
                 <button class="name" class:dimmed={layer.hidden} onclick={() => selectLayer(layer.id)}>
                   {layerLabel(layer)}
@@ -955,8 +989,13 @@
              account on the machine, so which portraits belong together is a
              thing only the user knows — the inbox is whatever no project has
              claimed, and it is where a newly created character turns up. -->
-        <h2 class:spaced={wallLayers.length}>Projects</h2>
-        <ul>
+        <h2 class:spaced={wallLayers.length}>
+          <button class="twisty inline" onclick={() => toggleOpen("projects")}>
+            {open.has("projects") ? "▾" : "▸"}
+          </button>
+          Projects
+        </h2>
+        <ul class:collapsed={!open.has("projects")}>
           <li class:selected={!app.openProjectId}>
             <button class="name" onclick={() => enter("")}>
               Unsorted
@@ -1166,7 +1205,7 @@
                       class="name"
                       onclick={(e) => toggleTile(id, { ctrl: e.ctrlKey, shift: e.shiftKey })}>{id}</button
                     >
-                    <button title="Back to the loose pile" onclick={() => fileTile(id, "")}>↑</button>
+                    <button title="Back to the loose pile" onclick={() => fileTile(id, "")}>↓</button>
                   </li>
                 {/each}
               </ul>
@@ -1349,6 +1388,27 @@
           {/if}
         </div>
 
+      {/if}
+      <!-- The way back up. Only once there is a way back: a button that is
+           always there is furniture, one that appears when you have travelled
+           says something. -->
+      {#if scrolled}
+        <button
+          class="totop"
+          title="Back to the top"
+          onclick={() => pane?.scrollTo({ top: 0, behavior: "smooth" })}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+            <path
+              d="M7 11.5V3M3.2 6.6 7 2.8l3.8 3.8"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.4"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </button>
       {/if}
     </aside>
   </div>
@@ -1550,11 +1610,54 @@
     text-decoration: underline;
   }
   aside {
+    position: relative;
     width: 300px;
     flex: none;
     overflow-y: auto;
     padding: 8px;
     border-left: 1px solid #232b31;
+  }
+  /* The browser's own scrollbar is a bright slab in a dark app. Chromium draws
+     this one, and Chromium is the only engine this ships on. */
+  aside::-webkit-scrollbar,
+  .stage ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  aside::-webkit-scrollbar-track,
+  .stage ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  aside::-webkit-scrollbar-thumb,
+  .stage ::-webkit-scrollbar-thumb {
+    border: 2px solid transparent;
+    border-radius: 6px;
+    background: #313c44;
+    background-clip: content-box;
+  }
+  aside::-webkit-scrollbar-thumb:hover,
+  .stage ::-webkit-scrollbar-thumb:hover {
+    background: #47555f;
+    background-clip: content-box;
+  }
+  .totop {
+    position: sticky;
+    bottom: 4px;
+    left: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: 1px solid #3a444c;
+    border-radius: 13px;
+    background: #1b2228;
+    color: #8b979f;
+    cursor: pointer;
+  }
+  .totop:hover {
+    color: #d6dde2;
   }
   h2 {
     margin: 0 0 6px;

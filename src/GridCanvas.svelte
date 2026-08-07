@@ -211,7 +211,7 @@
 
   onMount(() => {
     canvas = new fabric.Canvas(el, {
-      backgroundColor: "#101418",
+      backgroundColor: "#161c21",
       preserveObjectStacking: true,
       // A model with a single `scale` per image cannot store a stretch, so
       // corner handles must never produce one.
