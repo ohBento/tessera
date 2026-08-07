@@ -147,11 +147,13 @@
      the rows shut, because twenty open editors is not a list any more, and
      only scroll to the topmost of them.
 
-     Nothing happens while the section is collapsed: it was collapsed on
-     purpose, and there is no row to scroll to anyway. */
+     Not gated on the Tiles section being open any more: a tile filed into a
+     Group has its row over there instead, so that check skipped the follow for
+     half the places a tile can live. With everything collapsed the row simply
+     is not in the document and the scroll finds nothing, which costs nothing. */
   $effect(() => {
     const picked = app.selectedTiles;
-    if (!picked.length || !open.has("tiles")) return;
+    if (!picked.length) return;
     if (picked.length === 1 && !open.has(picked[0])) toggleTileRow(picked[0]);
     const first = visibleIds().find((id) => picked.includes(id)) ?? picked[0];
     // After the row exists, not before — opening it is what creates it.

@@ -597,6 +597,12 @@ async function maskFor(l: Layer, deps: SceneDeps, m: Masking): Promise<fabric.Ob
    * everywhere: something that is not there cannot be why half a picture is
    * missing, and nothing else on screen would have explained it. */
   if (!cutter || cutter.kind === "group" || cutter.hidden) return undefined;
+  /* Nothing that is editable in the grid. It is stripped out of the stamp, so
+   * the editor would clip with a layer the written picture never sees — and
+   * its content differs on every tile anyway, which is the opposite of what a
+   * stencil is for. Refused here as well as left out of the dropdown, so a
+   * manifest that already names one behaves the same in both places. */
+  if (cutter.perTile) return undefined;
   const shift = nestingShift(m.root, cutter.id) ?? { dx: 0, dy: 0 };
   const placed = { ...cutter, x: cutter.x + shift.dx, y: cutter.y + shift.dy } as Layer;
   const obj = await layerObject(placed, deps, { w: TILE_W, h: TILE_H, x: 0, y: 0 }, "", {});

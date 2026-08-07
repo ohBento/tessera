@@ -685,3 +685,39 @@ describe("rect corners", () => {
     expect(px(0.5, 0.92)[3]).toBe(0);
   });
 });
+
+describe("a mask that varies per tile is no mask at all", () => {
+  it("cuts the same in the stamp as in the editor", async () => {
+    /* A per-tile layer is stripped out of the stamp (bakeable) and its content
+     * is different on every tile by design — so it cannot be the thing that
+     * decides a shape. The editor clipped with it and the stamp did not, which
+     * is the one failure this project cannot afford: right on screen, wrong in
+     * the file the game reads. Neither clips now, and the dropdown stops
+     * offering it. */
+    const layout = newLayout("Loch das wandert");
+    const live = newImageLayer("disc:#ffffff");
+    live.x = 0.5;
+    live.y = 0.5;
+    live.scale = 0.5;
+    live.perTile = true;
+    const pic = newImageLayer("block:#ff00ff");
+    pic.x = 0.5;
+    pic.y = 0.5;
+    pic.scale = 1;
+    pic.maskId = live.id;
+    layout.layers.push(live, pic);
+
+    const bytes = await renderLayout(layout, testDeps);
+    const bmp = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+    const c = new OffscreenCanvas(bmp.width, bmp.height);
+    c.getContext("2d")!.drawImage(bmp, 0, 0);
+    const { data } = c.getContext("2d")!.getImageData(0, 0, bmp.width, bmp.height);
+    const at = (x: number, y: number) =>
+      data[(Math.round(y * TILE_H) * bmp.width + Math.round(x * TILE_W)) * 4 + 3];
+    // Whole, not cut: the stamp draws it unclipped and so does the editor.
+    expect(at(0.05, 0.5)).toBe(255);
+
+    // And it is never on offer.
+    expect(maskChoices(layout.layers, pic.id).map((l) => l.id)).toEqual([]);
+  });
+});

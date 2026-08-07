@@ -523,9 +523,14 @@ export function duplicateLayout(layout: Layout, name: string): Layout {
  *  to avoid. A mask naming something *outside* the set keeps pointing there,
  *  because that layer is still the one meant.
  *
- *  Names are left to the caller: only it knows the stack the copies are about
- *  to join, and that is what decides the next free number. */
-export function duplicateLayers(layers: Layer[], ids: string[], nudge = 0.02): Layer[] {
+ *  Takes the layers themselves rather than ids, because a selection can name
+ *  something nested in a group and only the caller knows which list each one
+ *  came out of — the copy has to go back into that same list, or duplicating a
+ *  layer inside a group would quietly do nothing.
+ *
+ *  Names are left to the caller too: only it knows the stack the copies are
+ *  about to join, and that is what decides the next free number. */
+export function duplicateLayers(picked: Layer[], nudge = 0.02): Layer[] {
   const swap = new Map<string, string>();
   const renumber = (from: Layer[]): Layer[] =>
     from.map((l) => {
@@ -536,13 +541,12 @@ export function duplicateLayers(layers: Layer[], ids: string[], nudge = 0.02): L
       return copy;
     });
 
-  const wanted = new Set(ids);
-  const copies = renumber(layers.filter((l) => wanted.has(l.id)));
+  const copies = renumber(picked);
   for (const l of walkLayers(copies)) {
     if (l.maskId && swap.has(l.maskId)) l.maskId = swap.get(l.maskId);
   }
-  // Only the top level moves: a group's children carry absolute coordinates and
-  // would take the offset a second time.
+  /* Only the layers actually picked move: a group's children carry absolute
+   * coordinates, and nudging them as well would shift them twice. */
   for (const l of copies) {
     l.x += nudge;
     l.y += nudge;
@@ -797,11 +801,19 @@ export const stencilIds = (layers: Layer[]): Set<string> =>
  *
  *  Groups are out: a group is a displacement, not a picture, and it draws
  *  nothing of its own to cut with. Itself is out too, since a layer clipped to
- *  its own outline is either a no-op or an empty picture. Two layers masking
- *  each other is left possible — both become stencils, nothing draws, and one
- *  click puts it back. */
+ *  its own outline is either a no-op or an empty picture.
+ *
+ *  So is anything editable in the grid. Its content is different on every tile
+ *  by design, so it cannot be the thing that decides one shape — and it is
+ *  stripped out of the stamp entirely, which had the editor clipping with it
+ *  while the picture written to the game did not.
+ *
+ *  Two layers masking each other is left possible — both become stencils,
+ *  nothing draws, and one click puts it back. */
 export const maskChoices = (layers: Layer[], layerId: string): Layer[] =>
-  [...walkLayers(layers)].filter((l) => l.kind !== "group" && l.id !== layerId);
+  [...walkLayers(layers)].filter(
+    (l) => l.kind !== "group" && l.id !== layerId && !l.perTile,
+  );
 
 export const layerLabel = (l: Layer) => {
   if (l.name) return l.name;

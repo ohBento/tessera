@@ -448,6 +448,34 @@ describe("the Layout editor", () => {
     expect(app.layoutSelection).toEqual([copy.id]);
   });
 
+  it("duplicates a layer that sits inside a group, into that group", async () => {
+    /* The selection can name a layer nested in a group — the list wires the
+     * same handlers to those rows — but the copy only ever looked at the top
+     * level. It found nothing, did nothing, and still burned an undo step,
+     * because the checkpoint is taken before the callback runs. */
+    const [a, b] = await twoLayers();
+    setLayoutSelection([a, b]);
+    await groupLayoutLayers();
+    const group = openLayout()!.layers.find((l) => l.kind === "group")!;
+    const inside = group.kind === "group" ? group.children[0] : undefined!;
+
+    setLayoutSelection([inside.id]);
+    const steps = history.past.length;
+    await duplicateLayoutLayers();
+
+    const after = openLayout()!.layers.find((l) => l.id === group.id)!;
+    expect(after.kind === "group" && after.children).toHaveLength(3);
+    expect(history.past.length).toBe(steps + 1);
+  });
+
+  it("spends no undo step when there is nothing to duplicate", async () => {
+    await newLayoutDoc("Nichts");
+    setLayoutSelection([]);
+    const steps = history.past.length;
+    await duplicateLayoutLayers();
+    expect(history.past.length).toBe(steps);
+  });
+
   it("points a duplicated mask at the duplicated shape, not the original", async () => {
     await newLayoutDoc("Maske kopieren");
     await addLayoutShape("rect");

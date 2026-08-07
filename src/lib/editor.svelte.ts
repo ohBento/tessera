@@ -1310,15 +1310,26 @@ export async function ungroupLayoutLayers(groupId: string) {
  *  the next thing anyone does with a copy is move it. */
 export async function duplicateLayoutLayers() {
   const layout = openLayout();
-  const picked = [...app.layoutSelection];
-  if (!layout || !picked.length) return;
+  if (!layout) return;
+  /* Resolved before anything else, and the whole thing gives up if that finds
+   * nothing: mutate() takes its checkpoint before it runs the callback, so
+   * bailing out inside would leave an undo step that undoes nothing. */
+  const picked = app.layoutSelection
+    .map((id) => findLayer(layout.layers, id))
+    .filter((l): l is Layer => !!l);
+  if (!picked.length) return;
+
   await mutate(() => {
-    const copies = duplicateLayers(layout.layers, picked);
-    if (!copies.length) return;
-    let topMost = -1;
-    for (const [i, l] of layout.layers.entries()) if (picked.includes(l.id)) topMost = i;
-    for (const copy of copies) nameInStack(copy, layout.layers);
-    layout.layers.splice(topMost + 1, 0, ...copies);
+    const copies = duplicateLayers(picked);
+    /* Each copy goes back into the list its original came out of. A selection
+     * can name a layer nested in a group — the list wires the same handlers to
+     * those rows — and putting the copy at the top level instead would move it
+     * out of the group it belongs to. */
+    for (const [i, copy] of copies.entries()) {
+      const list = findList(layout.layers, picked[i].id) ?? layout.layers;
+      nameInStack(copy, layout.layers);
+      list.splice(list.findIndex((l) => l.id === picked[i].id) + 1, 0, copy);
+    }
     setLayoutSelection(copies.map((c) => c.id));
   });
 }
@@ -1364,6 +1375,7 @@ export async function assignLayoutToSelection(layoutId: string) {
   await run("stamp", async () => {
     const { asset, seen } = await stampAsset(layout);
     await mutate(() => {
+      let landed = 0;
       for (const id of ids) {
         const tile = app.manifest.tiles[id];
         if (!tile) continue;
@@ -1371,8 +1383,12 @@ export async function assignLayoutToSelection(layoutId: string) {
         // After the stamp, so a live caption sits on top of the picture it was
         // composed over rather than behind it.
         syncLiveLayers(tile, layout);
+        landed++;
       }
-      layout.stamped = seen;
+      /* Only once something actually carries it. Recording the fingerprint
+       * regardless would leave "Update stamps" greyed out on a Layout that had
+       * never reached a tile. */
+      if (landed) layout.stamped = seen;
     });
   });
 }
