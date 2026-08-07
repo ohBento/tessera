@@ -149,6 +149,40 @@ const place = (l: Layer, box: { w: number; h: number; x: number; y: number }) =>
   opacity: l.opacity,
 });
 
+/** How wide a caption's box is: hugging its words, never past the tile.
+ *
+ *  One measurement, because two callers need the same answer — the renderer,
+ *  and the editor keeping a left-aligned caption's left edge still while its
+ *  words change length. Two spellings of it would drift, and the drift would
+ *  show up as text creeping sideways as you type. */
+function boxWidth(
+  words: string,
+  style: Partial<fabric.TextProps>,
+  size: number,
+  limit: number,
+): number {
+  const measured = new fabric.Text(words, style).width ?? limit;
+  return Math.min(Math.max(measured, size), limit);
+}
+
+/** The width a caption would occupy on a tile, as a fraction of tile width. */
+export function textWidth(l: TextLayer): number {
+  const size = l.size * TILE_W;
+  return (
+    boxWidth(
+      l.text,
+      {
+        fontSize: size,
+        fontFamily: l.font,
+        fontStyle: l.italic ? "italic" : "normal",
+        fontWeight: l.bold ? "bold" : "normal",
+      } as Partial<fabric.TextProps>,
+      size,
+      TILE_W,
+    ) / TILE_W
+  );
+}
+
 /** A caption.
  *
  *  fabric.Textbox rather than Text, because a caption that runs past the tile
@@ -177,10 +211,9 @@ function textObject(l: TextLayer, box: { w: number; h: number; x: number; y: num
    * nowhere near the letters, and left-aligned text started at the tile's edge
    * whatever x said. Measuring first costs one throwaway object and makes the
    * frame mean what it looks like it means. */
-  const measured = new fabric.Text(words, style).width ?? box.w;
   const obj = new fabric.Textbox(words, {
     ...place(l, box),
-    width: Math.min(Math.max(measured, size), box.w),
+    width: boxWidth(words, style, size, box.w),
     ...style,
     textAlign: l.align ?? "center",
     lineHeight: LINE_HEIGHT,

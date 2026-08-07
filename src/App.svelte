@@ -39,6 +39,7 @@
     dropLayoutLayer,
     dropTileLayer,
     duplicateLayoutDoc,
+    duplicateLayoutLayers,
     endGesture,
     fileSelectionInto,
     fileTile,
@@ -122,6 +123,9 @@
     // Ctrl+Shift+Z as well as Ctrl+Y — both are in wide use and cost one clause.
     if (key === "z" && !e.shiftKey) void undoEdit();
     else if (key === "y" || (key === "z" && e.shiftKey)) void redoEdit();
+    // The repeat gesture, so it earns a shortcut. Only inside a Layout: the
+    // wall has no layers of its own to copy.
+    else if (key === "d" && editing) void duplicateLayoutLayers();
     else return;
     e.preventDefault();
   }
@@ -495,6 +499,10 @@
           run: () => void moveLayersIntoGroup(g.id, picked),
         })),
         { separator: true },
+        {
+          label: picked.length > 1 ? `Duplicate ${picked.length} layers` : "Duplicate",
+          run: () => void duplicateLayoutLayers(),
+        },
         { label: "Rename", run: () => (renaming = layerId) },
         {
           label: findLayer(editing?.layers ?? [], layerId)?.kind === "group" ? "Ungroup" : "Delete",
@@ -591,6 +599,13 @@
             {layer.kind === "group" ? "▾ " : ""}{layerLabel(layer)}
           </button>
         {/if}
+        <button
+          title="Duplicate"
+          onclick={() => {
+            selectLayoutLayer(layer.id);
+            void duplicateLayoutLayers();
+          }}>⧉</button
+        >
         <button
           title={layer.kind === "group" ? "Ungroup, the layers stay" : "Delete"}
           onclick={() => deleteLayoutLayer(layer.id)}>×</button
@@ -872,7 +887,28 @@
         </button>
       {/if}
       {#if editing}
-        <button class="active" title="Esc closes">{editing.name}</button>
+        {#if renaming === editing.id}
+          <!-- svelte-ignore a11y_autofocus -->
+          <input
+            class="rename"
+            autofocus
+            value={editing.name}
+            onblur={(e) => {
+              void renameLayout(editing.id, e.currentTarget.value);
+              renaming = "";
+            }}
+            onkeydown={(e) => renameKey(e, editing.name)}
+          />
+        {:else}
+          <!-- Double-click renames, the same gesture as in the layout list and
+               on a group row. The name is right here while you work on the
+               document; going back to the list to change it is a trip. -->
+          <button
+            class="active"
+            title="Esc closes · double-click renames"
+            ondblclick={() => (renaming = editing.id)}>{editing.name}</button
+          >
+        {/if}
       {/if}
     </div>
 

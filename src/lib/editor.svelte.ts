@@ -10,6 +10,7 @@ import {
   clearBases,
   deleteStampCascade,
   dissolveFolder,
+  duplicateLayers,
   duplicateLayout,
   emptyManifest,
   findLayer,
@@ -76,7 +77,7 @@ import {
   saveManifest,
   tauriDeps,
 } from "./project";
-import type { SceneDeps, Tagged } from "./scene";
+import { textWidth, type SceneDeps, type Tagged } from "./scene";
 
 export const app = $state({
   dir: "",
@@ -1062,12 +1063,28 @@ export type LayerField = keyof TextLayer | keyof ShapeLayer | keyof ImageLayer;
 
 /** Edits one field of a layer. Everything the properties panel changes goes
  *  through here, so each edit is one undo step and one save. */
+/** Fields that change how wide a caption's box is. */
+const WIDTH_FIELDS = new Set(["text", "size", "font", "bold", "italic"]);
+
 export async function setLayerField(id: string, key: LayerField, value: unknown) {
   const layer = anyLayer(id) as Record<string, unknown> | undefined;
   if (!layer || layer[key] === value) return;
+  /* A caption's x is its centre, so longer words used to push it out sideways
+   * in both directions — one line of a stack crept left while the next stayed
+   * put. Left-aligned text has its anchor at the left edge and right-aligned at
+   * the right, so the centre is moved by half the change to leave that edge
+   * where it was. Centred text grows around its middle, which is the point of
+   * it. */
+  const caption = layer as unknown as Layer;
+  const anchored =
+    caption.kind === "text" && WIDTH_FIELDS.has(key) && (caption.align ?? "center") !== "center";
+  const was = anchored ? textWidth(caption as TextLayer) : 0;
   await mutate(
     () => {
       layer[key] = value;
+      if (!anchored) return;
+      const grew = textWidth(caption as TextLayer) - was;
+      caption.x += ((caption as TextLayer).align === "right" ? -grew : grew) / 2;
     },
     true,
     // One run per field per layer: typing a caption is one step, and switching
@@ -1283,6 +1300,26 @@ export async function ungroupLayoutLayers(groupId: string) {
     removeLayerFrom(layout.layers, groupId);
     app.layoutSelection = app.layoutSelection.filter((id) => id !== groupId);
     if (app.layoutSelected === groupId) app.layoutSelected = "";
+  });
+}
+
+/** Duplicates the picked layers in the open Layout.
+ *
+ *  The copies land directly above the topmost original, nudged so they are not
+ *  hiding underneath it, named for the stack they join — and selected, since
+ *  the next thing anyone does with a copy is move it. */
+export async function duplicateLayoutLayers() {
+  const layout = openLayout();
+  const picked = [...app.layoutSelection];
+  if (!layout || !picked.length) return;
+  await mutate(() => {
+    const copies = duplicateLayers(layout.layers, picked);
+    if (!copies.length) return;
+    let topMost = -1;
+    for (const [i, l] of layout.layers.entries()) if (picked.includes(l.id)) topMost = i;
+    for (const copy of copies) nameInStack(copy, layout.layers);
+    layout.layers.splice(topMost + 1, 0, ...copies);
+    setLayoutSelection(copies.map((c) => c.id));
   });
 }
 

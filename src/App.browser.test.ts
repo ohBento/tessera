@@ -24,6 +24,7 @@ import {
   canGroupLayers,
   closeLayoutDoc,
   dropLayoutLayer,
+  duplicateLayoutLayers,
   endGesture,
   deleteLayer,
   freeCount,
@@ -45,7 +46,15 @@ import {
   toggleTile,
 } from "./lib/editor.svelte";
 import { addLayoutImage, assignTileLayout, newLayoutDoc, openLayout } from "./lib/editor.svelte";
-import { emptyManifest, findLayer, groupShift, layerLabel, type ImageLayer } from "./lib/model";
+import {
+  emptyManifest,
+  findLayer,
+  groupShift,
+  layerLabel,
+  type ImageLayer,
+  type TextLayer,
+} from "./lib/model";
+import { textWidth } from "./lib/scene";
 import { queuePick, resetMockFiles, stashPickedFile } from "./lib/platform";
 
 /** Waits for a condition instead of a fixed delay: the app loads tiles and
@@ -418,6 +427,46 @@ describe("the Layout editor", () => {
     expect(openLayout()!.layers.map((l) => l.name)).toEqual(["img01", "text01", "img02"]);
   });
 
+  it("duplicates the picked layers above the originals", async () => {
+    /* A copy that lands underneath its original looks like nothing happened,
+     * and one that keeps the original's ids is the same layer twice. */
+    const [a] = await twoLayers();
+    setLayoutSelection([a]);
+    const before = openLayout()!.layers.length;
+
+    await duplicateLayoutLayers();
+
+    const layers = openLayout()!.layers;
+    expect(layers).toHaveLength(before + 1);
+    const original = layers.find((l) => l.id === a)!;
+    const copy = layers[layers.indexOf(original) + 1];
+    expect(copy.id).not.toBe(a);
+    // Offset, or it would be hiding under the thing it was copied from.
+    expect(copy.x).toBeCloseTo(original.x + 0.02, 6);
+    // Named for the stack it joined, and picked, since moving it is next.
+    expect(copy.name).not.toBe(original.name);
+    expect(app.layoutSelection).toEqual([copy.id]);
+  });
+
+  it("points a duplicated mask at the duplicated shape, not the original", async () => {
+    await newLayoutDoc("Maske kopieren");
+    await addLayoutShape("rect");
+    await addLayoutText();
+    const [shape, words] = openLayout()!.layers;
+    await setLayerField(words.id, "maskId", shape.id);
+
+    setLayoutSelection([shape.id, words.id]);
+    await duplicateLayoutLayers();
+
+    const copies = openLayout()!.layers.filter((l) => ![shape.id, words.id].includes(l.id));
+    expect(copies).toHaveLength(2);
+    const copiedText = copies.find((l) => l.kind === "text")!;
+    const copiedShape = copies.find((l) => l.kind === "shape")!;
+    /* Pointing back at the original would mean editing one design moved the
+       other's hole — the surprise duplicating exists to avoid. */
+    expect(copiedText.maskId).toBe(copiedShape.id);
+  });
+
   it("keeps a Ctrl-picked second layer selected", async () => {
     const [a, b] = await twoLayers();
 
@@ -633,6 +682,42 @@ describe("the Layout editor", () => {
     expect(openLayout()!.layers.map((l) => l.id)).toEqual([group.id]);
     // And a refused move costs no undo step.
     expect(history.past.length).toBe(before);
+  });
+
+  it("grows a left-aligned caption to the right, not out of both sides", async () => {
+    /* x is the centre, so longer words used to push the caption out sideways in
+     * both directions — line one of a stack would creep left while line two
+     * stayed put. Left-aligned text has its anchor at the left edge, and that
+     * is what stays still. */
+    await newLayoutDoc("Wachstum");
+    await addLayoutText();
+    const l = openLayout()!.layers[0] as TextLayer;
+    await setLayerField(l.id, "align", "left");
+    await setLayerField(l.id, "text", "M");
+
+    const at = () => {
+      const t = findLayer(openLayout()!.layers, l.id) as TextLayer;
+      return { left: t.x - textWidth(t) / 2, x: t.x };
+    };
+    const before = at();
+
+    await setLayerField(l.id, "text", "MMMMMMMMMMMM");
+    const after = at();
+    expect(after.left).toBeCloseTo(before.left, 5);
+    // It really did get wider — otherwise the assertion above proves nothing.
+    expect(after.x).toBeGreaterThan(before.x);
+  });
+
+  it("leaves a centred caption centred", async () => {
+    await newLayoutDoc("Mitte");
+    await addLayoutText();
+    const l = openLayout()!.layers[0] as TextLayer;
+    await setLayerField(l.id, "align", "center");
+    await setLayerField(l.id, "text", "M");
+    const x = (findLayer(openLayout()!.layers, l.id) as TextLayer).x;
+
+    await setLayerField(l.id, "text", "MMMMMMMMMMMM");
+    expect((findLayer(openLayout()!.layers, l.id) as TextLayer).x).toBeCloseTo(x, 5);
   });
 
   it("leaves a caption's size to the properties panel, whatever the canvas says", async () => {

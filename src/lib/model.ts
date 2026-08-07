@@ -515,6 +515,41 @@ export function duplicateLayout(layout: Layout, name: string): Layout {
   return { id: newId(), name, layers };
 }
 
+/** Copies layers within one Layout, offset a little so the copy is visible.
+ *
+ *  Fresh ids all the way down, and mask references remapped inside the copied
+ *  set — a duplicate pointing back at the original's stencil would move when
+ *  the original was edited, which is exactly the surprise duplicating is meant
+ *  to avoid. A mask naming something *outside* the set keeps pointing there,
+ *  because that layer is still the one meant.
+ *
+ *  Names are left to the caller: only it knows the stack the copies are about
+ *  to join, and that is what decides the next free number. */
+export function duplicateLayers(layers: Layer[], ids: string[], nudge = 0.02): Layer[] {
+  const swap = new Map<string, string>();
+  const renumber = (from: Layer[]): Layer[] =>
+    from.map((l) => {
+      const copy = clone(l);
+      copy.id = newId();
+      swap.set(l.id, copy.id);
+      if (copy.kind === "group") copy.children = renumber(copy.children);
+      return copy;
+    });
+
+  const wanted = new Set(ids);
+  const copies = renumber(layers.filter((l) => wanted.has(l.id)));
+  for (const l of walkLayers(copies)) {
+    if (l.maskId && swap.has(l.maskId)) l.maskId = swap.get(l.maskId);
+  }
+  // Only the top level moves: a group's children carry absolute coordinates and
+  // would take the offset a second time.
+  for (const l of copies) {
+    l.x += nudge;
+    l.y += nudge;
+  }
+  return copies;
+}
+
 /** Cheap content fingerprint of a Layout's layers.
  *
  *  A hash rather than the JSON itself: the comparison only ever needs to
