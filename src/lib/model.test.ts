@@ -21,6 +21,7 @@ import {
   layerAsset,
   layerText,
   migrate,
+  maskChoices,
   moveToProject,
   nameInStack,
   nestingShift,
@@ -46,6 +47,7 @@ import {
   refreshStamps,
   relocateLayer,
   stampInto,
+  stencilIds,
   swapPlaced,
   syncLiveLayers,
   type ImageLayer,
@@ -1358,5 +1360,35 @@ describe("layer names", () => {
     nameInStack(next, [old]);
     expect(next.name).toBe("img01");
     expect(old.name).toBe("logo");
+  });
+});
+
+describe("masks", () => {
+  it("offers every shape but the layer's own", () => {
+    const a = newShapeLayer("rect");
+    const b = newShapeLayer("ellipse");
+    const pic = newImageLayer("x.png");
+    const layers = [a, b, pic];
+    expect(maskChoices(layers, pic.id).map((l) => l.id)).toEqual([a.id, b.id]);
+    // A layer clipped to its own outline is either nothing or a no-op.
+    expect(maskChoices(layers, a.id).map((l) => l.id)).toEqual([b.id]);
+  });
+
+  it("looks inside groups for shapes", () => {
+    const inner = newShapeLayer("rect");
+    const pic = newImageLayer("x.png");
+    expect(maskChoices([newGroupLayer([inner]), pic], pic.id).map((l) => l.id)).toEqual([inner.id]);
+  });
+
+  it("counts a shape as a stencil only while something visible cuts with it", () => {
+    const shape = newShapeLayer("rect");
+    const pic = newImageLayer("x.png");
+    pic.maskId = shape.id;
+    expect([...stencilIds([shape, pic])]).toEqual([shape.id]);
+
+    /* Switched off, it is cutting nothing — and the shape has to come back, or
+     * it would sit there invisible with nothing on screen to say why. */
+    pic.hidden = true;
+    expect([...stencilIds([shape, pic])]).toEqual([]);
   });
 });

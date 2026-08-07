@@ -359,11 +359,73 @@ describe("masks", () => {
     // its member a quarter of the tile to the right.
     group.x = 0.75;
     pic.maskId = hole.id;
-    layout.layers.push(group, pic);
+    /* The shape goes on top of the picture on purpose. Underneath it, the
+     * clipped picture repaints exactly the pixels an un-hidden stencil would
+     * have shown, so the probe could not tell a working stencil from a broken
+     * one — the test passed for the wrong reason. On top, its own fill wins if
+     * it ever paints. */
+    layout.layers.push(pic, group);
 
     const px = await decodeProbe(layout);
     expect(px(0.75, 0.5)).toEqual([255, 0, 255, 255]);
     expect(px(0.5, 0.5)[3]).toBe(0);
+  });
+
+  it("cuts a caption too, not only a picture", async () => {
+    /* The Mask control is offered on anything but a group, and the clip is
+     * applied without asking what kind of layer it is — but every other test
+     * here masks an image, and a Textbox is a different Fabric object.
+     *
+     * Ink is counted in bands rather than probed at one point: where a glyph
+     * actually puts pixels depends on the font this machine happens to have,
+     * and a single probe would be measuring the typeface. */
+    const ink = async (layout: Parameters<typeof renderLayout>[0], from: number, to: number) => {
+      const { data, width } = await decode(await renderLayout(layout, testDeps));
+      let n = 0;
+      for (let y = Math.round(from * TILE_H); y < Math.round(to * TILE_H); y++) {
+        for (let x = 0; x < width; x++) if (data[(y * width + x) * 4 + 3] > 0) n++;
+      }
+      return n;
+    };
+
+    const layout = newLayout("Text mit Loch");
+    const hole = newShapeLayer("rect");
+    hole.x = 0.5;
+    hole.y = 0.35;
+    hole.w = 0.9;
+    hole.h = 0.08;
+    const words = newTextLayer();
+    words.text = "MMMM MMMM MMMM MMMM MMMM MMMM";
+    words.x = 0.5;
+    words.y = 0.5;
+    words.size = 0.14;
+    words.color = "#ff00ff";
+    words.align = "center";
+    layout.layers.push(hole, words);
+
+    // Unmasked, the caption puts ink both inside that band and below it.
+    const wholeIn = await ink(layout, 0.31, 0.39);
+    const wholeBelow = await ink(layout, 0.5, 0.9);
+    expect(wholeIn).toBeGreaterThan(0);
+    expect(wholeBelow).toBeGreaterThan(0);
+
+    words.maskId = hole.id;
+    expect(await ink(layout, 0.31, 0.39)).toBeGreaterThan(0);
+    expect(await ink(layout, 0.5, 0.9)).toBe(0);
+  });
+
+  it("draws unclipped when the mask names something that is not a shape", async () => {
+    // The dropdown cannot produce this; a hand-edited manifest can.
+    const { layout, pic } = sheet();
+    const other = newImageLayer("block:#00ff00");
+    other.x = 0.5;
+    other.y = 0.5;
+    other.scale = 0.2;
+    layout.layers.unshift(other);
+    pic.maskId = other.id;
+
+    const px = await decodeProbe(layout);
+    expect(px(0.1, 0.5)).toEqual([255, 0, 255, 255]);
   });
 
   it("draws unclipped when the shape is gone", async () => {

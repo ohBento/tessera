@@ -308,3 +308,33 @@ describe("export matches what the editor shows", () => {
     expect(differing).toBe(0);
   });
 });
+
+describe("masks stop at the Layout", () => {
+  it("ignores a maskId that reached a tile, rather than half-applying it", async () => {
+    /* Masking lives in buildLayout; this path has none. The shape that would
+     * do the cutting never travels to a tile either — syncLiveLayers copies
+     * the caption or the logo, not the Layout around it — so a maskId here can
+     * only ever be a leftover.
+     *
+     * Pinned rather than left to chance because of how it would fail: the
+     * Layout editor would show the layer neatly cut and the BMP written into
+     * the game folder would carry it whole. The panel keeps the two settings
+     * apart; this is what says so in pixels if that guard is ever lost. */
+    const m = manifest(2);
+    const id = order(m)[0];
+    const live = newImageLayer("block:#00ff00");
+    live.x = 0.5;
+    live.y = 0.5;
+    live.scale = 1;
+    live.live = true;
+    live.maskId = "irgendeine-form";
+    m.tiles[id].layers.push(live);
+
+    const tiles = [...(await renderTiles(view(m), m, testDeps)).values()];
+    /* Both side edges at half height. A picture at scale 1 is tile-wide and
+     * the tile is taller than it is wide, so those are the outermost points it
+     * covers — and the first ones any clip would take. */
+    expect(pixel(tiles[0], 2, TILE_H / 2)).toEqual([0, 255, 0, 255]);
+    expect(pixel(tiles[0], TILE_W - 3, TILE_H / 2)).toEqual([0, 255, 0, 255]);
+  });
+});
