@@ -18,6 +18,11 @@
   const flat = (p: Paint) => (isGradient(p) ? p.from : p);
 
   const num = (e: Event) => Number((e.currentTarget as HTMLInputElement).value);
+
+  /** Degrees folded into one turn. Typing -10 means 350, and a layer left at
+   *  370 by some earlier gesture shows as 10 rather than pinning the slider at
+   *  its end — where the next nudge would have spun it most of the way round. */
+  const turn = (deg: number) => ((deg % 360) + 360) % 360;
 </script>
 
 <h2 class="spaced">Properties</h2>
@@ -250,6 +255,27 @@
 {:else}
   <p class="empty">A group has no properties of its own.</p>
 {/if}
+
+<!-- Rotation is on the canvas handle too, but a handle cannot be told "exactly
+     ninety" — and the number it left behind was nowhere to be read. -->
+<label class="field">
+  <span>Rotation</span>
+  <input
+    type="range"
+    min="0"
+    max="360"
+    step="any"
+    value={turn(layer.rotation)}
+    oninput={(e) => set("rotation", num(e))}
+  />
+  <input
+    class="px"
+    type="number"
+    step="1"
+    value={Math.round(turn(layer.rotation))}
+    onchange={(e) => set("rotation", turn(num(e)))}
+  />
+</label>
 
 <label class="field">
   <span>Opacity</span>
