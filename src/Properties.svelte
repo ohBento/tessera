@@ -6,6 +6,13 @@
   import { TILE_W } from "./lib/bmp";
   import { setLayerField, type LayerField } from "./lib/editor.svelte";
   import { isGradient, type Layer, type Paint } from "./lib/model";
+  import { systemFonts } from "./lib/platform";
+
+  /** What this machine has installed. Fetched once behind the module-level
+   *  cache in platform.ts — this panel is rebuilt every time the selection
+   *  moves, and the answer cannot change while the app is open. */
+  let families = $state<string[]>([]);
+  void systemFonts().then((f) => (families = f));
 
   /** Some fields only mean something in a Layout — "pro Kachel" is about what
    *  happens at stamp time, and a layer already on a tile is past that. */
@@ -35,7 +42,20 @@
   </label>
   <label class="field">
     <span>Font</span>
-    <input value={layer.font} onchange={(e) => set("font", e.currentTarget.value)} />
+    <!-- A datalist rather than a select: the installed families are offered as
+         a list, and a name that is not among them can still be typed. Which
+         matters, because the list comes from the machine Tessera is running
+         on and a Layout may well have been built on another. -->
+    <input
+      list="installed-fonts"
+      value={layer.font}
+      onchange={(e) => set("font", e.currentTarget.value)}
+    />
+    <datalist id="installed-fonts">
+      {#each families as family (family)}
+        <option value={family}></option>
+      {/each}
+    </datalist>
   </label>
   <label class="field">
     <span>Font size</span>

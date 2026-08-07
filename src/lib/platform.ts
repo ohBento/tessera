@@ -14,6 +14,7 @@
  * Importing the Tauri plugins is safe everywhere — they only reach for
  * window.__TAURI_INTERNALS__ when a function is actually called. */
 import { getVersion as tauriVersion } from "@tauri-apps/api/app";
+import { invoke } from "@tauri-apps/api/core";
 import { documentDir as tauriDocumentDir, join as tauriJoin } from "@tauri-apps/api/path";
 import { ask as tauriAsk, open as tauriOpen } from "@tauri-apps/plugin-dialog";
 import {
@@ -182,6 +183,24 @@ export const copyFile = inTauri
   : async (from: string, to: string) => void files.set(to, memRead(from));
 
 export const getVersion = inTauri ? tauriVersion : async () => "0.0.0-browser";
+
+/** Font families installed on this machine.
+ *
+ *  From Rust, not from the web's `queryLocalFonts()`: that one is permission
+ *  gated, and inside Tauri's custom-protocol origin the permission comes back
+ *  denied with no prompt that could grant it — measured, it returns an empty
+ *  list and no error, which is the worst of both.
+ *
+ *  Loaded once per session: the list cannot change while the app is open, and
+ *  the properties panel is rebuilt every time the selection moves. */
+let fontList: Promise<string[]> | undefined;
+export const systemFonts = () =>
+  (fontList ??= inTauri
+    ? invoke<string[]>("system_fonts")
+    : /* Outside Tauri there is no command to call. A handful that exist
+       * everywhere is enough for the dev build and the tests; the packaged app
+       * is where the real list matters. */
+      Promise.resolve(["Arial", "Courier New", "Georgia", "Impact", "Times New Roman", "Verdana"]));
 
 /** Confirmation dialog. The browser's own confirm() is blocking and ugly but
  *  it is a real yes/no, which is all the caller needs. */
