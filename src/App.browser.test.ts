@@ -184,9 +184,8 @@ describe("the wall", () => {
     expect(tileLayers(a).map((l) => l.kind)).toEqual(["image", "text"]);
     // Recorded, or "Update stamps" would be greyed out forever.
     expect(openLayout()!.stamped).toBeTruthy();
-    // And the wording panel can find it.
-    app.selectedTiles = [a];
-    expect(tileCaptions()).toHaveLength(1);
+    // And the tile's own row can find it.
+    expect(tileCaptions(a)).toHaveLength(1);
   });
 
   it("takes a range with shift and a single tile with ctrl", async () => {

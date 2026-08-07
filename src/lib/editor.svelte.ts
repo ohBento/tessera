@@ -382,22 +382,18 @@ export async function newProjectFrom(name: string) {
  *  wording panel at all. */
 const drawnOn = (tileId: string) => resolveLayers(app.manifest, tileId);
 
-/** The live captions on the tiles currently picked, deduplicated — what the
- *  wording panel offers to edit. Empty unless exactly one tile is picked,
- *  since a field showing several tiles' differing words would have to invent
- *  an answer for what typing into it means. */
-export function tileCaptions(): TextLayer[] {
-  if (app.selectedTiles.length !== 1) return [];
-  return drawnOn(app.selectedTiles[0]).filter((l): l is TextLayer => l.kind === "text");
-}
+/** The live captions on one tile — what its wording fields offer to edit.
+ *
+ *  By tile id, not by selection: the fields live in that tile's own row now,
+ *  so there is no question of which tile they mean and no way for the panel to
+ *  be somewhere else on the screen than the tile it belongs to. */
+export const tileCaptions = (tileId: string): TextLayer[] =>
+  drawnOn(tileId).filter((l): l is TextLayer => l.kind === "text");
 
-/** The live pictures on the tile currently picked — the same bargain as a
- *  caption, one kind over: the Layout owns where and how big, the tile owns
- *  which picture. One tile at a time, for the same reason. */
-export function tileImages(): ImageLayer[] {
-  if (app.selectedTiles.length !== 1) return [];
-  return drawnOn(app.selectedTiles[0]).filter((l): l is ImageLayer => l.kind === "image" && !!l.live);
-}
+/** The live pictures on one tile — the same bargain as a caption, one kind
+ *  over: the Layout owns where and how big, the tile owns which picture. */
+export const tileImages = (tileId: string): ImageLayer[] =>
+  drawnOn(tileId).filter((l): l is ImageLayer => l.kind === "image" && !!l.live);
 
 /** This tile's picture for a live image layer, or undefined when it shows the
  *  layer's own. "" is a choice, not an absence: no picture here. */
@@ -411,8 +407,8 @@ export const tileAsset = (tileId: string, layerId: string): string | undefined =
  *  imported. Offering those to click is the difference between one file dialog
  *  and forty. The layer's own picture leads, since that is the default every
  *  tile falls back to. */
-export function tileImageChoices(layerId: string): string[] {
-  const layer = tileImages().find((l) => l.id === layerId);
+export function tileImageChoices(tileId: string, layerId: string): string[] {
+  const layer = tileImages(tileId).find((l) => l.id === layerId);
   const seen = new Set<string>(layer ? [layer.asset] : []);
   for (const tile of Object.values(app.manifest.tiles)) {
     const a = tile.swap?.[layerId];
@@ -449,18 +445,6 @@ export async function pickTileImage(tileId: string, layerId: string) {
     await setTileAsset(tileId, layerId, asset);
   });
 }
-
-/** Whether the wording panel is hiding only because several tiles are picked.
- *
- *  The panel needs exactly one tile — a field showing several tiles' differing
- *  words would have to invent an answer — but vanishing without a word made
- *  the whole feature unfindable: after stamping, the whole group is still
- *  selected, which is precisely when someone goes looking for it. */
-export const captionsNeedOneTile = () =>
-  app.selectedTiles.length > 1 &&
-  app.selectedTiles.some((id) =>
-    drawnOn(id).some((l) => l.kind === "text" || (l.kind === "image" && !!l.live)),
-  );
 
 /** This tile's wording for a caption, or undefined when it has none of its own
  *  and shows the layer's default. */

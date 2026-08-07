@@ -23,7 +23,6 @@
     canBakeMosaic,
     canGroupLayers,
     canSaveToGame,
-    captionsNeedOneTile,
     canSaveLayout,
     clearMosaic,
     coverCounts,
@@ -1170,90 +1169,103 @@
                         <option value={layout.id}>{layout.name}</option>
                       {/each}
                     </select>
+
+                    <!-- What this tile alone says and shows. In the row rather
+                         than in a panel below the list: with forty-four rows,
+                         editing the first one meant scrolling past all of them
+                         and back. Here the fields cannot be further away than
+                         the row they belong to. -->
+                    {#each tileCaptions(id) as caption (caption.id)}
+                      <label class="field indent">
+                        <span>{layerLabel(caption)}</span>
+                        <!-- The default shows as a placeholder, not as a value:
+                             typing over a real value and clearing a field look
+                             identical, and only one of them should mean "this
+                             tile says nothing". -->
+                        <input
+                          value={tileText(id, caption.id) ?? ""}
+                          placeholder={caption.text}
+                          oninput={(e) => void setTileText(id, caption.id, e.currentTarget.value)}
+                        />
+                        <button
+                          title="Use the layer's default text again"
+                          disabled={tileText(id, caption.id) === undefined}
+                          onclick={() => void clearTileText(id, caption.id)}>↺</button
+                        >
+                      </label>
+                    {/each}
+
+                    {#each tileImages(id) as pic (pic.id)}
+                      {@const chosen = tileAsset(id, pic.id)}
+                      <p class="sub nolead indent">{layerLabel(pic)}</p>
+                      <!-- A gallery rather than a file dialog per tile: class
+                           logos repeat across a wall, so from the second tile
+                           on the picture is almost always one already
+                           imported. The dialog stays, as the "+" that feeds
+                           the gallery. -->
+                      <div class="gallery indent">
+                        {#each tileImageChoices(id, pic.id) as asset (asset)}
+                          <button
+                            class="swatch"
+                            class:on={(chosen ?? pic.asset) === asset}
+                            title={asset === pic.asset
+                              ? "The layer's own picture"
+                              : "Use this picture"}
+                            onclick={() => void setTileAsset(id, pic.id, asset)}
+                          >
+                            {#await assetUrl(asset) then url}
+                              <img src={url} alt="" />
+                            {/await}
+                          </button>
+                        {/each}
+                        <button
+                          class="swatch"
+                          title="Pick a new picture…"
+                          onclick={() => void pickTileImage(id, pic.id)}
+                        >
+                          +
+                        </button>
+                        <!-- A circle with a slash: the sign for "none of them",
+                             which is a choice here and not the absence of one. -->
+                        <button
+                          class="swatch none"
+                          class:on={chosen === ""}
+                          title="Show no picture on this tile"
+                          onclick={() => void setTileAsset(id, pic.id, "")}
+                        >
+                          <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+                            <circle
+                              cx="9"
+                              cy="9"
+                              r="7"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="1.6"
+                            />
+                            <line
+                              x1="4"
+                              y1="14"
+                              x2="14"
+                              y2="4"
+                              stroke="currentColor"
+                              stroke-width="1.6"
+                            />
+                          </svg>
+                        </button>
+                        <button
+                          class="swatch"
+                          title="Use the layer's own picture again"
+                          disabled={chosen === undefined}
+                          onclick={() => void clearTileAsset(id, pic.id)}>↺</button
+                        >
+                      </div>
+                    {/each}
                   {/if}
                 </div>
               {/each}
             </div>
           {/if}
         </div>
-
-        {#if captionsNeedOneTile()}
-          <!-- The panel needs one tile, and saying so is the whole point: it
-               used to vanish without a word, and after stamping the whole
-               group is still selected — exactly when someone comes looking. -->
-          <p class="empty spaced">Pick a single tile to edit its wording.</p>
-        {/if}
-        {#if tileCaptions().length}
-          {@const tile = app.selectedTiles[0]}
-          <h2 class="spaced">Text on {tile}</h2>
-          {#each tileCaptions() as caption (caption.id)}
-            <label class="field">
-              <span>{layerLabel(caption)}</span>
-              <!-- The default shows as a placeholder, not as a value: typing
-                   over a real value and clearing a field look identical, and
-                   only one of them should mean "this tile says nothing". -->
-              <input
-                value={tileText(tile, caption.id) ?? ""}
-                placeholder={caption.text}
-                oninput={(e) => void setTileText(tile, caption.id, e.currentTarget.value)}
-              />
-              <button
-                title="Use the layer's default text again"
-                disabled={tileText(tile, caption.id) === undefined}
-                onclick={() => void clearTileText(tile, caption.id)}>↺</button
-              >
-            </label>
-          {/each}
-        {/if}
-
-        {#if tileImages().length}
-          {@const tile = app.selectedTiles[0]}
-          <h2 class="spaced">Picture on {tile}</h2>
-          {#each tileImages() as pic (pic.id)}
-            {@const chosen = tileAsset(tile, pic.id)}
-            <p class="sub nolead">{layerLabel(pic)}</p>
-            <!-- A gallery rather than a file dialog per tile: class logos
-                 repeat across a wall, so from the second tile on the picture
-                 is almost always one already imported. The dialog stays, as
-                 the "+" that feeds the gallery. -->
-            <div class="gallery">
-              {#each tileImageChoices(pic.id) as asset (asset)}
-                <button
-                  class="swatch"
-                  class:on={(chosen ?? pic.asset) === asset}
-                  title={asset === pic.asset ? "The layer's own picture" : "Use this picture"}
-                  onclick={() => void setTileAsset(tile, pic.id, asset)}
-                >
-                  {#await assetUrl(asset) then url}
-                    <img src={url} alt="" />
-                  {/await}
-                </button>
-              {/each}
-              <button class="swatch" title="Pick a new picture…" onclick={() => void pickTileImage(tile, pic.id)}>
-                +
-              </button>
-              <!-- A circle with a slash: the sign for "none of them", which is
-                   a choice here and not the absence of one. -->
-              <button
-                class="swatch none"
-                class:on={chosen === ""}
-                title="Show no picture on this tile"
-                onclick={() => void setTileAsset(tile, pic.id, "")}
-              >
-                <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
-                  <circle cx="9" cy="9" r="7" fill="none" stroke="currentColor" stroke-width="1.6" />
-                  <line x1="4" y1="14" x2="14" y2="4" stroke="currentColor" stroke-width="1.6" />
-                </svg>
-              </button>
-              <button
-                class="swatch"
-                title="Use the layer's own picture again"
-                disabled={chosen === undefined}
-                onclick={() => void clearTileAsset(tile, pic.id)}>↺</button
-              >
-            </div>
-          {/each}
-        {/if}
 
         <!-- One library across every project: a design fits characters from
              any account, and keeping a copy per wall would mean editing the
@@ -1543,9 +1555,6 @@
     margin: 0;
     color: #6c777e;
   }
-  .empty.spaced {
-    margin-top: 18px;
-  }
   ul {
     margin: 0;
     padding: 0;
@@ -1708,9 +1717,6 @@
   }
   .indent {
     margin-left: 18px;
-  }
-  .empty.indent {
-    margin: 0 0 2px 18px;
   }
   .assign {
     width: calc(100% - 18px);
