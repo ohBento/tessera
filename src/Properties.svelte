@@ -48,21 +48,17 @@
     />
   </label>
   {#if inLayout}
-    <div class="row">
-      <button
-        class:on={layer.perTile}
-        onclick={() => set("perTile", !layer.perTile)}
-        title="Kept out of the stamp — laid on every tile as a live layer, so each tile can carry its own wording"
-      >
-        {layer.perTile ? "✓ " : ""}per tile
-      </button>
-    </div>
-    {#if layer.perTile}
-      <p class="hint">
-        Stays out of the stamp. Editable per tile once stamped; "{"{{id}}"}" becomes
-        the tile id.
-      </p>
-    {/if}
+    <!-- A state, not an action: the rest of this panel's little buttons all do
+         something the moment they are pressed, and this one only says how the
+         layer is treated later. -->
+    <label class="check" title="Makes this layer editable in the grid-view">
+      <input
+        type="checkbox"
+        checked={layer.perTile}
+        onchange={(e) => set("perTile", e.currentTarget.checked)}
+      />
+      Editable in grid
+    </label>
   {/if}
   <!-- The glyphs every text editor uses: a bold B, an italic I, and alignment
        as little line stacks whose ragged side says which way the text falls. -->
@@ -212,21 +208,14 @@
   {/if}
 {:else if layer.kind === "image"}
   {#if inLayout}
-    <div class="row">
-      <button
-        class:on={layer.perTile}
-        onclick={() => set("perTile", !layer.perTile)}
-        title="Kept out of the stamp — laid on every tile as a live layer, so each tile can carry its own picture"
-      >
-        {layer.perTile ? "✓ " : ""}per tile
-      </button>
-    </div>
-    {#if layer.perTile}
-      <p class="hint">
-        Stays out of the stamp. Swappable per tile once stamped — this picture is
-        the default the others fall back to.
-      </p>
-    {/if}
+    <label class="check" title="Makes this layer editable in the grid-view">
+      <input
+        type="checkbox"
+        checked={layer.perTile}
+        onchange={(e) => set("perTile", e.currentTarget.checked)}
+      />
+      Editable in grid
+    </label>
   {/if}
   <!-- Mirrored triangles across a dashed axis — the flip icon every editor
        uses. The vertical one is the same drawing turned a quarter. -->
@@ -302,6 +291,23 @@
   input[type="range"] {
     padding: 0;
   }
+  /* A checkbox is a fixed little square, not a field that grows — the shared
+     `input` rule above would stretch it across the panel. */
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+    color: #8b979f;
+    font-size: 11px;
+  }
+  .check input {
+    flex: none;
+    width: 13px;
+    height: 13px;
+    padding: 0;
+    accent-color: #4d8fbd;
+  }
   /* Swatch and control heights match the toolbar's 32px, so a properties row
      and a tool button are the same target. */
   input[type="color"] {
@@ -352,10 +358,5 @@
   .empty {
     margin: 0;
     color: #6c777e;
-  }
-  .hint {
-    margin: 0 0 6px;
-    color: #6c777e;
-    font-size: 11px;
   }
 </style>
