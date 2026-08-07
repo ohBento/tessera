@@ -143,16 +143,26 @@
   $effect(() => {
     const picked = app.selectedTiles;
     if (!picked.length || !open.has("tiles")) return;
-    if (picked.length === 1 && !open.has(picked[0])) {
-      open.add(picked[0]);
-      open = new Set(open);
-    }
+    if (picked.length === 1 && !open.has(picked[0])) toggleTileRow(picked[0]);
     const first = visibleIds().find((id) => picked.includes(id)) ?? picked[0];
     // After the row exists, not before — opening it is what creates it.
     void tick().then(() =>
       document.querySelector(`[data-tile="${first}"]`)?.scrollIntoView({ block: "nearest" }),
     );
   });
+
+  /** Opens one tile row and shuts whichever was open before.
+   *
+   *  An accordion only for tile rows — drawers and the section heads share the
+   *  same set and stay independent of each other. A row carries the wording
+   *  fields and the picture gallery now, so two of them open at once is a list
+   *  you have to scroll past to reach the next id. */
+  function toggleTileRow(id: string) {
+    const wasOpen = open.has(id);
+    for (const tile of visibleIds()) open.delete(tile);
+    if (!wasOpen) open.add(id);
+    open = new Set(open);
+  }
 
   /** The row being renamed, "" for none. One at a time by construction. */
   let renaming = $state("");
@@ -1199,7 +1209,7 @@
                   onmouseleave={() => app.hoverTile === id && (app.hoverTile = "")}
                 >
                   <div class="grouphead" class:selected={app.selectedTiles.includes(id)}>
-                    <button class="twisty" onclick={() => toggleOpen(id)}>
+                    <button class="twisty" onclick={() => toggleTileRow(id)}>
                       {open.has(id) ? "▾" : "▸"}
                     </button>
                     <button
