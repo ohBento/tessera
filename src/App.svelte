@@ -2009,6 +2009,17 @@
     background: #0d1114;
     color: inherit;
   }
+  /* The header's copy has to match the tab it stands in for, not the sidebar
+     rows the rule above is cut for. Measured: a tab is 28.19px tall and that
+     32px + 2px of border is 34, so renaming a Layout grew the whole top row by
+     the difference and everything below it jumped. Same padding and border
+     width as `button`, so the two are the same height by construction. */
+  .docs .rename {
+    flex: none;
+    width: 150px;
+    height: auto;
+    padding: 4px 10px;
+  }
   .dirty {
     color: #ffc45c;
   }
