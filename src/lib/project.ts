@@ -333,9 +333,18 @@ export async function restoreTiles(dir: string, ids: string[]): Promise<number> 
   return n;
 }
 
-/* A snapshot is a copy of the manifest, nothing more. A look is fully described
- * by it plus the content-hashed assets, which are never deleted — storing
- * rendered images would cost megabytes per look and lose editability. */
+/* A snapshot is the document and nothing else: the manifest plus the
+ * fingerprints beside it.
+ *
+ * Not the folder. Measured on a real one: assets/ is 87 MB and vault/ 84, and
+ * neither ever changes — an asset is content-hashed and never deleted, a vault
+ * copy is written once per tile in the instant before Tessera first overwrites
+ * it. The only bytes that can go wrong are the 20 KB in here, so a snapshot
+ * costs 20 KB and restoring one finds every asset it names still on disk.
+ *
+ * Fingerprints travel with it because they answer "is this file still the
+ * character I know", and a manifest put back beside somebody else's answers to
+ * that question would start asking about changes it had already settled. */
 const snapshotDir = async (dir: string) => join(await projectDir(dir), "snapshots");
 
 const snapshotFile = async (dir: string, name: string) =>
@@ -352,13 +361,26 @@ export async function listSnapshots(dir: string): Promise<string[]> {
   }
 }
 
-export async function writeSnapshot(dir: string, name: string, m: Manifest) {
+export type Snapshot = { manifest: Manifest; prints: Fingerprints };
+
+export async function writeSnapshot(dir: string, name: string, snap: Snapshot) {
   await mkdir(await snapshotDir(dir), { recursive: true });
-  await writeTextFile(await snapshotFile(dir, name), JSON.stringify(m, null, 2));
+  await writeTextFile(await snapshotFile(dir, name), JSON.stringify(snap, null, 2));
 }
 
-export async function readSnapshot(dir: string, name: string): Promise<Manifest> {
-  return migrate(JSON.parse(await readTextFile(await snapshotFile(dir, name))));
+/** Reads one back, migrating it the same way the manifest itself is.
+ *
+ *  A file with no `manifest` key is one written before fingerprints joined the
+ *  snapshot — it *is* the manifest. Old snapshots are the whole point of having
+ *  them, so the reader keeps taking both shapes rather than making them
+ *  unreadable to save a branch. */
+export async function readSnapshot(dir: string, name: string): Promise<Snapshot> {
+  const raw = JSON.parse(await readTextFile(await snapshotFile(dir, name)));
+  const bare = !raw || typeof raw !== "object" || !("manifest" in raw);
+  return {
+    manifest: migrate(bare ? raw : raw.manifest),
+    prints: bare ? {} : ((raw.prints ?? {}) as Fingerprints),
+  };
 }
 
 export async function deleteSnapshot(dir: string, name: string) {

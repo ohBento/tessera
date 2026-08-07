@@ -30,11 +30,12 @@ TypeScript + Fabric.js, Windows only.
 | **Layout** | a separate tile-sized document, composed on its own canvas |
 | **Stamp** | a Layout rendered to a flat PNG and dropped on **one tile** as an image layer |
 | **Mask** | a layer clipped to the outline, pixels or letters of another layer in the same Layout. The one doing the cutting stops drawing itself |
+| **Snapshot** | the document (manifest + fingerprints) put aside under a name, ~20 KB. Restoring one replaces the document and does **not** touch the game folder |
 
 Two documents share one shell: the **wall** (the whole grid) and one open
 **Layout**. The header buttons and the right sidebar change with it. The
-sidebar's sections, top to bottom: Projects, Layouts, Shelf (only when it has
-something), Groups, Tiles.
+sidebar's sections, top to bottom: Projects, Layouts, Snapshots, Shelf (only
+when it has something), Groups, Tiles.
 
 The manifest is the only truth; Fabric is a view that writes deltas back, and
 every edit is meant to reach disk immediately. Treat that as the invariant to

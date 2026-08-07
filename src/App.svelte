@@ -58,6 +58,7 @@
     newFolderHere,
     newLayoutDoc,
     newProjectFrom,
+    nextSnapshotName,
     openFolder,
     openLayout,
     openLayoutDoc,
@@ -76,6 +77,9 @@
     restorableCount,
     restoreProject,
     removeFolder,
+    removeSnapshot,
+    renameSnapshot,
+    restoreSnapshot,
     saveLayout,
     saveToGame,
     selectLayer,
@@ -89,6 +93,8 @@
     tileImages,
     tileLayers,
     shelfIds,
+    snapshots,
+    takeSnapshot,
     tileProject,
     unplace,
     tileText,
@@ -1336,6 +1342,66 @@
         >
           + New layout
         </button>
+
+        <!-- The document put aside under a name, so a wall can be tried out and
+             walked back from. Twenty kilobytes each — the assets and the vault
+             copies a snapshot names are never deleted, so restoring one finds
+             them all still there. -->
+        <h2 class="spaced">
+          <button class="twisty inline" onclick={() => toggleOpen("snapshots")}>
+            {open.has("snapshots") ? "▾" : "▸"}
+          </button>
+          Snapshots{#if snapshots().length}&nbsp;({snapshots().length}){/if}
+        </h2>
+        {#if open.has("snapshots")}
+          {#if !snapshots().length}
+            <p class="empty">None yet.</p>
+          {/if}
+          <ul>
+            {#each snapshots() as name (name)}
+              <li>
+                {#if renaming === `snap:${name}`}
+                  <!-- svelte-ignore a11y_autofocus -->
+                  <input
+                    class="rename"
+                    autofocus
+                    value={name}
+                    onblur={(e) => {
+                      void renameSnapshot(name, e.currentTarget.value);
+                      renaming = "";
+                    }}
+                    onkeydown={(e) => renameKey(e, name)}
+                  />
+                {:else}
+                  <button
+                    class="name"
+                    title="Double-click to rename"
+                    ondblclick={() => (renaming = `snap:${name}`)}>{name}</button
+                  >
+                {/if}
+                <!-- The document only. What sits in the game folder is a
+                     separate decision, and "Write to game" is where it is made. -->
+                <button
+                  title="Put this back as the document — the game folder is not touched"
+                  disabled={!!app.busy}
+                  onclick={() => void restoreSnapshot(name)}>↺</button
+                >
+                <button title="Delete" onclick={() => void removeSnapshot(name)}>×</button>
+              </li>
+            {/each}
+          </ul>
+          <button
+            class="wide"
+            disabled={!app.dir || !!app.busy}
+            onclick={async () => {
+              const name = nextSnapshotName();
+              await takeSnapshot(name);
+              renaming = `snap:${name}`;
+            }}
+          >
+            + Snapshot
+          </button>
+        {/if}
 
         {#if shelfIds().length}
           <!-- Collected but not placed. Sorting a wall is two jobs — decide

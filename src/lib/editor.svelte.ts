@@ -36,6 +36,7 @@ import {
   placeTile,
   projectOf,
   projectTiles,
+  pruneToFolder,
   putInFolder,
   refreshStamps,
   removeFromProjectToInbox,
@@ -75,6 +76,10 @@ import {
   restoreTiles,
   saveGeneratedAsset,
   saveManifest,
+  deleteSnapshot,
+  listSnapshots,
+  readSnapshot,
+  writeSnapshot,
   tauriDeps,
 } from "./project";
 import { textWidth, type SceneDeps, type Tagged } from "./scene";
@@ -135,6 +140,10 @@ export const app = $state({
    *  disjoint and switching documents must not smear one's pick onto the
    *  other. */
   layoutSelected: "",
+  /** Snapshot names on disk, newest read wins. Kept in state because the list
+   *  is a directory listing and nothing else would make the sidebar redraw
+   *  when one is added. */
+  snapshots: [] as string[],
   /** Every layer picked in the Layout's list. `layoutSelected` is the last of
    *  these — the one the canvas puts handles on — while grouping needs the
    *  whole set. */
@@ -703,6 +712,7 @@ export async function openFolder(dir?: string) {
     app.newTiles = fresh;
     app.changedTiles = changed;
     app.hashes = hashes;
+    await refreshSnapshots();
 
     app.deps = tauriDeps(app.dir);
     app.selected = "";
@@ -1508,9 +1518,85 @@ export async function restoreProject() {
   });
 }
 
+/* --- Snapshots. The document, put aside under a name, so a wall can be tried
+ * out and walked back from. Twenty kilobytes each: assets and vault copies are
+ * never deleted, so a restored snapshot finds everything it names still on
+ * disk. See project.ts for why the folder itself is not copied. --- */
+
+export const snapshots = () => app.snapshots;
+
+async function refreshSnapshots() {
+  app.snapshots = app.dir ? await listSnapshots(app.dir) : [];
+}
+
+/** Puts the document aside under a name. */
+export async function takeSnapshot(name: string) {
+  if (!app.dir) return;
+  await run("snapshot", async () => {
+    await writeSnapshot(app.dir, name, {
+      manifest: plain(app.manifest),
+      prints: await loadFingerprints(app.dir),
+    });
+    await refreshSnapshots();
+  });
+}
+
+/** A default name that does not collide, so the row can be renamed rather than
+ *  demanding a dialog first. */
+export const nextSnapshotName = () => {
+  const taken = new Set(app.snapshots);
+  for (let n = 1; ; n++) if (!taken.has(`Snapshot ${n}`)) return `Snapshot ${n}`;
+};
+
+export async function renameSnapshot(from: string, to: string) {
+  const name = to.trim();
+  if (!app.dir || !name || name === from || app.snapshots.includes(name)) return;
+  await run("snapshot", async () => {
+    await writeSnapshot(app.dir, name, await readSnapshot(app.dir, from));
+    await deleteSnapshot(app.dir, from);
+    await refreshSnapshots();
+  });
+}
+
+export async function removeSnapshot(name: string) {
+  if (!app.dir) return;
+  await run("snapshot", async () => {
+    await deleteSnapshot(app.dir, name);
+    await refreshSnapshots();
+  });
+}
+
+/** Puts a snapshot back as the document.
+ *
+ *  The game folder is not touched: what is on disk there is a separate
+ *  decision, and "Write to game" is where it gets made. Pruned to the ids the
+ *  folder actually has, because a snapshot from before a character was deleted
+ *  would otherwise put rows back for portraits that no longer exist.
+ *
+ *  One mutation, so Ctrl+Z undoes the whole restore. */
+export async function restoreSnapshot(name: string) {
+  if (!app.dir) return;
+  await run("snapshot", async () => {
+    const snap = await readSnapshot(app.dir, name);
+    const restored = pruneToFolder(snap.manifest, app.folderIds);
+    await saveFingerprints(app.dir, snap.prints);
+    await mutate(() => {
+      app.manifest = restored;
+      clearAll();
+      app.openProjectId = "";
+    });
+    app.error = `Restored "${name}"`;
+  });
+}
+
 export async function saveToGame() {
   const project = openProject();
   if (!project) return;
+  /* A restore point before the one action that overwrites the game's own
+   * files. Nobody thinks to take one first, and this is the moment they would
+   * wish they had. */
+  const stamp = new Date().toISOString().slice(0, 16).replace("T", " ");
+  await takeSnapshot(`Before write ${stamp}`);
   await run("save", async () => {
     if (!app.deps) throw new Error("no folder open");
     /* Snapshotted together: the id list positions the export window and keys

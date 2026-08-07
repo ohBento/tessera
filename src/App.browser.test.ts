@@ -35,8 +35,14 @@ import {
   inbox,
   layouts,
   moveLayersIntoGroup,
+  deleteProject,
   newProjectFrom,
+  openProjectView,
   projects,
+  restoreSnapshot,
+  saveToGame,
+  snapshots,
+  takeSnapshot,
   tileLayers,
   renameLayer,
   setLayoutSelection,
@@ -246,6 +252,51 @@ describe("the wall", () => {
     const assets = new Set([a, b, c].map((id) => (tileLayers(id)[0] as ImageLayer).asset));
     expect(assets.size).toBe(1);
     expect(history.past.length).toBe(steps + 1);
+  });
+
+  it("puts the document aside and back again, leaving the game folder alone", async () => {
+    /* Twenty kilobytes, not a folder copy: assets and vault copies are never
+     * deleted, so a restored snapshot finds everything it names still on disk.
+     * The game's own files are a separate decision — this is the document. */
+    const [a, b, c] = app.folderIds;
+    app.selectedTiles = [a, b, c];
+    await newProjectFrom("Konto");
+    expect(projects()).toHaveLength(1);
+
+    await takeSnapshot("Mit Projekt");
+    expect(snapshots()).toContain("Mit Projekt");
+
+    // Walk away from that state.
+    await deleteProject(projects()[0].id);
+    expect(projects()).toHaveLength(0);
+
+    await restoreSnapshot("Mit Projekt");
+    expect(projects()).toHaveLength(1);
+    expect(projects()[0].order).toEqual([a, b, c]);
+  });
+
+  it("drops tiles the folder no longer has when restoring", async () => {
+    /* A snapshot taken before a character was deleted would otherwise put rows
+     * back for a portrait that is not there any more. */
+    const [a] = app.folderIds;
+    await takeSnapshot("Voll");
+
+    // The folder shrinks under us, as it does when a character is deleted.
+    app.folderIds = [a];
+    await restoreSnapshot("Voll");
+    expect(Object.keys(app.manifest.tiles)).toEqual([a]);
+  });
+
+  it("takes one before writing to the game", async () => {
+    const [a] = app.folderIds;
+    app.selectedTiles = [a];
+    await newProjectFrom("Konto");
+    openProjectView(projects()[0].id);
+
+    const before = snapshots().length;
+    await saveToGame();
+    expect(snapshots().length).toBe(before + 1);
+    expect(snapshots().some((n) => n.startsWith("Before write"))).toBe(true);
   });
 
   it("makes a project from the picked tiles and counts only the free ones", async () => {
