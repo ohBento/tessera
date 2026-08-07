@@ -14,6 +14,11 @@
   let families = $state<string[]>([]);
   void systemFonts().then((f) => (families = f));
 
+  /** A family name as a CSS value. Quoted, because most of them have spaces,
+   *  and escaped, because a name is data and this ends up inside a style
+   *  attribute. */
+  const css = (name: string) => `"${name.replace(/["\\]/g, "\\$&")}"`;
+
   /** Some fields only mean something in a Layout — "pro Kachel" is about what
    *  happens at stamp time, and a layer already on a tile is past that. */
   let { layer, inLayout = false }: { layer: Layer; inLayout?: boolean } = $props();
@@ -42,20 +47,33 @@
   </label>
   <label class="field">
     <span>Font</span>
-    <!-- A datalist rather than a select: the installed families are offered as
-         a list, and a name that is not among them can still be typed. Which
-         matters, because the list comes from the machine Tessera is running
-         on and a Layout may well have been built on another. -->
-    <input
-      list="installed-fonts"
+    <!-- A select and not a datalist: a datalist's popup is a suggestion list
+         the browser styles itself and ignores font-family on, so every entry
+         came out in the same face. Here each option is drawn in the font it
+         names, which is the whole question being asked. -->
+    <!-- The closed control wears the chosen font as well, so the panel answers
+         "which one is this" without being opened at all. -->
+    <select
+      style="font-family: {css(layer.font)}"
       value={layer.font}
       onchange={(e) => set("font", e.currentTarget.value)}
-    />
-    <datalist id="installed-fonts">
+    >
+      <!-- The layer's own font leads the list even when this machine has no
+           such font, or merely touching the control would quietly restyle a
+           Layout built somewhere else. -->
+      {#if !families.includes(layer.font)}
+        <option value={layer.font} style="font-family: {css(layer.font)}">{layer.font}</option>
+      {/if}
       {#each families as family (family)}
-        <option value={family}></option>
+        <option value={family} style="font-family: {css(family)}">{family}</option>
       {/each}
-    </datalist>
+    </select>
+  </label>
+  <label class="field">
+    <span>Custom</span>
+    <!-- The way to a font this machine does not have. A Layout is portable and
+         the list is not, so the name has to stay typable. -->
+    <input value={layer.font} onchange={(e) => set("font", e.currentTarget.value)} />
   </label>
   <label class="field">
     <span>Font size</span>
@@ -336,7 +354,8 @@
     margin-bottom: 4px;
   }
   input,
-  textarea {
+  textarea,
+  select {
     flex: 1;
     min-width: 0;
     font: inherit;
