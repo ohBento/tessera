@@ -667,6 +667,14 @@ async function layoutObjects(
        * applied, which shows up as the mask simply not working — the same trap
        * the tile clip fell into further up. */
       obj.objectCaching = false;
+      /* A clip changes what is painted, not the box Fabric hit-tests, so a
+       * masked picture goes on swallowing clicks across its whole original
+       * extent — over empty canvas, and over the layers below it. Per-pixel
+       * finding answers the question by rendering the object, clipPath and all,
+       * so what can be clicked is what can be seen. Only on masked layers: it
+       * costs a render per hit test, and everywhere else the bounding box is
+       * both cheaper and the right answer. */
+      obj.perPixelTargetFind = true;
     }
     // A locked group locks its members, so the flag has to travel down.
     if (interactive) makeInteractive(obj, locked ? { ...l, locked: true } : l);

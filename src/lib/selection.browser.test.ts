@@ -196,3 +196,77 @@ describe("readBackLayout", () => {
     }
   });
 });
+
+describe("what a mask cuts away stops being clickable", () => {
+  /* A clip is a painting instruction; Fabric hit-tests the bounding box, which
+   * a mask never shrinks. So a picture cropped to a small window went on
+   * catching every click across its full original size — over the layers under
+   * it and over bare canvas — and the only way past it was to lock the layer.
+   *
+   * Both directions are pinned. Losing the fall-through brings the complaint
+   * back; losing the hit inside the window would be worse, because a layer you
+   * can see and cannot click is one you can only reach from the list. */
+  async function maskedOverBlock() {
+    const el = document.createElement("canvas");
+    document.body.append(el);
+    const canvas = new fabric.Canvas(el, { width: TILE_W, height: TILE_H });
+
+    const layout = newLayout("T");
+
+    // Underneath, left of centre and well clear of the window.
+    const under = newImageLayer("block:#00ff00");
+    under.x = 0.15;
+    under.y = 0.5;
+    under.scale = 0.15;
+
+    // On top, tile-wide, so it covers the block completely before the mask.
+    const over = newImageLayer("block:#ff00ff");
+    over.x = 0.5;
+    over.y = 0.5;
+    over.scale = 1;
+
+    // The window: a small rect over on the right, nowhere near the block.
+    const window = newShapeLayer("rect");
+    window.x = 0.8;
+    window.y = 0.5;
+    window.w = 0.2;
+    window.h = 0.2;
+    over.maskId = window.id;
+
+    layout.layers.push(under, over, window);
+    await buildLayout(canvas, layout, testDeps, true);
+    return { canvas, under, over };
+  }
+
+  /** Which layer a click at that spot on the canvas would pick up. */
+  function layerAt(canvas: fabric.Canvas, x: number, y: number) {
+    const r = canvas.upperCanvasEl.getBoundingClientRect();
+    const e = new MouseEvent("mousedown", { clientX: r.left + x, clientY: r.top + y });
+    /* findTarget is how Fabric answers a click. Not in the public types, and it
+     * hands back a report about the hit rather than the object — reading
+     * layerId straight off it silently yields undefined for every point. */
+    const hit = (
+      canvas as unknown as { findTarget(e: MouseEvent): { target?: fabric.FabricObject } }
+    ).findTarget(e);
+    return (hit.target as { layerId?: string } | undefined)?.layerId;
+  }
+
+  it("hands the click to the layer underneath", async () => {
+    const { canvas, under } = await maskedOverBlock();
+    try {
+      // Centre of the block: covered by the masked picture, cut away from it.
+      expect(layerAt(canvas, 0.15 * TILE_W, 0.5 * TILE_H)).toBe(under.id);
+    } finally {
+      await canvas.dispose();
+    }
+  });
+
+  it("still picks the masked layer up inside its window", async () => {
+    const { canvas, over } = await maskedOverBlock();
+    try {
+      expect(layerAt(canvas, 0.8 * TILE_W, 0.5 * TILE_H)).toBe(over.id);
+    } finally {
+      await canvas.dispose();
+    }
+  });
+});
