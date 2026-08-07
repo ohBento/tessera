@@ -381,7 +381,10 @@
         !layer || !freeScale(layer),
       );
     });
-    canvas.on("object:rotating", () => (transforming = true));
+    canvas.on("object:rotating", () => {
+      transforming = true;
+      syncMasks();
+    });
 
     /* Snapping. Fabric has none of its own, so the pull happens here: on every
      * step of a drag, line the moving box up with the sheet and with every
@@ -411,6 +414,49 @@
       const obj = opt.target as (fabric.Textbox & { layerId?: string }) | undefined;
       if (obj?.layerId) void setLayerField(obj.layerId, "text", obj.text ?? "");
     });
+
+    /** Keeps every mask sitting on its stencil, mid-gesture.
+     *
+     *  A clipPath is a separate object with `absolutePositioned`, set once when
+     *  the scene is built. Fabric moves objects, not their clip paths — so
+     *  dragging a group that holds both a masked picture and the shape cutting
+     *  it moved the picture and left the hole behind, and only the rebuild
+     *  after the drag put them back in register. Measured: picture and shape
+     *  both travelled 90px while the clip stayed put, then jumped the whole 90
+     *  at once on release.
+     *
+     *  Copied from the stencil's live object rather than tracked as a delta,
+     *  which makes the three cases fall out on their own: drag the pair and the
+     *  hole follows, drag the stencil alone and the hole follows it, drag the
+     *  picture alone and the hole stays — the last one being the whole point of
+     *  a mask. */
+    function syncMasks() {
+      const layout = openLayout();
+      if (!canvas || !layout) return;
+      const byId = new Map<string, fabric.Object>();
+      for (const o of canvas.getObjects()) {
+        const id = (o as { layerId?: string }).layerId;
+        if (id) byId.set(id, o);
+      }
+      for (const o of canvas.getObjects()) {
+        const clip = o.clipPath;
+        if (!clip) continue;
+        const layer = findLayer(layout.layers, (o as { layerId?: string }).layerId ?? "");
+        const stencil = layer?.maskId ? byId.get(layer.maskId) : undefined;
+        if (!stencil) continue;
+        /* Off the transform matrix, not off left/top. Inside an
+         * ActiveSelection Fabric re-expresses a member's left/top relative to
+         * the selection's own centre, so reading them put every hole at the
+         * origin the moment a group was picked up — measured, clip 312 to 0.
+         * The matrix is absolute either way, the same reason readBackLayout
+         * works off it. */
+        const { translateX, translateY, scaleX, scaleY, angle } = fabric.util.qrDecompose(
+          stencil.calcTransformMatrix(),
+        );
+        clip.set({ left: translateX, top: translateY, scaleX, scaleY, angle });
+        clip.setCoords();
+      }
+    }
 
     canvas.on("object:moving", (opt) => {
       transforming = true;
@@ -447,6 +493,12 @@
       target.setCoords();
       guides = snap.guides;
     });
+
+    /* After the handlers above have finished nudging things about, so the holes
+     * land on where the stencils actually ended up rather than where they were
+     * headed before a snap pulled them into line. */
+    canvas.on("object:moving", syncMasks);
+    canvas.on("object:scaling", syncMasks);
 
     const dropGuides = () => {
       if (!guides.length) return;

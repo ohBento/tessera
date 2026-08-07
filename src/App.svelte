@@ -2001,6 +2001,9 @@
   .rename {
     flex: 1;
     min-width: 0;
+    /* Border included, or the field is two pixels taller than the button it
+       replaces and every row it opens in jumps down and back. */
+    box-sizing: border-box;
     height: 32px;
     font: inherit;
     padding: 0 6px;
