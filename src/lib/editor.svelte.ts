@@ -1016,12 +1016,10 @@ export async function addLayoutText() {
     // Dead centre, not the 0.9 a tile caption defaults to: a Layout is a blank
     // sheet, and something dropped at the bottom edge reads as misplaced.
     l.y = 0.5;
-    /* Centred, or it is not actually in the middle: a caption's box is a whole
-     * tile wide, and left-aligned text starts at that box's left edge however
-     * the box itself is placed. The default of "left" is right for a caption
-     * pinned along the bottom of a tile, and wrong for one dropped in the
-     * middle of a sheet. */
-    l.align = "center";
+    /* Left, like every other new caption. Centring here was right while a
+     * caption's box was a whole tile wide — left-aligned text then started at
+     * the tile's edge whatever x said — but the box hugs its own words now
+     * (see textObject), so the anchor is already where the letters are. */
     nameInStack(l, layout.layers);
     layout.layers.push(l);
     selectLayoutLayer(l.id);
