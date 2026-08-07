@@ -277,99 +277,142 @@ export type Tile = {
   swap?: Record<string, string>;
 };
 
-/** A named stack of layers and the tiles it is painted on.
+/** A cosmetic drawer in the tile list — "Done", "Season", whatever helps.
  *
- *  This is the whole point of v3. v2 had exactly two possibilities — one shared
- *  stack on every tile, or a detached copy on one — so "give these five tiles
- *  the same caption and keep editing it as one thing" could not be expressed at
- *  all. An overlay is that missing middle, and "shared" turns out to be just an
- *  overlay whose tile set is everything. */
-export type Overlay = {
+ *  Holds tile ids and nothing else. It does not render, does not stamp, and
+ *  dissolving one never touches a tile or a layer. That is the whole difference
+ *  from the Overlay it replaces, which was a tile set *and* a layer stack at
+ *  once — so reorganising the wall meant deleting artwork. */
+export type Folder = { id: string; name: string; tiles: string[] };
+
+/** One wall.
+ *
+ *  The FaceTexture folder is shared by every account on the machine, so "all
+ *  the tiles on disk" was never a wall — it was several walls in a heap, and
+ *  the app had no way to say which portrait belonged to which. A project is
+ *  that answer: which tiles belong together, and in which order.
+ *
+ *  `order` is the grid, dense: position n is the nth slot, exactly what the
+ *  game shows, and it is the coordinate system every renderer indexes by.
+ *  `shelf` is everything else the project owns — collected but not placed. The
+ *  two are disjoint, and together they are the membership. */
+export type Project = {
   id: string;
   name: string;
-  /** Tile ids this is painted on. "all" follows the folder rather than pinning
-   *  a list, so a new character picks it up instead of being silently skipped. */
-  tiles: string[] | "all";
-  layers: Layer[];
+  order: string[];
+  shelf: string[];
+  /** Grid-space layers: the picture spread across this wall. All that is left
+   *  of overlays, and the only place a layer is not tile-local. */
+  gridLayers: Layer[];
+  folders: Folder[];
 };
 
-export const appliesTo = (o: Overlay, tileId: string) =>
-  o.tiles === "all" || o.tiles.includes(tileId);
+export const newProject = (name: string): Project => ({
+  id: newId(),
+  name,
+  order: [],
+  shelf: [],
+  gridLayers: [],
+  folders: [],
+});
 
-/* --- Tile groups. A group is an overlay with a fixed tile list, and tile
- * ownership is exclusive: a tile belongs to at most one group. That is what
- * lets a group be a thing you point at and edit, instead of the v4 behaviour
- * where picking a set that differed by one tile silently produced a second,
- * near-identical overlay nobody asked for.
- *
- * An "all" overlay is deliberately outside this: it is the wall axis (the
- * picture spread across the whole grid), not a group, and every tile is under
- * it by construction. --- */
+/** Everything a project owns, placed or not. */
+export const projectTiles = (p: Project) => [...p.order, ...p.shelf];
 
-/** The group owning this tile, if any. */
-export const groupOf = (m: Manifest, tileId: string) =>
-  m.overlays.find((o) => o.tiles !== "all" && o.tiles.includes(tileId));
+/** The project owning this tile, if any. Ownership is exclusive — a character
+ *  belongs to one account — so this is an answer, not a list. */
+export const projectOf = (m: Manifest, tileId: string) =>
+  m.projects.find((p) => p.order.includes(tileId) || p.shelf.includes(tileId));
 
-/** Which of `ids` no group has claimed yet — what "add to group" may take. */
-export const freeTiles = (m: Manifest, ids: string[]) => ids.filter((id) => !groupOf(m, id));
+/** Which of `ids` no project has claimed. Derived and never stored: the folder
+ *  is where ids come from, and a stored inbox would be a second copy of that
+ *  list to keep in step with it. */
+export const inboxIds = (m: Manifest, folderIds: string[]) =>
+  folderIds.filter((id) => !projectOf(m, id));
 
-/** Adds the unclaimed tiles among `ids` to `group`, returning how many landed.
- *  Claimed ones are skipped rather than stolen: silently moving a tile out of
- *  another group would change a stamp the user cannot see from here. */
-export function addToGroup(m: Manifest, group: Overlay, ids: string[]): number {
-  if (group.tiles === "all") return 0;
-  const free = freeTiles(m, ids);
-  group.tiles = [...group.tiles, ...free];
+/** Takes a tile out of every list a project keeps it in, folders included. A
+ *  folder still naming a tile the project no longer owns is a row that cannot
+ *  be clicked and a count that lies. */
+function detach(p: Project, tileId: string) {
+  p.order = p.order.filter((t) => t !== tileId);
+  p.shelf = p.shelf.filter((t) => t !== tileId);
+  for (const f of p.folders) f.tiles = f.tiles.filter((t) => t !== tileId);
+}
+
+/** Moves the unclaimed tiles among `ids` onto a project's shelf, returning how
+ *  many landed. Claimed ones are skipped rather than stolen: taking a tile out
+ *  of another wall silently changes a wall the user is not looking at. */
+export function addToProject(m: Manifest, projectId: string, ids: string[]): number {
+  const p = m.projects.find((x) => x.id === projectId);
+  if (!p) return 0;
+  const free = inboxIds(m, ids);
+  p.shelf.push(...free);
   return free.length;
 }
 
-/** Releases a tile from its group, making it available to others again. */
-export function removeFromGroup(group: Overlay, tileId: string) {
-  if (group.tiles === "all") return;
-  group.tiles = group.tiles.filter((t) => t !== tileId);
+/** Hands a tile from whichever project holds it to another, onto its shelf.
+ *
+ *  The edit state travels for free: layers, wording and pictures live in
+ *  `m.tiles` keyed by tile id, which belongs to no project. Only membership
+ *  moves, which is why this is three list operations and not a deep copy. */
+export function moveToProject(m: Manifest, tileId: string, toId: string): boolean {
+  const to = m.projects.find((p) => p.id === toId);
+  if (!to || projectTiles(to).includes(tileId)) return false;
+  const from = projectOf(m, tileId);
+  if (from) detach(from, tileId);
+  to.shelf.push(tileId);
+  return true;
 }
 
-/** Swaps two tiles' places on the wall.
+/** Sends a tile back to the inbox.
+ *
+ *  `wipe` is the difference between "this character left this wall" and "this
+ *  id is a different character now". The game reuses a numeric id when a slot
+ *  is deleted and refilled, and the layers on it were composed for a face that
+ *  no longer exists — keeping them would dress a stranger. Only the caller
+ *  knows which happened, which is why this takes the answer rather than
+ *  guessing at it. */
+export function removeFromProjectToInbox(m: Manifest, tileId: string, wipe: boolean) {
+  const p = projectOf(m, tileId);
+  if (p) detach(p, tileId);
+  if (wipe) m.tiles[tileId] = emptyTile();
+}
+
+/** Shelf to grid.
+ *
+ *  `beforeId` is the placed tile to land in front of, or null for the end — a
+ *  position rather than an index, the same vocabulary relocateLayer uses, and
+ *  for the same reason: an index is ambiguous once the tile is lifted out of
+ *  wherever it was. Dense by construction, because the game's grid has no
+ *  holes. */
+export function placeTile(p: Project, tileId: string, beforeId: string | null) {
+  if (!projectTiles(p).includes(tileId) || tileId === beforeId) return;
+  p.shelf = p.shelf.filter((t) => t !== tileId);
+  p.order = p.order.filter((t) => t !== tileId);
+  const at = beforeId ? p.order.indexOf(beforeId) : -1;
+  p.order.splice(at < 0 ? p.order.length : at, 0, tileId);
+}
+
+/** Grid back to shelf. The tile keeps everything on it; it gives up its slot,
+ *  and the tiles after it close the gap. */
+export function unplaceTile(p: Project, tileId: string) {
+  if (!p.order.includes(tileId)) return;
+  p.order = p.order.filter((t) => t !== tileId);
+  p.shelf.push(tileId);
+}
+
+/** Swaps two placed tiles.
  *
  *  Swap, not insert: the wall mirrors the in-game character order, which is
- *  hand-built, and inserting would shift every tile after the target — one
- *  drag would then rearrange half the grid. */
-export function swapTiles(m: Manifest, a: string, b: string) {
-  const i = m.order.indexOf(a);
-  const j = m.order.indexOf(b);
+ *  hand-built, and inserting would shift every tile after the target — one drag
+ *  would then rearrange half the grid. Dropping in from the shelf is the
+ *  opposite case and does insert, because there the tile has no slot to trade. */
+export function swapPlaced(p: Project, a: string, b: string) {
+  const i = p.order.indexOf(a);
+  const j = p.order.indexOf(b);
   if (i < 0 || j < 0 || i === j) return;
-  [m.order[i], m.order[j]] = [m.order[j], m.order[i]];
+  [p.order[i], p.order[j]] = [p.order[j], p.order[i]];
 }
-
-/** Adds or removes tiles from an overlay.
- *
- *  Taking a tile away from an overlay that covers everything has to pin the
- *  list first, and adding the last missing tile collapses it back to "all" —
- *  otherwise an overlay that visibly covers the whole wall would still be a
- *  fixed list, and the next character to appear would silently miss it. */
-export function setAssigned(o: Overlay, allIds: string[], ids: string[], on: boolean) {
-  const current = new Set(coveredTiles(o, allIds));
-  for (const id of ids) {
-    if (on) current.add(id);
-    else current.delete(id);
-  }
-  assignExactly(o, allIds, [...current]);
-}
-
-/** Replaces the assignment outright: the layer lands on these tiles and no
- *  others. Adding and removing cannot express this in one step — narrowing an
- *  overlay from everything to five tiles would mean deselecting the other
- *  thirty-nine by hand. */
-export function assignExactly(o: Overlay, allIds: string[], ids: string[]) {
-  const wanted = new Set(ids);
-  const next = allIds.filter((id) => wanted.has(id));
-  o.tiles = next.length === allIds.length ? "all" : next;
-}
-
-/** The overlay's assignment as a concrete list, resolving "all" against the
- *  folder as it stands right now. */
-export const coveredTiles = (o: Overlay, allIds: string[]) =>
-  o.tiles === "all" ? [...allIds] : o.tiles.filter((id) => allIds.includes(id));
 
 /** A tile-sized composition, edited on its own — not on the wall — and kept
  *  around as a reusable document rather than being consumed the moment it is
@@ -440,11 +483,12 @@ export function layoutFingerprint(layout: Layout): string {
 export const layoutNeedsRestamp = (layout: Layout) =>
   layout.stamped !== undefined && layout.stamped !== layoutFingerprint(layout);
 
+/** Tiles are global, keyed by the id the game gave them; projects only say
+ *  which wall an id belongs to. That split is what lets a tile move between
+ *  projects without its layers, wording or pictures going anywhere. */
 export type Manifest = {
-  version: 6;
-  order: string[];
-  hidden: string[];
-  overlays: Overlay[];
+  version: 7;
+  projects: Project[];
   tiles: Record<string, Tile>;
   layouts: Layout[];
 };
@@ -452,10 +496,8 @@ export type Manifest = {
 export const emptyTile = (): Tile => ({ base: null, layers: [], text: {} });
 
 export const emptyManifest = (): Manifest => ({
-  version: 6,
-  order: [],
-  hidden: [],
-  overlays: [],
+  version: 7,
+  projects: [],
   tiles: {},
   layouts: [],
 });
@@ -468,13 +510,12 @@ export const emptyManifest = (): Manifest => ({
  *  tile?" separately is how one of the two quietly gets left out. */
 export type StampHolder = { layers: Layer[]; tiles: string[] };
 
-/** Every such place in the document. An "all" overlay reports no tiles: it is
- *  the wall axis, not a tile group, and nothing stamps into one. */
+/** Every such place in the document — one tile's own stack, and that is now the
+ *  only kind. Kept as a named concept because refresh, count and delete all ask
+ *  the same question, and asking it three times separately is how one of them
+ *  quietly stops matching the others. */
 export function stampHolders(m: Manifest): StampHolder[] {
-  return [
-    ...m.overlays.map((o) => ({ layers: o.layers, tiles: o.tiles === "all" ? [] : o.tiles })),
-    ...Object.entries(m.tiles).map(([id, t]) => ({ layers: t.layers, tiles: [id] })),
-  ];
+  return Object.entries(m.tiles).map(([id, t]) => ({ layers: t.layers, tiles: [id] }));
 }
 
 /** Every place holding a stamp of this layout — what "Update stamps" has to
@@ -539,13 +580,6 @@ export function refreshStamps(m: Manifest, layoutId: string, asset: string): num
   }
   return n;
 }
-
-export const newOverlay = (name: string, tiles: string[] | "all" = "all"): Overlay => ({
-  id: newId(),
-  name,
-  tiles,
-  layers: [],
-});
 
 export const newId = () => Math.random().toString(36).slice(2, 10);
 
@@ -636,27 +670,18 @@ export const layerLabel = (l: Layer) => {
   return l.asset.replace(/\.[^.]+$/, "").slice(0, 8);
 };
 
-/** Every overlay that covers this tile, in overlay order then layer order, each
- *  layer replaced by the tile's detached copy where one exists. Tile-only layers
- *  follow on top. */
-export function resolveLayers(m: Manifest, id: string): Layer[] {
-  const tile = m.tiles[id] ?? emptyTile();
-  const local = new Map(tile.layers.map((l) => [l.id, l]));
-  const inherited: Layer[] = [];
-  const fromOverlay = new Set<string>();
-  for (const o of m.overlays) {
-    if (!appliesTo(o, id)) continue;
-    for (const l of o.layers) {
-      fromOverlay.add(l.id);
-      inherited.push(local.get(l.id) ?? l);
-    }
-  }
-  return [...inherited, ...tile.layers.filter((l) => !fromOverlay.has(l.id))];
-}
+/** What a tile draws, bottom-first.
+ *
+ *  One line, and it used to be twenty: a tile inherited from every overlay
+ *  covering it, with per-tile copies replacing inherited layers by id. Layouts
+ *  are assigned per tile now, so a tile's own stack is the whole story — and a
+ *  layer exists in exactly one place, which is what retired the "moved one
+ *  copy, the other four are stale" class of bug outright. Grid-space layers
+ *  belong to the project and are drawn once over the whole wall, not per tile. */
+export const resolveLayers = (m: Manifest, id: string): Layer[] => m.tiles[id]?.layers ?? [];
 
-/** Exactly what a tile renders to, shared layers folded in. Comparing this
- *  against what was last written is what makes a shared-layer edit mark every
- *  tile dirty without any extra bookkeeping. */
+/** Exactly what a tile renders to. Comparing this against what was last written
+ *  is what marks a tile dirty without any extra bookkeeping. */
 export const effectiveTile = (m: Manifest, id: string) => ({
   base: m.tiles[id]?.base ?? null,
   layers: resolveLayers(m, id),
@@ -664,43 +689,6 @@ export const effectiveTile = (m: Manifest, id: string) => ({
 });
 
 export type Effective = ReturnType<typeof effectiveTile>;
-
-export const isDetached = (m: Manifest, id: string, layerId: string) =>
-  m.overlays.some((o) => appliesTo(o, id) && o.layers.some((l) => l.id === layerId)) &&
-  (m.tiles[id]?.layers.some((l) => l.id === layerId) ?? false);
-
-/** The tiles that are actually drawn, in grid order. */
-export const visibleTiles = (m: Manifest) => m.order.filter((id) => !m.hidden.includes(id));
-
-/** How many times the canvas draws a layer.
- *
- *  A layer in an overlay covering five tiles exists once in the document and
- *  five times on screen. Anything that changes it has to know which, because
- *  moving one copy leaves the other four stale until the scene rebuilds. */
-export function instanceCount(m: Manifest, layerId: string, space: "tile" | "grid"): number {
-  if (space === "grid") return 1;
-  const overlay = overlayOf(m, layerId);
-  if (!overlay) return 1; // tile-local: exists on exactly one tile
-  return overlay.tiles === "all" ? visibleTiles(m).length : overlay.tiles.length;
-}
-
-/** An existing overlay covering exactly these tiles, order irrelevant.
- *
- *  Without this, picking the same five tiles twice would leave two overlays
- *  with identical assignments that then have to be kept in step by hand. An
- *  "all" overlay never matches a list, even one naming every tile: the two
- *  differ in what happens when a character is added. */
-export function overlayCovering(overlays: Overlay[], ids: string[]): Overlay | undefined {
-  const wanted = [...new Set(ids)].sort().join(" ");
-  return overlays.find(
-    (o) => o.tiles !== "all" && [...new Set(o.tiles)].sort().join(" ") === wanted,
-  );
-}
-
-/** The overlay a layer belongs to, if it is not tile-local. Searches nested
- *  layers too, so a layer inside a group still resolves to its overlay. */
-export const overlayOf = (m: Manifest, layerId: string) =>
-  m.overlays.find((o) => !!findLayer(o.layers, layerId));
 
 /** What one tile's copy of a caption actually says.
  *
@@ -798,23 +786,75 @@ export function syncLiveLayers(into: { layers: Layer[] }, layout: Layout): numbe
  *  deleted wholesale, which BDO answers by regenerating it with different ids.
  *  The folder always wins: what it no longer has, the manifest stops naming.
  *
- *  Groups are pruned too, which they were not: they kept ids nothing had, and
- *  listed them as members. An emptied group is left standing rather than
- *  removed — deleting someone's group because a character was is a decision
- *  the folder does not get to make, and an empty group is one click away from
- *  gone. An "all" overlay is the wall axis and follows the folder by
- *  construction, so it has no list to prune.
+ *  Every list naming a tile is pruned — a project's grid and shelf, and the
+ *  cosmetic folders inside it — because a project keeping an id nothing has
+ *  leaves a hole in the wall and a row that cannot be clicked. An emptied
+ *  project or folder is left standing: deleting someone's wall because a
+ *  character was deleted is not a decision the folder gets to make.
+ *
+ *  Ids the folder has and no project claims simply become the inbox, which is
+ *  derived rather than stored and so needs nothing done to it here.
  *
  *  Pure surgery, no filesystem: loadManifest supplies the ids. */
 export function pruneToFolder(m: Manifest, ids: string[]): Manifest {
-  m.order = [...m.order.filter((id) => ids.includes(id)), ...ids.filter((id) => !m.order.includes(id))];
-  m.hidden = m.hidden.filter((id) => ids.includes(id));
-  for (const id of Object.keys(m.tiles)) if (!ids.includes(id)) delete m.tiles[id];
+  const has = new Set(ids);
+  for (const id of Object.keys(m.tiles)) if (!has.has(id)) delete m.tiles[id];
   for (const id of ids) m.tiles[id] ??= emptyTile();
-  for (const o of m.overlays) {
-    if (o.tiles !== "all") o.tiles = o.tiles.filter((id) => ids.includes(id));
+  for (const p of m.projects) {
+    p.order = p.order.filter((id) => has.has(id));
+    p.shelf = p.shelf.filter((id) => has.has(id));
+    for (const f of p.folders) f.tiles = f.tiles.filter((id) => has.has(id));
   }
   return m;
+}
+
+/** Drops live layers whose stamp is gone.
+ *
+ *  A Layout keeps its per-tile captions and pictures beside the stamp it
+ *  rendered, and syncLiveLayers is only ever called where a stamp of the same
+ *  layout already sits. So a live layer whose layoutId has no stamp in the same
+ *  stack cannot have been put there on purpose — it is what deleting the stamp
+ *  left behind, before the delete learned to take them along.
+ *
+ *  Invisible ones, at that: the list hides live captions because the stamp row
+ *  speaks for them, and with no stamp row nothing did. Four tiles on the real
+ *  wall carried captions that rendered, could not be selected, and could not be
+ *  deleted. Run on load, so a wall repairs itself rather than needing the user
+ *  to go looking. */
+export function dropOrphanLiveLayers(tile: Tile): number {
+  const stamped = new Set(
+    tile.layers.filter((l) => l.kind === "image" && l.layoutId && !l.live).map((l) => l.layoutId),
+  );
+  const before = tile.layers.length;
+  tile.layers = tile.layers.filter((l) => !(l.layoutId && !stamped.has(l.layoutId)));
+  return before - tile.layers.length;
+}
+
+/** Deletes a stamp and every live layer the same Layout keeps beside it.
+ *
+ *  They are copies the Layout owns, not artwork of the tile's own: without the
+ *  stamp they belong to nothing, and no list shows them, so leaving them behind
+ *  produced captions that drew on the wall with no row and no way out. One
+ *  click, one undo step, the whole assignment gone. */
+export function deleteStampCascade(layers: Layer[], stampId: string): number {
+  const stamp = layers.find((l) => l.id === stampId);
+  const owner = stamp?.kind === "image" && !stamp.live ? stamp.layoutId : undefined;
+  let n = 0;
+  /* Spliced in place rather than returned as a new array: the caller hands us a
+   * live Svelte $state array. Backwards, so removing one does not shift the
+   * index of the next.
+   *
+   * Text counts as a copy with or without the `live` flag, the same rule
+   * syncLiveLayers withdraws by: a stamp is never text, and a caption written
+   * before the flag existed can never gain it. */
+  for (let i = layers.length - 1; i >= 0; i--) {
+    const l = layers[i];
+    const copy = owner !== undefined && l.layoutId === owner && (l.live || l.kind === "text");
+    if (l.id !== stampId && !copy) continue;
+    layers.splice(i, 1);
+    n++;
+  }
+  return n;
 }
 
 /** Writes baked crops into their tiles' `base` and removes the mosaic layer
@@ -827,16 +867,19 @@ export function pruneToFolder(m: Manifest, ids: string[]): Manifest {
  *  the picture's natural pixel size (to feed mosaicBakeCrops) needs it. */
 export function bakeMosaicInto(
   m: Manifest,
+  project: Project,
   layerId: string,
   asset: string,
   crops: Map<number, Crop>,
-  order: string[],
 ) {
+  /* The crop map is keyed by grid index, so it and the project must be the same
+   * one mosaicBakeCrops was measured against — that is why the project is
+   * passed rather than a loose id list. */
   for (const [index, crop] of crops) {
-    m.tiles[order[index]].base = { asset, crop };
+    const id = project.order[index];
+    if (m.tiles[id]) m.tiles[id].base = { asset, crop };
   }
-  const overlay = overlayOf(m, layerId);
-  if (overlay) removeLayerFrom(overlay.layers, layerId);
+  removeLayerFrom(project.gridLayers, layerId);
 }
 
 /** Drops every baked mosaic background, so each tile shows its own portrait
@@ -904,8 +947,76 @@ function toV6(m: Raw): Raw {
   };
 }
 
+/** A v6 overlay, kept only so the migration can read one. Nothing else in the
+ *  codebase knows the type any more. */
+type V6Overlay = { id: string; name: string; tiles: string[] | "all"; layers: Layer[] };
+
+/** v6 → v7: everything lands in one project called "Main".
+ *
+ *  The arrangement is what must survive. `order` was built by hand to match the
+ *  game's own grid — half an hour of dragging that nobody should repeat — so it
+ *  becomes Main's grid verbatim. Hidden tiles keep their membership but give up
+ *  their slot: the grid is dense now, and `hidden` was only ever a way of
+ *  keeping a tile out of it.
+ *
+ *  Overlays are folded down onto the tiles they covered, because there is
+ *  nowhere else left for them to live. A group's stack is copied onto each
+ *  member — cloned, or all of them would share one layer object and moving one
+ *  would move the lot — keeping layer ids, since per-tile wording and pictures
+ *  are keyed by exactly those. Where a tile already had its own copy of a
+ *  layer, that copy wins: it is what v6's resolveLayers drew, and a migration
+ *  must not change what anyone sees. Grid-space layers go to the project, which
+ *  is where a picture spread across the wall belongs now.
+ *
+ *  Then every tile is swept for live layers whose stamp is gone. Four tiles on
+ *  the real wall carried captions that rendered but could be neither selected
+ *  nor deleted, and a migration is the right place to stop carrying them. */
+function toV7(m: Raw): Raw {
+  /* Deep, not a spread: the tiles are rewritten in place below — layers
+   * prepended, orphans swept — and a shallow copy hands back the caller's own
+   * objects to do it to. A migration that edits its input is a trap for every
+   * caller that reads a file once and migrates it twice. */
+  const tiles = clone((m.tiles ?? {}) as Record<string, Tile>);
+  const overlays = (m.overlays ?? []) as V6Overlay[];
+  const order = (m.order as string[]) ?? [];
+  const hidden = new Set((m.hidden as string[]) ?? []);
+
+  const main = newProject("Main");
+  main.order = order.filter((id) => !hidden.has(id));
+  main.shelf = order.filter((id) => hidden.has(id));
+
+  /* Gathered per tile before anything is written, so one overlay's layers keep
+   * their order among themselves. Prepending them one at a time as they were
+   * found would have reversed every stack. */
+  const inherited = new Map<string, Layer[]>();
+  for (const o of overlays) {
+    const covered = o.tiles === "all" ? order : o.tiles;
+    for (const l of o.layers) {
+      if (l.space === "grid") {
+        main.gridLayers.push(clone(l));
+        continue;
+      }
+      for (const id of covered) {
+        const list = inherited.get(id) ?? [];
+        list.push(clone(l));
+        inherited.set(id, list);
+      }
+    }
+  }
+  for (const [id, list] of inherited) {
+    const tile = (tiles[id] ??= emptyTile());
+    const own = new Set(tile.layers.map((l) => l.id));
+    tile.layers = [...list.filter((l) => !own.has(l.id)), ...tile.layers];
+  }
+
+  for (const tile of Object.values(tiles)) dropOrphanLiveLayers(tile);
+
+  return { version: 7, projects: [main], tiles, layouts: (m.layouts ?? []) as Layout[] };
+}
+
 export function migrate(raw: unknown): Manifest {
   const m = raw as Raw | null;
   if (!m || typeof m !== "object") return emptyManifest();
-  return { ...emptyManifest(), ...(m.version === 6 ? m : toV6(m)) } as Manifest;
+  if (m.version === 7) return { ...emptyManifest(), ...m } as Manifest;
+  return { ...emptyManifest(), ...toV7(m.version === 6 ? m : toV6(m)) } as Manifest;
 }

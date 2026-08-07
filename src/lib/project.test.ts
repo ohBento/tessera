@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { emptyManifest } from "./model";
+import { emptyManifest, newProject, projectOf } from "./model";
 
 /* The caches in project.ts hold promises, not values. A rejected one used to
  * stay cached, so one unlucky read became permanent — and because the render
@@ -105,26 +105,38 @@ describe("a failed read does not poison the cache", () => {
   });
 });
 
-describe("loadManifest lines the project up with the folder", () => {
+describe("loadManifest lines the manifest up with the folder", () => {
   /* The folder is the authority: characters come and go between sessions, and
-   * the whole folder can be deleted and regenerated. Groups were the one thing
-   * that did not follow — they kept ids nothing had and listed them as
-   * members, which is what left junk behind after a folder was deleted. Driven
-   * through the real entry point, because the pruning being *called* is the
-   * half a unit test of the pruning cannot show. */
-  const stored = (tiles: string[]) => {
+   * the whole folder can be deleted and regenerated. Driven through the real
+   * entry point, because the pruning being *called* is the half a unit test of
+   * the pruning cannot show. */
+  const stored = () => {
     const m = emptyManifest();
-    m.order = ["a", "b", "c"];
-    m.tiles = { a: { base: null, layers: [], text: {} }, b: { base: null, layers: [], text: {} }, c: { base: null, layers: [], text: {} } };
-    m.overlays = [{ id: "g1", name: "G", tiles, layers: [] }];
+    const p = newProject("Main");
+    p.order = ["a", "b"];
+    p.shelf = ["c"];
+    p.folders = [{ id: "f1", name: "Done", tiles: ["a", "b"] }];
+    m.projects = [p];
+    for (const id of ["a", "b", "c"]) m.tiles[id] = { base: null, layers: [], text: {} };
     return JSON.stringify(m);
   };
 
-  it("drops group members the folder no longer has", async () => {
+  it("drops tiles the folder no longer has from grid, shelf and drawers", async () => {
     const platform = await import("./platform");
-    vi.mocked(platform.readTextFile).mockResolvedValueOnce(stored(["a", "b"]));
+    vi.mocked(platform.readTextFile).mockResolvedValueOnce(stored());
     const m = await loadManifest("/docs/FaceTexture", ["a", "c"]);
-    expect(m.overlays[0].tiles).toEqual(["a"]);
-    expect(m.order).toEqual(["a", "c"]);
+    const p = m.projects[0];
+    expect(p.order).toEqual(["a"]);
+    expect(p.shelf).toEqual(["c"]);
+    expect(p.folders[0].tiles).toEqual(["a"]);
+  });
+
+  it("adopts an id the folder has and no project claims", async () => {
+    // That is all the inbox is: what nothing has taken. Nothing stores it.
+    const platform = await import("./platform");
+    vi.mocked(platform.readTextFile).mockResolvedValueOnce(stored());
+    const m = await loadManifest("/docs/FaceTexture", ["a", "b", "c", "neu"]);
+    expect(Object.keys(m.tiles)).toContain("neu");
+    expect(projectOf(m, "neu")).toBeUndefined();
   });
 });

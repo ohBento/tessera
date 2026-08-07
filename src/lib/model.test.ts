@@ -1,348 +1,406 @@
 import { describe, expect, it } from "vitest";
 import {
-  assignExactly,
+  addToProject,
   bakeMosaicInto,
-  coveredTiles,
   DEFAULT_IMAGE_SCALE,
   DEFAULT_SHAPE_SIZE,
   DEFAULT_TEXT_SIZE,
+  deleteStampCascade,
+  dropOrphanLiveLayers,
   effectiveTile,
   emptyManifest,
   emptyTile,
-  addToGroup,
   bakeable,
   duplicateLayout,
   findLayer,
   findList,
-  freeTiles,
-  groupOf,
-  instanceCount,
-  isDetached,
+  inboxIds,
   layerLabel,
   layerAsset,
   layerText,
   migrate,
+  moveToProject,
   nestingShift,
   newGroupLayer,
   newImageLayer,
   layoutFingerprint,
   layoutNeedsRestamp,
   newLayout,
-  newOverlay,
+  newProject,
   newShapeLayer,
   newTextLayer,
-  overlayCovering,
-  overlayOf,
+  placeTile,
+  projectOf,
+  projectTiles,
   clearBases,
   holdersUsingLayout,
   pruneToFolder,
+  removeFromProjectToInbox,
   tilesUsingLayout,
   refreshStamps,
   relocateLayer,
-  removeFromGroup,
   stampInto,
-  swapTiles,
+  swapPlaced,
   syncLiveLayers,
   type ImageLayer,
   removeLayerFrom,
-  setAssigned,
   resetTransform,
   resolveLayers,
+  unplaceTile,
   walkLayers,
   type Layer,
   type Manifest,
   type TextLayer,
 } from "./model";
 
-/** Three tiles and one overlay covering all of them — the v2 "shared" case,
- *  which v3 expresses as an overlay whose tile set is everything. */
-const withOverlay = (tiles: string[] | "all" = "all"): Manifest => {
+/** Three tiles in one project, the shape everything below starts from. */
+const withProject = (): Manifest => {
   const m = emptyManifest();
-  m.order = ["a", "b", "c"];
+  const p = newProject("Main");
+  p.order = ["a", "b", "c"];
+  m.projects = [p];
   m.tiles = { a: emptyTile(), b: emptyTile(), c: emptyTile() };
-  m.overlays = [{ ...newOverlay("Alle", tiles), layers: [{ ...newTextLayer(), id: "s1", text: "shared" }] }];
   return m;
 };
 
-const overlayLayer = (m: Manifest) => m.overlays[0].layers[0] as TextLayer;
+const main = (m: Manifest) => m.projects[0];
 
 describe("resolveLayers", () => {
-  it("puts an all-tiles overlay on every tile", () => {
-    const m = withOverlay();
-    for (const id of m.order) expect(resolveLayers(m, id).map((l) => l.id)).toEqual(["s1"]);
-  });
-
-  it("puts a subset overlay only on the tiles it names", () => {
-    const m = withOverlay(["a", "c"]);
-    expect(resolveLayers(m, "a").map((l) => l.id)).toEqual(["s1"]);
+  it("is the tile's own stack and nothing else", () => {
+    /* v6 inherited from every overlay covering the tile, with per-tile copies
+     * replacing inherited layers by id. Layouts are assigned per tile now, so a
+     * layer exists in exactly one place — which is what retired the whole
+     * "moved one copy, the other four are stale" class of bug. */
+    const m = withProject();
+    m.tiles.a.layers.push({ ...newTextLayer(), id: "own" });
+    expect(resolveLayers(m, "a").map((l) => l.id)).toEqual(["own"]);
     expect(resolveLayers(m, "b")).toEqual([]);
-    expect(resolveLayers(m, "c").map((l) => l.id)).toEqual(["s1"]);
   });
 
-  it("stacks several overlays in their own order", () => {
-    const m = withOverlay();
-    m.overlays.push({ ...newOverlay("Obendrauf", ["b"]), layers: [{ ...newTextLayer(), id: "t2" }] });
-    expect(resolveLayers(m, "a").map((l) => l.id)).toEqual(["s1"]);
-    expect(resolveLayers(m, "b").map((l) => l.id)).toEqual(["s1", "t2"]);
-  });
-
-  it("lets a detached copy replace the overlay's layer on that tile only", () => {
-    const m = withOverlay();
-    m.tiles.a.layers.push({ ...overlayLayer(m), text: "local" });
-
-    expect((resolveLayers(m, "a")[0] as TextLayer).text).toBe("local");
-    expect((resolveLayers(m, "b")[0] as TextLayer).text).toBe("shared");
-    expect(resolveLayers(m, "a")).toHaveLength(1); // replaced, not added
-    expect(isDetached(m, "a", "s1")).toBe(true);
-    expect(isDetached(m, "b", "s1")).toBe(false);
-  });
-
-  it("does not count a detached copy on a tile the overlay never covered", () => {
-    const m = withOverlay(["a"]);
-    m.tiles.b.layers.push({ ...overlayLayer(m), text: "orphan" });
-    expect(isDetached(m, "b", "s1")).toBe(false);
-    // It is simply a tile-local layer there, not an override of anything.
-    expect(resolveLayers(m, "b").map((l) => l.id)).toEqual(["s1"]);
-  });
-
-  it("keeps tile-only layers on top of inherited ones", () => {
-    const m = withOverlay();
-    m.tiles.a.layers.push({ ...newTextLayer(), id: "own" });
-    expect(resolveLayers(m, "a").map((l) => l.id)).toEqual(["s1", "own"]);
+  it("answers for a tile the manifest has never heard of", () => {
+    expect(resolveLayers(emptyManifest(), "ghost")).toEqual([]);
   });
 });
 
-describe("setAssigned", () => {
-  const all = ["a", "b", "c"];
-
-  it("pins the list when a tile is taken away from an all-tiles overlay", () => {
-    const o = newOverlay("x");
-    setAssigned(o, all, ["b"], false);
-    expect(o.tiles).toEqual(["a", "c"]);
+describe("projects own tiles exclusively", () => {
+  it("reports the owner, and the inbox is what no project claims", () => {
+    const m = withProject();
+    main(m).shelf.push("d");
+    expect(projectOf(m, "a")?.name).toBe("Main");
+    expect(projectOf(m, "d")?.name).toBe("Main"); // shelf counts as membership
+    expect(projectOf(m, "e")).toBeUndefined();
+    expect(inboxIds(m, ["a", "d", "e", "f"])).toEqual(["e", "f"]);
   });
 
-  it("collapses back to all when the last missing tile is added", () => {
-    const o = newOverlay("x", ["a", "c"]);
-    setAssigned(o, all, ["b"], true);
-    // Not ["a","b","c"] — a pinned list would silently skip the next character
-    // the folder gains, while "all" follows it.
-    expect(o.tiles).toBe("all");
+  it("adds only unclaimed tiles, and says how many landed", () => {
+    const m = withProject();
+    const other = newProject("Other");
+    m.projects.push(other);
+    // "a" already belongs to Main: skipped rather than stolen, because taking
+    // it would change a wall the user is not looking at.
+    expect(addToProject(m, other.id, ["a", "x", "y"])).toBe(2);
+    expect(other.shelf).toEqual(["x", "y"]);
+    expect(main(m).order).toContain("a");
   });
 
-  it("keeps the folder's order rather than the order tiles were clicked", () => {
-    const o = newOverlay("x", []);
-    setAssigned(o, all, ["c", "a"], true);
-    expect(o.tiles).toEqual(["a", "c"]);
+  it("moves a tile between projects, leaving its edit state alone", () => {
+    const m = withProject();
+    m.tiles.a.layers.push({ ...newTextLayer(), id: "keep" });
+    const other = newProject("Other");
+    m.projects.push(other);
+
+    expect(moveToProject(m, "a", other.id)).toBe(true);
+    expect(main(m).order).toEqual(["b", "c"]);
+    expect(other.shelf).toEqual(["a"]);
+    // Layers live in m.tiles, which belongs to no project — so they travel for
+    // free, and that is the whole reason membership is kept apart from content.
+    expect(m.tiles.a.layers.map((l) => l.id)).toEqual(["keep"]);
   });
 
-  it("ignores tiles already in or already out", () => {
-    const o = newOverlay("x", ["a"]);
-    setAssigned(o, all, ["a"], true);
-    expect(o.tiles).toEqual(["a"]);
-    setAssigned(o, all, ["b"], false);
-    expect(o.tiles).toEqual(["a"]);
+  it("refuses to move a tile into the project that already has it", () => {
+    const m = withProject();
+    expect(moveToProject(m, "a", main(m).id)).toBe(false);
+    expect(main(m).order).toEqual(["a", "b", "c"]);
   });
 
-  it("can empty an overlay completely", () => {
-    const o = newOverlay("x");
-    setAssigned(o, all, all, false);
-    expect(o.tiles).toEqual([]);
+  it("takes a tile out of its folders too, not just the grid", () => {
+    const m = withProject();
+    main(m).folders.push({ id: "f1", name: "Done", tiles: ["a", "b"] });
+    const other = newProject("Other");
+    m.projects.push(other);
+
+    moveToProject(m, "a", other.id);
+    // A folder still naming a tile the project no longer owns is a row that
+    // cannot be clicked and a count that lies.
+    expect(main(m).folders[0].tiles).toEqual(["b"]);
   });
 
-  it("drops tiles the folder no longer has", () => {
-    const o = newOverlay("x", ["a", "gone"]);
-    setAssigned(o, all, ["b"], true);
-    expect(o.tiles).toEqual(["a", "b"]);
-  });
-});
+  it("sends a tile back to the inbox, keeping its work unless told otherwise", () => {
+    const m = withProject();
+    m.tiles.a.layers.push({ ...newTextLayer(), id: "keep" });
 
-describe("instanceCount", () => {
-  it("counts one copy per tile an overlay covers", () => {
-    const m = withOverlay(["a", "c"]);
-    expect(instanceCount(m, "s1", "tile")).toBe(2);
+    removeFromProjectToInbox(m, "a", false);
+    expect(projectOf(m, "a")).toBeUndefined();
+    expect(m.tiles.a.layers).toHaveLength(1);
   });
 
-  it("follows the folder for an all-tiles overlay, minus hidden tiles", () => {
-    const m = withOverlay();
-    expect(instanceCount(m, "s1", "tile")).toBe(3);
-    m.hidden = ["b"];
-    expect(instanceCount(m, "s1", "tile")).toBe(2);
-  });
+  it("wipes the tile when the id turned out to be a different character", () => {
+    /* The game reuses a numeric id when a character slot is deleted and
+     * refilled. The layers on it were composed for a face that no longer
+     * exists — keeping them would dress a stranger. */
+    const m = withProject();
+    m.tiles.a.layers.push({ ...newTextLayer(), id: "stale" });
+    m.tiles.a.text = { stale: "Alter Name" };
 
-  it("counts a grid-space layer once however many tiles it spans", () => {
-    const m = withOverlay();
-    expect(instanceCount(m, "s1", "grid")).toBe(1);
-  });
-
-  it("counts a tile-local layer once", () => {
-    const m = withOverlay();
-    m.tiles.a.layers.push({ ...newTextLayer(), id: "own" });
-    expect(instanceCount(m, "own", "tile")).toBe(1);
-  });
-});
-
-describe("assignExactly", () => {
-  const all = ["a", "b", "c"];
-
-  it("narrows an all-tiles overlay to just the named ones", () => {
-    const o = newOverlay("x");
-    assignExactly(o, all, ["b"]);
-    expect(o.tiles).toEqual(["b"]);
-  });
-
-  it("collapses to all when the selection is everything", () => {
-    const o = newOverlay("x", ["a"]);
-    assignExactly(o, all, ["c", "b", "a"]);
-    expect(o.tiles).toBe("all");
-  });
-
-  it("keeps folder order and drops unknown ids", () => {
-    const o = newOverlay("x", []);
-    assignExactly(o, all, ["c", "ghost", "a"]);
-    expect(o.tiles).toEqual(["a", "c"]);
+    removeFromProjectToInbox(m, "a", true);
+    expect(m.tiles.a).toEqual(emptyTile());
   });
 });
 
-describe("coveredTiles", () => {
-  const all = ["a", "b", "c"];
+describe("the two invariants hold whatever order things are done in", () => {
+  /* Everything downstream leans on these. `order` is the grid's coordinate
+   * system — scene, export and hit-testing all index into it independently —
+   * so a tile appearing twice, or in two projects, is not a cosmetic error: it
+   * is two renderers disagreeing about which portrait sits in slot 7. Checked
+   * as a property over a run of operations rather than case by case, because
+   * the ways to break it are combinations, not single calls. */
+  const invariants = (m: Manifest) => {
+    const seen = new Set<string>();
+    for (const p of m.projects) {
+      expect(new Set(p.order).size).toBe(p.order.length); // no duplicate slots
+      for (const id of projectTiles(p)) {
+        expect(p.order.includes(id) && p.shelf.includes(id)).toBe(false); // disjoint
+        expect(seen.has(id)).toBe(false); // owned by at most one project
+        seen.add(id);
+      }
+    }
+  };
 
-  it("resolves all against the folder as it stands", () => {
-    expect(coveredTiles(newOverlay("x"), all)).toEqual(all);
-  });
+  it("survives adding, placing, moving and releasing in any mixture", () => {
+    const m = emptyManifest();
+    const a = newProject("A");
+    const b = newProject("B");
+    m.projects = [a, b];
+    for (const id of ["t0", "t1", "t2", "t3"]) m.tiles[id] = emptyTile();
 
-  it("hides ids the folder no longer has", () => {
-    expect(coveredTiles(newOverlay("x", ["a", "gone"]), all)).toEqual(["a"]);
+    const steps: Array<() => void> = [
+      () => addToProject(m, a.id, ["t0", "t1", "t2", "t3"]),
+      () => placeTile(a, "t0", null),
+      () => placeTile(a, "t1", "t0"),
+      () => addToProject(m, b.id, ["t2"]), // already A's: must be refused
+      () => moveToProject(m, "t2", b.id),
+      () => placeTile(b, "t2", null),
+      () => swapPlaced(a, "t0", "t1"),
+      () => unplaceTile(a, "t1"),
+      () => moveToProject(m, "t0", b.id),
+      () => removeFromProjectToInbox(m, "t3", false),
+      () => placeTile(a, "t1", null),
+      () => moveToProject(m, "t2", a.id),
+    ];
+    for (const step of steps) {
+      step();
+      invariants(m);
+    }
+
+    // And the run really did move things about, or the check proves nothing.
+    expect(projectTiles(a).length + projectTiles(b).length).toBe(3);
+    expect(projectOf(m, "t3")).toBeUndefined();
   });
 });
 
-describe("overlayCovering", () => {
-  it("matches the same tiles in any order", () => {
-    const o = newOverlay("x", ["c", "a"]);
-    expect(overlayCovering([o], ["a", "c"])).toBe(o);
-    expect(overlayCovering([o], ["a", "c", "a"])).toBe(o);
+describe("placing tiles in the grid", () => {
+  it("moves a shelf tile in front of the named one and closes no holes", () => {
+    const m = withProject();
+    const p = main(m);
+    p.shelf = ["x"];
+    placeTile(p, "x", "b");
+    expect(p.order).toEqual(["a", "x", "b", "c"]);
+    expect(p.shelf).toEqual([]);
   });
 
-  it("does not match a different set", () => {
-    const o = newOverlay("x", ["a", "c"]);
-    expect(overlayCovering([o], ["a"])).toBeUndefined();
-    expect(overlayCovering([o], ["a", "b", "c"])).toBeUndefined();
+  it("appends when there is nothing to land in front of", () => {
+    const m = withProject();
+    const p = main(m);
+    p.shelf = ["x"];
+    placeTile(p, "x", null);
+    expect(p.order).toEqual(["a", "b", "c", "x"]);
   });
 
-  it("never matches an all-tiles overlay, even against a list naming everything", () => {
-    // The two differ in what happens when a character appears: "all" picks it
-    // up, a list does not. Collapsing them would silently change behaviour.
-    expect(overlayCovering([newOverlay("x")], ["a", "b"])).toBeUndefined();
+  it("re-places an already placed tile without duplicating it", () => {
+    const m = withProject();
+    const p = main(m);
+    placeTile(p, "c", "a");
+    expect(p.order).toEqual(["c", "a", "b"]);
+  });
+
+  it("ignores a tile the project does not own, and a drop onto itself", () => {
+    const m = withProject();
+    const p = main(m);
+    placeTile(p, "stranger", "a");
+    placeTile(p, "b", "b");
+    expect(p.order).toEqual(["a", "b", "c"]);
+  });
+
+  it("unplaces back to the shelf, and the grid closes up", () => {
+    const m = withProject();
+    const p = main(m);
+    unplaceTile(p, "b");
+    expect(p.order).toEqual(["a", "c"]);
+    expect(p.shelf).toEqual(["b"]);
+  });
+
+  it("swaps two placed tiles rather than shifting the rest", () => {
+    // The wall mirrors a hand-built in-game order; inserting would rearrange
+    // everything after the target on a single drag.
+    const m = withProject();
+    swapPlaced(main(m), "a", "c");
+    expect(main(m).order).toEqual(["c", "b", "a"]);
+  });
+
+  it("leaves the order alone when a swap partner is not placed", () => {
+    const m = withProject();
+    main(m).shelf = ["x"];
+    swapPlaced(main(m), "a", "x");
+    expect(main(m).order).toEqual(["a", "b", "c"]);
+  });
+});
+
+describe("dropOrphanLiveLayers", () => {
+  const stamp = (layoutId: string) => ({ ...newImageLayer("sheet.png"), layoutId });
+  const caption = (layoutId: string) => ({ ...newTextLayer(), layoutId, live: true });
+
+  it("drops a live caption whose stamp is gone", () => {
+    /* Deleting a stamp used to leave its captions behind, and the list hides
+     * live captions because the stamp row speaks for them — with no stamp row
+     * nothing did. Four tiles on the real wall carried captions that rendered,
+     * could not be selected and could not be deleted. */
+    const tile = { ...emptyTile(), layers: [caption("L1")] };
+    expect(dropOrphanLiveLayers(tile)).toBe(1);
+    expect(tile.layers).toEqual([]);
+  });
+
+  it("keeps a live caption that still has its stamp", () => {
+    const tile = { ...emptyTile(), layers: [stamp("L1"), caption("L1")] };
+    expect(dropOrphanLiveLayers(tile)).toBe(0);
+    expect(tile.layers).toHaveLength(2);
+  });
+
+  it("never touches a layer the user made by hand", () => {
+    const tile = { ...emptyTile(), layers: [newTextLayer(), newImageLayer("own.png")] };
+    expect(dropOrphanLiveLayers(tile)).toBe(0);
+    expect(tile.layers).toHaveLength(2);
+  });
+
+  it("drops a caption written before the live flag existed", () => {
+    // Legacy shape: text with a layoutId and no `live`. It can never gain the
+    // flag afterwards, so a rule that required it would orphan these forever.
+    const legacy = { ...newTextLayer(), layoutId: "L1" };
+    const tile = { ...emptyTile(), layers: [legacy] };
+    expect(dropOrphanLiveLayers(tile)).toBe(1);
+  });
+});
+
+describe("deleteStampCascade", () => {
+  it("takes the layout's live layers with the stamp", () => {
+    const s = { ...newImageLayer("sheet.png"), layoutId: "L1" };
+    const cap = { ...newTextLayer(), layoutId: "L1", live: true };
+    const logo = { ...newImageLayer("logo.png"), layoutId: "L1", live: true };
+    const mine = { ...newTextLayer(), id: "mine" };
+    const layers: Layer[] = [s, cap, logo, mine];
+
+    expect(deleteStampCascade(layers, s.id)).toBe(3);
+    expect(layers.map((l) => l.id)).toEqual(["mine"]);
+  });
+
+  it("leaves another layout's stamp and captions alone", () => {
+    const s1 = { ...newImageLayer("a.png"), layoutId: "L1" };
+    const s2 = { ...newImageLayer("b.png"), layoutId: "L2" };
+    const cap2 = { ...newTextLayer(), layoutId: "L2", live: true };
+    const layers: Layer[] = [s1, s2, cap2];
+
+    deleteStampCascade(layers, s1.id);
+    expect(layers.map((l) => l.id)).toEqual([s2.id, cap2.id]);
+  });
+
+  it("deletes an ordinary layer without dragging anything along", () => {
+    const plain = { ...newImageLayer("hand.png"), id: "plain" };
+    const cap = { ...newTextLayer(), layoutId: "L1", live: true };
+    const layers: Layer[] = [plain, cap];
+
+    expect(deleteStampCascade(layers, "plain")).toBe(1);
+    expect(layers.map((l) => l.id)).toEqual([cap.id]);
   });
 });
 
 describe("bakeMosaicInto", () => {
-  it("writes each crop into its tile's base", () => {
-    const m = emptyManifest();
-    m.order = ["a", "b", "c"];
-    m.tiles = { a: emptyTile(), b: emptyTile(), c: emptyTile() };
+  const withMosaic = () => {
+    const m = withProject();
     const layer = newImageLayer("wall.png");
     layer.space = "grid";
-    m.overlays = [{ ...newOverlay("Alle"), layers: [layer] }];
+    main(m).gridLayers.push(layer);
+    return { m, layer };
+  };
 
+  it("writes each crop into the tile sitting in that slot", () => {
+    const { m, layer } = withMosaic();
     const crops = new Map([
       [0, { x: 0, y: 0, w: 10, h: 10 }],
       [2, { x: 10, y: 0, w: 10, h: 10 }],
     ]);
-    bakeMosaicInto(m, layer.id, "wall.png", crops, m.order);
+    bakeMosaicInto(m, main(m), layer.id, "wall.png", crops);
 
     expect(m.tiles.a.base).toEqual({ asset: "wall.png", crop: crops.get(0) });
     expect(m.tiles.b.base).toBeNull(); // not in the crop map, left untouched
     expect(m.tiles.c.base).toEqual({ asset: "wall.png", crop: crops.get(2) });
   });
 
-  it("removes the mosaic layer from its overlay", () => {
-    const m = emptyManifest();
-    m.order = ["a"];
-    m.tiles = { a: emptyTile() };
-    const layer = newImageLayer("wall.png");
+  it("removes the mosaic layer from the project it spanned", () => {
+    const { m, layer } = withMosaic();
     const other = { ...newTextLayer(), id: "keep" };
-    m.overlays = [{ ...newOverlay("Alle"), layers: [layer, other] }];
+    main(m).gridLayers.push(other);
 
-    bakeMosaicInto(m, layer.id, "wall.png", new Map(), m.order);
-
-    expect(m.overlays[0].layers.map((l) => l.id)).toEqual(["keep"]);
+    bakeMosaicInto(m, main(m), layer.id, "wall.png", new Map());
+    expect(main(m).gridLayers.map((l) => l.id)).toEqual(["keep"]);
   });
 
   it("does nothing destructive when the layer is already gone", () => {
-    const m = emptyManifest();
-    m.order = ["a"];
-    m.tiles = { a: emptyTile() };
-    expect(() => bakeMosaicInto(m, "ghost", "wall.png", new Map(), m.order)).not.toThrow();
+    const { m } = withMosaic();
+    expect(() => bakeMosaicInto(m, main(m), "ghost", "wall.png", new Map())).not.toThrow();
   });
 });
 
-describe("overlayOf", () => {
-  it("finds the owning overlay, including for a nested layer", () => {
-    const m = withOverlay();
-    const nested = { ...newTextLayer(), id: "deep" };
-    m.overlays[0].layers.push(newGroupLayer([nested]));
-    expect(overlayOf(m, "deep")?.name).toBe("Alle");
-    expect(overlayOf(m, "nope")).toBeUndefined();
-  });
-});
+const stampOf = (layoutId: string) => ({ ...newImageLayer("r.png"), layoutId });
+
+/** Tiles carrying the given stamps, as the manifest stores them. */
+const tilesWith = (spec: Record<string, Layer[]>): Manifest => {
+  const m = emptyManifest();
+  for (const [id, layers] of Object.entries(spec)) m.tiles[id] = { ...emptyTile(), layers };
+  return m;
+};
 
 describe("holdersUsingLayout", () => {
-  it("finds every overlay carrying a stamp of this layout, and no others", () => {
-    const stamped = { ...newImageLayer("render1.png"), layoutId: "L1" };
-    const other = { ...newImageLayer("render2.png"), layoutId: "L2" };
-    const plain = newImageLayer("hand-picked.png"); // never stamped from any layout
-    const m = emptyManifest();
-    m.overlays = [
-      { ...newOverlay("A", ["t0"]), layers: [stamped] },
-      { ...newOverlay("B", ["t1"]), layers: [other] },
-      { ...newOverlay("C", ["t2"]), layers: [plain] },
-    ];
+  it("finds every tile carrying a stamp of this layout, and no others", () => {
+    const m = tilesWith({
+      t0: [{ ...newImageLayer("render1.png"), layoutId: "L1" }],
+      t1: [{ ...newImageLayer("render2.png"), layoutId: "L2" }],
+      t2: [newImageLayer("hand-picked.png")], // never stamped from any layout
+    });
     expect(holdersUsingLayout(m, "L1").map((h) => h.tiles)).toEqual([["t0"]]);
     expect(holdersUsingLayout(m, "nope")).toEqual([]);
-  });
-
-  it("finds a tile that carries the layout on its own, with no group", () => {
-    /* The whole point of an individual assignment: a stamp sitting in a tile's
-     * own layer stack. Looking only at overlays left it out of every refresh
-     * and every count, which is a design that silently stops updating. */
-    const m = emptyManifest();
-    m.tiles = { t0: { ...emptyTile(), layers: [{ ...newImageLayer("r.png"), layoutId: "L1" }] } };
-    expect(holdersUsingLayout(m, "L1").map((h) => h.tiles)).toEqual([["t0"]]);
   });
 });
 
 describe("tilesUsingLayout", () => {
-  const stampOf = (layoutId: string) => ({ ...newImageLayer("r.png"), layoutId });
-
-  it("adds up the tiles of every group holding the layout", () => {
-    const m = emptyManifest();
-    m.overlays = [
-      { ...newOverlay("A", ["t0", "t1", "t2"]), layers: [stampOf("L1")] },
-      { ...newOverlay("B", ["t3", "t4"]), layers: [stampOf("L1")] },
-      { ...newOverlay("C", ["t5"]), layers: [stampOf("L2")] },
-    ];
-    /* The number the group count cannot give: two groups, but five portraits
-     * wearing the design — and "stamped 2 time(s)" in front of a wall of
-     * tiles reads as two tiles. */
-    expect(tilesUsingLayout(m, "L1")).toBe(5);
+  it("counts the portraits wearing the design", () => {
+    const m = tilesWith({
+      t0: [stampOf("L1")],
+      t1: [stampOf("L1")],
+      t2: [stampOf("L2")],
+      t3: [],
+    });
+    expect(tilesUsingLayout(m, "L1")).toBe(2);
     expect(tilesUsingLayout(m, "L2")).toBe(1);
     expect(tilesUsingLayout(m, "nope")).toBe(0);
-  });
-
-  it("counts an individually stamped tile as the one tile it is", () => {
-    const m = emptyManifest();
-    m.overlays = [{ ...newOverlay("A", ["t0", "t1"]), layers: [stampOf("L1")] }];
-    m.tiles = { t9: { ...emptyTile(), layers: [stampOf("L1")] } };
-    expect(tilesUsingLayout(m, "L1")).toBe(3);
-  });
-
-  it("does not count an all-tiles overlay as the whole wall", () => {
-    // The wall axis, not a tile group. Nothing stamps into one, but if
-    // anything ever did, "all" is not a number of tiles.
-    const m = emptyManifest();
-    m.overlays = [{ ...newOverlay("Alle"), layers: [stampOf("L1")] }];
-    expect(m.overlays[0].tiles).toBe("all");
-    expect(tilesUsingLayout(m, "L1")).toBe(0);
   });
 });
 
@@ -414,7 +472,7 @@ describe("layoutNeedsRestamp", () => {
 
 describe("stampInto", () => {
   it("adds a stamp carrying the layout it came from", () => {
-    const overlay = newOverlay("A");
+    const overlay = emptyTile();
     const stamp = stampInto(overlay, "L1", "render1.png");
     expect(overlay.layers).toHaveLength(1);
     expect(stamp.layoutId).toBe("L1");
@@ -426,14 +484,14 @@ describe("stampInto", () => {
     // reproduces the Layout as composed is 1. newImageLayer's 0.3 default is
     // meant for a picture dropped in by hand and would shrink the whole sheet
     // to a patch floating in the middle of the tile.
-    const stamp = stampInto(newOverlay("A"), "L1", "render.png");
+    const stamp = stampInto(emptyTile(), "L1", "render.png");
     expect(stamp.scale).toBe(1);
     expect(stamp.x).toBe(0.5);
     expect(stamp.y).toBe(0.5);
   });
 
   it("replaces the picture of an existing stamp rather than stacking a copy", () => {
-    const overlay = newOverlay("A");
+    const overlay = emptyTile();
     const first = stampInto(overlay, "L1", "render1.png");
     const again = stampInto(overlay, "L1", "render2.png");
     expect(overlay.layers).toHaveLength(1);
@@ -442,14 +500,14 @@ describe("stampInto", () => {
   });
 
   it("keeps stamps of different layouts apart", () => {
-    const overlay = newOverlay("A");
+    const overlay = emptyTile();
     stampInto(overlay, "L1", "a.png");
     stampInto(overlay, "L2", "b.png");
     expect(overlay.layers).toHaveLength(2);
   });
 
-  it("leaves an ordinary picture alone, even in the same overlay", () => {
-    const overlay = newOverlay("A");
+  it("leaves an ordinary picture alone, even in the same stack", () => {
+    const overlay = emptyTile();
     const plain = newImageLayer("hand-picked.png");
     overlay.layers.push(plain);
     stampInto(overlay, "L1", "render.png");
@@ -461,14 +519,14 @@ describe("stampInto", () => {
 describe("refreshStamps", () => {
   it("repoints every stamp of one layout, wherever it sits", () => {
     const m = emptyManifest();
-    const a = newOverlay("A");
-    const b = newOverlay("B");
+    const a = emptyTile();
+    const b = emptyTile();
     stampInto(a, "L1", "old.png");
     stampInto(b, "L1", "old.png");
     stampInto(b, "L2", "other.png");
     const untouched = newImageLayer("hand-picked.png");
     b.layers.push(untouched);
-    m.overlays = [a, b];
+    m.tiles = { t0: a, t1: b };
 
     expect(refreshStamps(m, "L1", "new.png")).toBe(2);
     expect((a.layers[0] as ImageLayer).asset).toBe("new.png");
@@ -530,10 +588,14 @@ describe("clearBases", () => {
 });
 
 describe("effectiveTile", () => {
-  it("changes for every covered tile when the overlay's layer changes", () => {
-    const m = withOverlay();
+  it("changes when a layer on that tile changes", () => {
+    // What marks a tile dirty against what was last written to the game, with
+    // no extra bookkeeping anywhere.
+    const m = withProject();
+    const layer = { ...newTextLayer(), id: "s1", color: "#ffffff" };
+    m.tiles.b.layers.push(layer);
     const before = JSON.stringify(effectiveTile(m, "b"));
-    overlayLayer(m).color = "#ff0000";
+    layer.color = "#ff0000";
     expect(JSON.stringify(effectiveTile(m, "b"))).not.toBe(before);
   });
 });
@@ -589,70 +651,106 @@ describe("layer groups keep members where they are", () => {
   });
 });
 
-describe("migrate starts anything older than v6 from a clean slate", () => {
+describe("migrate v6 into one project", () => {
   const crop = { x: 0, y: 0, w: 10, h: 10 };
 
-  const old = () => ({
-    version: 5,
+  /** A v6 manifest of the shape the real wall had: a hand-built order, one
+   *  hidden tile, a group holding a stamp, an "all" overlay carrying the wall
+   *  picture, and a tile left with an orphaned live caption. */
+  const v6 = () => ({
+    version: 6,
     order: ["t2", "t0", "t1"],
     hidden: ["t1"],
-    overlays: [{ ...newOverlay("Alt", ["t0"]), layers: [newImageLayer("x.png")] }],
+    overlays: [
+      {
+        id: "g1",
+        name: "Gruppe",
+        tiles: ["t0", "t2"],
+        layers: [
+          { ...newImageLayer("sheet.png"), id: "st", layoutId: "L1" },
+          { ...newTextLayer(), id: "cap", layoutId: "L1", live: true },
+        ],
+      },
+      {
+        id: "all",
+        name: "Alle",
+        tiles: "all",
+        layers: [{ ...newImageLayer("wall.jpg"), id: "wall", space: "grid" }],
+      },
+    ],
     tiles: {
-      t0: { base: { asset: "b.png", crop }, layers: [newTextLayer()], text: { alt: "Geist" } },
-      t1: { base: null, layers: [], text: { weg: "verwaist" } },
+      t0: { base: { asset: "b.png", crop }, layers: [], text: { cap: "Krieger" } },
+      t1: { base: null, layers: [{ ...newTextLayer(), id: "waise", layoutId: "gone", live: true }], text: {} },
       t2: emptyTile(),
     },
-    layouts: [{ ...newLayout("Meins"), stamped: "abc" }],
+    layouts: [{ ...newLayout("Meins"), id: "L1", stamped: "abc" }],
+  });
+
+  it("puts every tile in one project, hidden ones on the shelf", () => {
+    /* The grid is dense now, so there is nowhere for a hidden tile to sit —
+     * but dropping it would lose the membership, so it keeps that and gives up
+     * only its slot. The order itself is half an hour of hand-dragging and has
+     * to come through untouched. */
+    const m = migrate(v6());
+    expect(m.version).toBe(7);
+    expect(m.projects).toHaveLength(1);
+    expect(m.projects[0].name).toBe("Main");
+    expect(m.projects[0].order).toEqual(["t2", "t0"]);
+    expect(m.projects[0].shelf).toEqual(["t1"]);
+  });
+
+  it("copies a group's stack onto each of its members", () => {
+    const m = migrate(v6());
+    expect(m.tiles.t0.layers.map((l) => l.id)).toEqual(["st", "cap"]);
+    expect(m.tiles.t2.layers.map((l) => l.id)).toEqual(["st", "cap"]);
+    // Copies, not one object shared by both — otherwise moving a layer on one
+    // tile would move it on every other member of the old group.
+    expect(m.tiles.t0.layers[0]).not.toBe(m.tiles.t2.layers[0]);
+  });
+
+  it("keeps layer ids, so per-tile wording still resolves", () => {
+    const m = migrate(v6());
+    expect(m.tiles.t0.text.cap).toBe("Krieger");
+    expect(m.tiles.t0.layers.some((l) => l.id === "cap")).toBe(true);
+  });
+
+  it("gives the wall picture to the project, not to the tiles", () => {
+    const m = migrate(v6());
+    expect(m.projects[0].gridLayers.map((l) => l.id)).toEqual(["wall"]);
+    expect(Object.values(m.tiles).every((t) => !t.layers.some((l) => l.id === "wall"))).toBe(true);
+  });
+
+  it("sweeps out live layers whose stamp is gone", () => {
+    // Four tiles on the real wall carried these: captions that rendered but
+    // could be neither selected nor deleted.
+    const m = migrate(v6());
+    expect(m.tiles.t1.layers).toEqual([]);
+  });
+
+  it("keeps each tile's picture and every layout", () => {
+    const m = migrate(v6());
+    expect(m.tiles.t0.base).toEqual({ asset: "b.png", crop });
+    expect(m.layouts.map((l) => l.name)).toEqual(["Meins"]);
   });
 
   it("takes a v1 tile's bare picture, which sat under the id itself", () => {
     const m = migrate({ version: 1, order: ["a"], tiles: { a: { asset: "x.png", crop } } });
-    expect(m.version).toBe(6);
+    expect(m.version).toBe(7);
     expect(m.tiles.a.base).toEqual({ asset: "x.png", crop });
-    expect(m.tiles.a.layers).toEqual([]);
+    expect(m.projects[0].order).toEqual(["a"]);
   });
 
   it("survives a null tile and unreadable input", () => {
     expect(migrate({ version: 1, order: ["a"], tiles: { a: null } }).tiles.a.base).toBeNull();
-    expect(migrate(null).version).toBe(6);
-  });
-
-  it("leaves a v6 manifest exactly as it is", () => {
-    const v6 = {
-      ...emptyManifest(),
-      order: ["a"],
-      overlays: [{ ...newOverlay("Bleibt", ["a"]), layers: [newImageLayer("y.png")] }],
-    };
-    expect(migrate(structuredClone(v6))).toEqual(v6);
-  });
-
-  it("drops groups, tile layers and tile captions", () => {
-    const m = migrate(old());
-    expect(m.version).toBe(6);
-    expect(m.overlays).toEqual([]);
-    expect(Object.values(m.tiles).every((t) => !t.layers.length)).toBe(true);
-    expect(Object.values(m.tiles).every((t) => !Object.keys(t.text).length)).toBe(true);
-  });
-
-  it("keeps the hand-built order, the hidden tiles and each tile's picture", () => {
-    const m = migrate(old());
-    expect(m.order).toEqual(["t2", "t0", "t1"]);
-    expect(m.hidden).toEqual(["t1"]);
-    expect(m.tiles.t0.base).toEqual({ asset: "b.png", crop: { x: 0, y: 0, w: 10, h: 10 } });
-  });
-
-  it("keeps layouts but marks none of them stamped", () => {
-    const m = migrate(old());
-    expect(m.layouts.map((l) => l.name)).toEqual(["Meins"]);
-    expect(m.layouts[0].stamped).toBeUndefined();
+    expect(migrate(null).version).toBe(7);
   });
 
   it("leaves the input alone and runs again to the same result", () => {
-    const input = old();
+    const input = v6();
     const copy = structuredClone(input);
     const once = migrate(input);
     expect(input).toEqual(copy);
-    expect(migrate(once)).toEqual(once);
+    expect(migrate(structuredClone(once))).toEqual(once);
   });
 });
 
@@ -694,10 +792,10 @@ describe("per-tile captions", () => {
     expect(baked.x).toBe(0.7);
   });
 
-  it("copies live captions onto the overlay and keeps their ids", () => {
+  it("copies live captions onto the tile and keeps their ids", () => {
     const layout = newLayout("L");
     layout.layers.push(liveCaption("t1"));
-    const overlay = newOverlay("G", ["a"]);
+    const overlay = emptyTile();
 
     expect(syncLiveLayers(overlay, layout)).toBe(1);
     expect(overlay.layers).toHaveLength(1);
@@ -710,7 +808,7 @@ describe("per-tile captions", () => {
   it("updates a copy in place rather than stacking a second one", () => {
     const layout = newLayout("L");
     layout.layers.push(liveCaption("t1"));
-    const overlay = newOverlay("G", ["a"]);
+    const overlay = emptyTile();
     syncLiveLayers(overlay, layout);
 
     (layout.layers[0] as TextLayer).size = 0.2;
@@ -723,7 +821,7 @@ describe("per-tile captions", () => {
     const layout = newLayout("L");
     const caption = { ...liveCaption("t1"), x: 0.3, y: 0.4 };
     layout.layers.push({ ...newGroupLayer([caption]), x: 0.7, y: 0.2 });
-    const overlay = newOverlay("G", ["a"]);
+    const overlay = emptyTile();
     syncLiveLayers(overlay, layout);
     // group at 0.7/0.2 displaces by +0.2/-0.3 over the neutral 0.5/0.5
     expect(overlay.layers[0].x).toBeCloseTo(0.5);
@@ -733,7 +831,7 @@ describe("per-tile captions", () => {
   it("removes a copy once its source stops being per-tile", () => {
     const layout = newLayout("L");
     layout.layers.push(liveCaption("t1"));
-    const overlay = newOverlay("G", ["a"]);
+    const overlay = emptyTile();
     syncLiveLayers(overlay, layout);
 
     (layout.layers[0] as TextLayer).perTile = false;
@@ -745,7 +843,7 @@ describe("per-tile captions", () => {
     const mine = newLayout("A");
     mine.layers.push(liveCaption("t1"));
     const theirs = newLayout("B");
-    const overlay = newOverlay("G", ["a"]);
+    const overlay = emptyTile();
     syncLiveLayers(overlay, mine);
     syncLiveLayers(overlay, theirs);
     expect(overlay.layers).toHaveLength(1);
@@ -868,68 +966,6 @@ describe("relocateLayer", () => {
 
   it("reports an unknown layer rather than pretending", () => {
     expect(relocateLayer(tree(), "zz", null, null)).toBe(false);
-  });
-});
-
-describe("tile groups", () => {
-  /** Two groups over five tiles, plus an "all" overlay standing in for the
-   *  wall picture — which must never count as owning anything. */
-  const grouped = (): Manifest => {
-    const m = emptyManifest();
-    m.order = ["a", "b", "c", "d", "e"];
-    m.overlays = [
-      newOverlay("Alle"),
-      newOverlay("Eins", ["a", "b"]),
-      newOverlay("Zwei", ["c"]),
-    ];
-    return m;
-  };
-
-  it("finds the group owning a tile, ignoring the all-overlay", () => {
-    const m = grouped();
-    expect(groupOf(m, "a")?.name).toBe("Eins");
-    expect(groupOf(m, "c")?.name).toBe("Zwei");
-    expect(groupOf(m, "d")).toBeUndefined();
-  });
-
-  it("reports only unclaimed tiles as free", () => {
-    expect(freeTiles(grouped(), ["a", "c", "d", "e"])).toEqual(["d", "e"]);
-  });
-
-  it("adds only free tiles and says how many landed", () => {
-    const m = grouped();
-    const group = m.overlays[2];
-    expect(addToGroup(m, group, ["a", "d", "e"])).toBe(2);
-    expect(group.tiles).toEqual(["c", "d", "e"]);
-    // "a" stayed where it was rather than being stolen.
-    expect(groupOf(m, "a")?.name).toBe("Eins");
-  });
-
-  it("never adds a tile twice", () => {
-    const m = grouped();
-    const group = m.overlays[1];
-    expect(addToGroup(m, group, ["a", "b"])).toBe(0);
-    expect(group.tiles).toEqual(["a", "b"]);
-  });
-
-  it("frees a removed tile for other groups", () => {
-    const m = grouped();
-    removeFromGroup(m.overlays[1], "a");
-    expect(groupOf(m, "a")).toBeUndefined();
-    expect(addToGroup(m, m.overlays[2], ["a"])).toBe(1);
-  });
-
-  it("swaps two tiles and leaves every other position alone", () => {
-    const m = grouped();
-    swapTiles(m, "a", "d");
-    expect(m.order).toEqual(["d", "b", "c", "a", "e"]);
-  });
-
-  it("ignores a swap with an unknown or identical tile", () => {
-    const m = grouped();
-    swapTiles(m, "a", "a");
-    swapTiles(m, "a", "zz");
-    expect(m.order).toEqual(["a", "b", "c", "d", "e"]);
   });
 });
 
@@ -1091,13 +1127,13 @@ describe("newTextLayer", () => {
 });
 
 describe("per-tile pictures", () => {
-  /** A Layout with one live image, stamped onto an overlay. */
+  /** A Layout with one live image, stamped onto a tile. */
   const stamped = () => {
     const layout = newLayout("Klassen");
     const logo = newImageLayer("default-logo.png");
     logo.perTile = true;
     layout.layers.push(logo);
-    const overlay = newOverlay("G", ["t0", "t1"]);
+    const overlay: { layers: Layer[] } = emptyTile();
     stampInto(overlay, layout.id, "sheet.png");
     syncLiveLayers(overlay, layout);
     return { layout, overlay, logo };
@@ -1173,48 +1209,45 @@ describe("layerAsset", () => {
 });
 
 describe("pruneToFolder", () => {
-  /** A manifest naming three tiles, with a group holding two of them. */
-  const withGroup = () => {
+  /** One project holding three tiles: two placed, one shelved, and a folder
+   *  naming two of them. */
+  const wall = () => {
     const m = emptyManifest();
-    m.order = ["a", "b", "c"];
-    m.hidden = ["c"];
-    for (const id of m.order) m.tiles[id] = emptyTile();
-    m.overlays = [newOverlay("G", ["a", "b"]), newOverlay("Alle")];
+    const p = newProject("Main");
+    p.order = ["a", "b"];
+    p.shelf = ["c"];
+    p.folders = [{ id: "f1", name: "Done", tiles: ["a", "c"] }];
+    m.projects = [p];
+    for (const id of ["a", "b", "c"]) m.tiles[id] = emptyTile();
     return m;
   };
 
-  it("takes tiles the folder no longer has out of their group", () => {
-    /* The gap that left junk behind: order, hidden and tiles were pruned
-     * against the folder and groups were not, so a deleted character stayed
-     * on as a member of a group nothing could point at. */
-    const m = pruneToFolder(withGroup(), ["a", "c"]);
-    expect(m.overlays[0].tiles).toEqual(["a"]);
+  it("takes tiles the folder no longer has out of grid, shelf and drawers", () => {
+    /* A project naming an id nothing has leaves a hole in the wall and a row
+     * that cannot be clicked. The v6 version pruned order, hidden and tiles but
+     * not the groups, and that left exactly that kind of junk behind. */
+    const m = pruneToFolder(wall(), ["a"]);
+    expect(m.projects[0].order).toEqual(["a"]);
+    expect(m.projects[0].shelf).toEqual([]);
+    expect(m.projects[0].folders[0].tiles).toEqual(["a"]);
   });
 
-  it("leaves a group standing once its last tile is gone", () => {
-    // Emptied, not deleted: losing a character is not a reason to throw away
-    // the group someone built, and an empty one is a click from gone.
-    const m = pruneToFolder(withGroup(), ["c"]);
-    expect(m.overlays).toHaveLength(2);
-    expect(m.overlays[0].tiles).toEqual([]);
+  it("leaves an emptied project standing", () => {
+    // Losing a character is not a reason to throw away the wall someone built,
+    // and an empty one is a click from gone.
+    const m = pruneToFolder(wall(), ["z"]);
+    expect(m.projects).toHaveLength(1);
+    expect(m.projects[0].order).toEqual([]);
   });
 
-  it("does not touch an all-tiles overlay", () => {
-    // The wall axis follows the folder by construction; it has no list.
-    const m = pruneToFolder(withGroup(), ["a"]);
-    expect(m.overlays[1].tiles).toBe("all");
-  });
-
-  it("still prunes order, hidden and tiles, and adopts new ids", () => {
-    const m = pruneToFolder(withGroup(), ["b", "d"]);
-    expect(m.order).toEqual(["b", "d"]);
-    expect(m.hidden).toEqual([]);
+  it("drops tile state the folder no longer backs, and adopts new ids", () => {
+    const m = pruneToFolder(wall(), ["b", "d"]);
     expect(Object.keys(m.tiles).sort()).toEqual(["b", "d"]);
   });
 
-  it("keeps the folder's own order for ids it did not know", () => {
-    const m = pruneToFolder(withGroup(), ["c", "a", "z"]);
-    // Known ids keep the manifest's order, newcomers follow in folder order.
-    expect(m.order).toEqual(["a", "c", "z"]);
+  it("leaves a new id unclaimed, which is what the inbox is", () => {
+    const m = pruneToFolder(wall(), ["a", "b", "c", "z"]);
+    expect(projectOf(m, "z")).toBeUndefined();
+    expect(inboxIds(m, ["a", "b", "c", "z"])).toEqual(["z"]);
   });
 });
