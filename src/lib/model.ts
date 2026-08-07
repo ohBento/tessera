@@ -903,31 +903,36 @@ export function dropOrphanLiveLayers(tile: Tile): number {
   return before - tile.layers.length;
 }
 
+/** A stamp and every live layer the same Layout keeps beside it.
+ *
+ *  The list shows one row for the lot, so everything that row does — hide,
+ *  delete — has to reach the copies as well: they have no row of their own,
+ *  and a caption left drawing on the wall with nothing to switch it off is
+ *  precisely the bug this has already produced twice.
+ *
+ *  Anything that is not a stamp is a family of one, which is what keeps the
+ *  callers free of special cases. */
+export function stampFamily(layers: Layer[], stampId: string): Layer[] {
+  const stamp = layers.find((l) => l.id === stampId);
+  if (!stamp) return [];
+  const owner = stamp.kind === "image" && !stamp.live ? stamp.layoutId : undefined;
+  return layers.filter(
+    (l) => l.id === stampId || (owner !== undefined && l.layoutId === owner && isLiveCopy(l)),
+  );
+}
+
 /** Deletes a stamp and every live layer the same Layout keeps beside it.
  *
  *  They are copies the Layout owns, not artwork of the tile's own: without the
- *  stamp they belong to nothing, and no list shows them, so leaving them behind
- *  produced captions that drew on the wall with no row and no way out. One
- *  click, one undo step, the whole assignment gone. */
+ *  stamp they belong to nothing. One click, one undo step, the whole
+ *  assignment gone. */
 export function deleteStampCascade(layers: Layer[], stampId: string): number {
-  const stamp = layers.find((l) => l.id === stampId);
-  const owner = stamp?.kind === "image" && !stamp.live ? stamp.layoutId : undefined;
-  let n = 0;
+  const doomed = new Set(stampFamily(layers, stampId).map((l) => l.id));
   /* Spliced in place rather than returned as a new array: the caller hands us a
    * live Svelte $state array. Backwards, so removing one does not shift the
-   * index of the next.
-   *
-   * Text counts as a copy with or without the `live` flag, the same rule
-   * syncLiveLayers withdraws by: a stamp is never text, and a caption written
-   * before the flag existed can never gain it. */
-  for (let i = layers.length - 1; i >= 0; i--) {
-    const l = layers[i];
-    const copy = owner !== undefined && l.layoutId === owner && (l.live || l.kind === "text");
-    if (l.id !== stampId && !copy) continue;
-    layers.splice(i, 1);
-    n++;
-  }
-  return n;
+   * index of the next. */
+  for (let i = layers.length - 1; i >= 0; i--) if (doomed.has(layers[i].id)) layers.splice(i, 1);
+  return doomed.size;
 }
 
 /** Writes baked crops into their tiles' `base` and removes the mosaic layer

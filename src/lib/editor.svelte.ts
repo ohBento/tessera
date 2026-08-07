@@ -42,6 +42,7 @@ import {
   removeLayerFrom,
   resolveLayers,
   shiftLayer,
+  stampFamily,
   stampInto,
   swapPlaced,
   takeOutOfFolder,
@@ -590,10 +591,21 @@ export function selectLayer(id: string) {
   if (app.selected !== id) app.selected = id;
 }
 
+/** Hides or shows a layer — and, for a stamp, the whole assignment.
+ *
+ *  The eye on a stamp's row used to switch off the flattened sheet and leave
+ *  the captions and logos the Layout keeps live still drawn: they have no row
+ *  of their own, so "Hide" appeared to do nothing on exactly the layouts that
+ *  carry something editable in the grid. */
 export async function toggleLayerHidden(id: string) {
-  const l = findLayer(listOf(id) ?? [], id);
-  if (!l) return;
-  await mutate(() => (l.hidden = !l.hidden));
+  const list = listOf(id);
+  const family = list ? stampFamily(list, id) : [];
+  const self = family.find((l) => l.id === id);
+  if (!self) return;
+  const next = !self.hidden;
+  await mutate(() => {
+    for (const l of family) l.hidden = next;
+  });
 }
 
 /** Deletes a layer on the wall.

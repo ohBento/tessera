@@ -39,6 +39,7 @@ import {
   renameLayer,
   setLayoutSelection,
   tileCaptions,
+  toggleLayerHidden,
   toggleLayoutPick,
   toggleTile,
 } from "./lib/editor.svelte";
@@ -271,6 +272,28 @@ describe("the wall", () => {
       );
     await until(() => !!row());
     expect(row()!.textContent).toContain("1 layout(s)");
+  });
+
+  it("hiding a stamp hides the whole assignment, live layers and all", async () => {
+    /* The stamp's row speaks for the copies a Layout keeps beside it — they
+     * have no row of their own. Hiding it and leaving those drawn meant the
+     * eye did nothing you could see: the caption and the logo stayed on the
+     * wall with nothing left to switch them off. */
+    const a = app.folderIds[0];
+    await newLayoutDoc("Mit Text");
+    await addLayoutText();
+    const caption = openLayout()!.layers[0];
+    await setLayerField(caption.id, "perTile", true);
+    await assignTileLayout(a, openLayout()!.id);
+    await until(() => tileLayers(a).length === 2);
+
+    const stamp = tileLayers(a).find((l) => l.kind === "image")!;
+    await toggleLayerHidden(stamp.id);
+    expect(tileLayers(a).map((l) => !!l.hidden)).toEqual([true, true]);
+
+    // And back, in one press.
+    await toggleLayerHidden(stamp.id);
+    expect(tileLayers(a).map((l) => !!l.hidden)).toEqual([false, false]);
   });
 
   it("deleting a stamp takes its live caption with it", async () => {
