@@ -1091,8 +1091,13 @@
               {#each looseIds() as id (id)}
                 {@const own = stampsOf(tileLayers(id))}
                 {@const owner = tileProject(id)}
-                <div class="group">
-                  <div class="grouphead">
+                <div
+                  class="group"
+                  role="presentation"
+                  onmouseenter={() => (app.hoverTile = id)}
+                  onmouseleave={() => app.hoverTile === id && (app.hoverTile = "")}
+                >
+                  <div class="grouphead" class:selected={app.selectedTiles.includes(id)}>
                     <button class="twisty" onclick={() => toggleOpen(id)}>
                       {open.has(id) ? "▾" : "▸"}
                     </button>
@@ -1591,8 +1596,14 @@
     margin-bottom: 6px;
     border-bottom: 1px solid #1a2126;
   }
-  .group:hover {
+  /* On the head, not the whole group. Tile rows are groups nested inside the
+     section's group, so a hover on one row also hovered its ancestor and the
+     entire block lit up — which read as "everything is marked". */
+  .grouphead:hover {
     background: #141b21;
+  }
+  .grouphead.selected {
+    background: #223039;
   }
   .grouphead {
     display: flex;

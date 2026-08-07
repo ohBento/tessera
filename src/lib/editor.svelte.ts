@@ -95,6 +95,11 @@ export const app = $state({
   /** Folder being hovered in the sidebar — its tiles get outlined on the wall,
    *  so you can see what a drawer holds without opening it. */
   hoverFolder: "",
+  /** Tile row being hovered in the sidebar. Its own outline on the wall, in its
+   *  own colour: a list of numbers cannot say which portrait it means, and the
+   *  answer to "which one is t07" should not cost a click that changes the
+   *  selection you were building. */
+  hoverTile: "",
   /** Which project's wall is showing, "" for the inbox — the tiles no project
    *  has claimed. View state only: which wall you are looking at is not an edit
    *  and has no business in the manifest or in undo. */

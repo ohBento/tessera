@@ -158,6 +158,7 @@
     app.selectedTiles.join();
     app.selected;
     app.hoverFolder;
+    app.hoverTile;
     app.coverPreview.join();
     canvas?.requestRenderAll();
   });
@@ -403,6 +404,15 @@
         } else {
           ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
           ctx.lineWidth = 1;
+        }
+        /* The row under the pointer, in its own colour and after the rest, so
+         * it wins the outline without taking the fill that says "picked" —
+         * pointing at a tile is not choosing it. Yellow already means both "a
+         * drawer holds this" and "the picture lands here"; a fourth meaning in
+         * a colour already carrying two is a mark nobody can read. */
+        if (id === app.hoverTile) {
+          ctx.strokeStyle = "rgba(130, 235, 160, 0.95)";
+          ctx.lineWidth = 2;
         }
         ctx.strokeRect(x, y, w, h);
       }
