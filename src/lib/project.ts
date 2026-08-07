@@ -50,6 +50,76 @@ export async function loadManifest(dir: string, ids: string[]): Promise<Manifest
   return pruneToFolder(m, ids);
 }
 
+/* --- Knowing when the game changed a file under us.
+ *
+ * BDO keeps a character's numeric id when a slot is deleted and refilled, so
+ * the id says nothing about whether the face behind it is still the same
+ * person. The only signal is the bytes. Two hashes per tile answer it: what the
+ * game shipped, and what Tessera last wrote — a file matching neither is one
+ * the game rewrote, and only the user can say whether that was a restyle or a
+ * stranger.
+ *
+ * Kept beside applied.json rather than in the manifest, for the same reason:
+ * undo must never rewrite what is true about the disk.
+ *
+ * ponytail: every file is hashed on open — 44 portraits is about 90 MB and
+ * milliseconds. readDir in Tauri 2 carries no size or mtime, so skipping
+ * unchanged files would mean a new stat path, its permission and its mock. Add
+ * that when a real folder proves slow. --- */
+
+export type Print = { original: string; written?: string };
+export type Fingerprints = Record<string, Print>;
+
+const printsPath = async (dir: string) => join(await projectDir(dir), "fingerprints.json");
+
+export async function loadFingerprints(dir: string): Promise<Fingerprints> {
+  try {
+    return JSON.parse(await readTextFile(await printsPath(dir)));
+  } catch {
+    return {};
+  }
+}
+
+export async function saveFingerprints(dir: string, prints: Fingerprints) {
+  await mkdir(await projectDir(dir), { recursive: true });
+  await writeTextFile(await printsPath(dir), JSON.stringify(prints));
+}
+
+/** Sorts the folder's ids into the ones we have never seen and the ones whose
+ *  bytes moved under us. Pure, so the rule can be tested without a disk.
+ *
+ *  `fresh` is not a problem to solve — it is a first run, or a character
+ *  created since the last one, and all it needs is to be visible. `changed` is
+ *  the question: same id, different face, and answering it wrong either throws
+ *  away a restyled character's design or dresses a stranger in it. */
+export function classify(
+  prints: Fingerprints,
+  hashes: Record<string, string>,
+): { fresh: string[]; changed: string[] } {
+  const fresh: string[] = [];
+  const changed: string[] = [];
+  for (const [id, hash] of Object.entries(hashes)) {
+    const seen = prints[id];
+    if (!seen) fresh.push(id);
+    else if (hash !== seen.original && hash !== seen.written) changed.push(id);
+  }
+  return { fresh, changed };
+}
+
+/** Hashes every tile in the folder, keyed by id. */
+export async function hashTiles(dir: string, ids: string[]): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  for (const id of ids) {
+    try {
+      out[id] = await hashBytes(await readFile(await tilePath(dir, id)));
+    } catch {
+      // Unreadable right now — the game may be mid-write. Saying nothing is
+      // better than reporting a character as replaced because of a race.
+    }
+  }
+  return out;
+}
+
 /** What was last written into the game folder. Kept out of the manifest on
  *  purpose: undo must never change what is already on disk. */
 const appliedPath = async (dir: string) => join(await projectDir(dir), "applied.json");
@@ -105,7 +175,7 @@ export function saveManifest(dir: string, m: Manifest): Promise<void> {
   return writing;
 }
 
-async function hashBytes(bytes: Uint8Array): Promise<string> {
+export async function hashBytes(bytes: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
   return Array.from(new Uint8Array(digest).slice(0, 8))
     .map((b) => b.toString(16).padStart(2, "0"))
@@ -188,6 +258,15 @@ export function loadOriginal(dir: string, id: string): Promise<ImageBitmap> {
   );
 }
 
+/** Forgets one tile's cached original.
+ *
+ *  loadOriginal caches on the promise that the bytes behind an id never change:
+ *  the vault copy is immutable and the game folder's file is only read when
+ *  there is no vault copy. Deciding a slot holds a different character breaks
+ *  exactly that promise — the vault copy is thrown away and the file underneath
+ *  is somebody else's — so the cache has to be told. */
+export const forgetOriginal = (id: string) => originals.delete(id);
+
 const urls = new Map<string, Promise<string>>();
 
 /** For showing an asset in an image element, e.g. while placing the mosaic. */
@@ -213,6 +292,19 @@ export async function vaultOriginal(dir: string, id: string) {
 }
 
 export const vaultPath = async (dir: string, id: string) => join(await vaultDir(dir), `${id}.bmp`);
+
+/** Throws away a tile's vault copy.
+ *
+ *  Only for the case where the id turned out to be a different character. The
+ *  vault is how the editor defines "the original" — loadOriginal reads it in
+ *  preference to the game's own file — so a stale copy does not merely sit
+ *  there: it keeps serving the old face on a slot that now belongs to someone
+ *  else. Seen on a real folder, where thirty-five blanked portraits still
+ *  showed their previous characters. */
+export async function dropVaultCopy(dir: string, id: string) {
+  const backup = await vaultPath(dir, id);
+  if (await exists(backup)) await remove(backup);
+}
 
 export async function restoreFromVault(dir: string, id: string) {
   const backup = await vaultPath(dir, id);

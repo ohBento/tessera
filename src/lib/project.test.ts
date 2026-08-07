@@ -53,7 +53,8 @@ vi.stubGlobal("createImageBitmap", vi.fn(async () => ({ width: 1, height: 1 })))
 // constructor, and Vite's own module resolution needs `new URL` to work.
 URL.createObjectURL = () => "blob:x";
 
-const { loadOriginal, assetUrl, saveManifest, loadManifest, restoreTiles } = await import("./project");
+const { loadOriginal, assetUrl, saveManifest, loadManifest, restoreTiles, classify } =
+  await import("./project");
 
 describe("saveManifest survives overlapping writes", () => {
   /** Dragging a multi-selection fires one save per member in the same tick.
@@ -102,6 +103,42 @@ describe("a failed read does not poison the cache", () => {
 
     readFile.mockResolvedValueOnce(new Uint8Array([1]));
     await expect(assetUrl("/dir", "a.png")).resolves.toBe("blob:x");
+  });
+});
+
+describe("classify", () => {
+  /* The whole point of M5, and the case that produced it: BDO keeps a numeric
+   * id when a character slot is deleted and refilled, so "the file under this
+   * id is not what we last saw" is the only signal there is. It cannot decide
+   * on its own whether that means a restyle or a stranger — only the user
+   * knows — so this sorts, and the UI asks. */
+  const seen = (original: string, written?: string) => ({ original, written });
+
+  it("calls an id we have never fingerprinted new, not changed", () => {
+    // A first run, or a character created since the last one. Nothing was lost
+    // and nothing needs deciding: it simply has to be visible.
+    const out = classify({}, { a: "h1" });
+    expect(out).toEqual({ fresh: ["a"], changed: [] });
+  });
+
+  it("accepts the file BDO shipped", () => {
+    expect(classify({ a: seen("h1") }, { a: "h1" })).toEqual({ fresh: [], changed: [] });
+  });
+
+  it("accepts what Tessera itself wrote", () => {
+    /* Without this every single open after a Write to game would report the
+     * whole wall as changed — by the app's own hand. */
+    expect(classify({ a: seen("h1", "h2") }, { a: "h2" })).toEqual({ fresh: [], changed: [] });
+  });
+
+  it("reports a file that matches neither", () => {
+    expect(classify({ a: seen("h1", "h2") }, { a: "h3" })).toEqual({ fresh: [], changed: ["a"] });
+  });
+
+  it("says nothing about an id the folder no longer has", () => {
+    // pruneToFolder already drops those; a second opinion here would only
+    // disagree with it eventually.
+    expect(classify({ gone: seen("h1") }, { a: "h1" })).toEqual({ fresh: ["a"], changed: [] });
   });
 });
 

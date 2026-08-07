@@ -61,8 +61,14 @@ import {
   importAsset,
   listTiles,
   loadAsset,
+  classify,
+  dropVaultCopy,
+  forgetOriginal,
+  hashTiles,
+  loadFingerprints,
   loadManifest,
   pruneVault,
+  saveFingerprints,
   restoreTiles,
   saveGeneratedAsset,
   saveManifest,
@@ -97,6 +103,17 @@ export const app = $state({
    *  this and the projects, so it is never stored: the folder is where ids come
    *  from, and a second copy of that list would drift from it. */
   folderIds: [] as string[],
+  /** Ids this folder had never shown us before — a first run, or characters
+   *  created since the last one. Not a problem to solve, just something that
+   *  has to be visible; they sit in the inbox until they are sorted. */
+  newTiles: [] as string[],
+  /** Ids whose file the game rewrote under us. The one question the app cannot
+   *  answer itself: a restyle keeps the character, a deleted-and-refilled slot
+   *  does not, and the bytes look identical either way. */
+  changedTiles: [] as string[],
+  /** What each tile hashed to on this open, so answering the question does not
+   *  mean reading 90 MB a second time. */
+  hashes: {} as Record<string, string>,
   /** Which Layout is open for editing, "" when looking at the wall instead.
    *  View state only, not persisted — a Layout's own content is. */
   openLayoutId: "",
@@ -591,6 +608,22 @@ export async function openFolder(dir?: string) {
      * the inbox instead would mean a second copy of this list drifting away
      * from the directory it is supposed to describe. */
     app.folderIds = ids;
+
+    /* What the game did to the folder while we were away. Same id, different
+     * bytes, is the only signal there is that a character slot was emptied and
+     * refilled — and answering it wrong either throws away a restyled
+     * character's design or leaves a stranger wearing it. So the app sorts and
+     * the user decides; nothing is touched here. */
+    const hashes = await hashTiles(app.dir, ids);
+    const prints = await loadFingerprints(app.dir);
+    const { fresh, changed } = classify(prints, hashes);
+    for (const id of fresh) prints[id] = { original: hashes[id] };
+    for (const id of Object.keys(prints)) if (!hashes[id]) delete prints[id];
+    await saveFingerprints(app.dir, prints);
+    app.newTiles = fresh;
+    app.changedTiles = changed;
+    app.hashes = hashes;
+
     app.deps = tauriDeps(app.dir);
     app.selected = "";
     /* Start on the overview rather than on a wall. With several accounts
@@ -1224,6 +1257,44 @@ export async function saveLayout(layoutId: string) {
       layout.stamped = seen;
       app.error = `${n} stamp(s) updated`;
     });
+  });
+}
+
+/* --- Answering "the game rewrote this tile". Two answers, and only the user
+ * has them: the same character with a new haircut, or a different character
+ * who inherited the slot number. --- */
+
+/** Records the file as it stands now and leaves everything else alone — the
+ *  character is the same one, wearing something new. The layers were composed
+ *  for them and stay. */
+export async function keepCharacter(id: string) {
+  await run("recheck", async () => {
+    const prints = await loadFingerprints(app.dir);
+    prints[id] = { original: app.hashes[id] ?? "" };
+    await saveFingerprints(app.dir, prints);
+    /* The vault copy goes too. It holds the face from before the restyle, and
+     * loadOriginal prefers it over the game's own file — keeping it would mean
+     * the editor went on showing the old haircut for good. */
+    await dropVaultCopy(app.dir, id);
+    forgetOriginal(id);
+    app.changedTiles = app.changedTiles.filter((x) => x !== id);
+    app.version++;
+  });
+}
+
+/** Treats the id as a stranger: the layers on it were composed for a face that
+ *  no longer exists, so they go, the tile returns to the inbox, and the vault
+ *  copy of the old portrait is thrown away — it would otherwise keep being
+ *  served as this slot's "original". */
+export async function replaceCharacter(id: string) {
+  await run("recheck", async () => {
+    const prints = await loadFingerprints(app.dir);
+    prints[id] = { original: app.hashes[id] ?? "" };
+    await saveFingerprints(app.dir, prints);
+    await dropVaultCopy(app.dir, id);
+    forgetOriginal(id);
+    await mutate(() => removeFromProjectToInbox(app.manifest, id, true));
+    app.changedTiles = app.changedTiles.filter((x) => x !== id);
   });
 }
 

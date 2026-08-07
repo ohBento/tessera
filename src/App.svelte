@@ -43,6 +43,7 @@
     freeCount,
     groupLayoutLayers,
     inbox,
+    keepCharacter,
     layoutGroups,
     looseIds,
     layoutTiles,
@@ -63,6 +64,7 @@
     redoEdit,
     redoable,
     releaseTilesToInbox,
+    replaceCharacter,
     renameLayer,
     renameLayout,
     renameFolder,
@@ -159,6 +161,10 @@
     })();
     return { destroy: () => (live = false) };
   }
+
+  /** The never-seen-before ids that are still sitting in the inbox. Ones
+   *  already sorted into a project are no longer news. */
+  const freshHere = () => app.newTiles.filter((id) => !tileProject(id));
 
   /** Which wall the stage is showing, or the overview when none. */
   let home = $state(true);
@@ -777,9 +783,56 @@
              character has to be visible the moment it turns up — so the way in
              is a choice of wall rather than a guess at one. -->
         <div class="home">
+          {#if app.changedTiles.length}
+            <!-- The one question the app cannot answer for itself. BDO keeps a
+                 character's numeric id when a slot is deleted and refilled, so
+                 "the file changed" means either a restyle or a stranger — and
+                 the bytes look the same in both cases. Answering it wrong
+                 either throws away a design or leaves someone else wearing it,
+                 so it is asked once, per tile, before anything is touched. -->
+            <div class="alert">
+              <p class="alerthead">
+                {app.changedTiles.length} portrait(s) changed in the game since you were last here.
+              </p>
+              <p class="empty">
+                Same character with a new look, or a different character in that slot? Nothing is
+                touched until you say.
+              </p>
+              <ul>
+                {#each app.changedTiles as id (id)}
+                  <li>
+                    <canvas class="thumb" width="31" height="40" use:portrait={id}></canvas>
+                    <button class="name">
+                      {id}
+                      <span class="usage">
+                        {tileProject(id)?.name ?? "in the inbox"} ·
+                        {tileLayers(id).length} layer(s)
+                      </span>
+                    </button>
+                    <button title="Keep the layers on it" onclick={() => keepCharacter(id)}>
+                      Same character
+                    </button>
+                    <button
+                      title="Strip it and send it back to the inbox"
+                      onclick={() => replaceCharacter(id)}
+                    >
+                      New character
+                    </button>
+                  </li>
+                {/each}
+              </ul>
+            </div>
+          {/if}
           <div class="cards">
             <button class="card inbox" onclick={() => enter("")}>
-              <span class="cardname">Inbox</span>
+              <span class="cardname">
+                Inbox
+                <!-- Ids this folder had never shown us before: a first run, or
+                     characters made since the last one. Not a problem to solve
+                     — just something that must not be missed in a list of
+                     forty-four. -->
+                {#if freshHere().length}<span class="badge">{freshHere().length} new</span>{/if}
+              </span>
               <span class="cardsub">
                 {inbox().length}
                 {inbox().length === 1 ? "tile" : "tiles"} waiting
@@ -1306,6 +1359,31 @@
   }
   .shelfrow {
     cursor: grab;
+  }
+  /* Amber, not the app's blue: this is the one thing on the page that wants an
+     answer before anything else is worth doing. */
+  .alert {
+    max-width: 640px;
+    margin-bottom: 16px;
+    padding: 12px;
+    border: 1px solid #6b5320;
+    border-radius: 4px;
+    background: #1e1a10;
+  }
+  .alerthead {
+    margin: 0 0 4px;
+    color: #ffc45c;
+  }
+  .alert ul {
+    margin-top: 8px;
+  }
+  .badge {
+    margin-left: 6px;
+    padding: 1px 6px;
+    border-radius: 8px;
+    background: #2b4a5a;
+    color: #cdeeff;
+    font-size: 10px;
   }
   /* Hidden rather than unrendered: the list is short enough that keeping it in
      the DOM costs nothing, and the rows keep their scroll position. */
