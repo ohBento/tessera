@@ -27,6 +27,7 @@
     canSaveLayout,
     clearMosaic,
     coverCounts,
+    coverTheWall,
     clearTileAsset,
     clearTileText,
     clearTiles,
@@ -657,6 +658,18 @@
            cannot be stored — and that rule used to be invisible until the wall
            came back with a row missing. A new picture starts "as wide as the
            grid", which on a seven-row wall reaches only the middle rows. -->
+      <!-- One press for the guarantee. The picture keeps its proportions, so
+           whichever axis falls short decides the size and the other overhangs
+           — there is no arrangement that lays all four edges on the wall's
+           unless the shapes happen to match. Dragging afterwards snaps to
+           those edges, with Alt to override. -->
+      <button
+        onclick={coverTheWall}
+        disabled={!canBakeMosaic() || !!app.busy}
+        title="Sizes and centres the picture so every tile lies under it"
+      >
+        Cover the wall
+      </button>
       <button
         onclick={bakeMosaic}
         disabled={!canBakeMosaic() || !!app.busy}

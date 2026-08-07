@@ -20,7 +20,7 @@
     visibleIds,
   } from "./lib/editor.svelte";
   import { TILE_H, TILE_W } from "./lib/bmp";
-  import { cellsIn, COLS, isTyping } from "./lib/geometry";
+  import { cellsIn, COLS, isTyping, snapBox, type Guide } from "./lib/geometry";
   import { buildGrid, cellAt, gridSize, readBack, type Tagged } from "./lib/scene";
 
   let host: HTMLDivElement;
@@ -32,6 +32,13 @@
   /** The rubber band being dragged, in scene coordinates, or null. */
   let band: { x: number; y: number; w: number; h: number } | null = null;
   let bandStart: fabric.Point | null = null;
+
+  /** Lines a dragged wall picture has been pulled onto, drawn by the
+   *  after:render hook. Empty except during a drag. */
+  let guides: Guide[] = [];
+  /** How close in screen pixels the pull reaches. Converted to scene units per
+   *  drag, so it feels the same at any zoom. */
+  const SNAP_PX = 8;
 
   /** Every visible tile the band touches. */
   function tilesIn(r: { x: number; y: number; w: number; h: number }): string[] {
@@ -400,6 +407,27 @@
         ctx.strokeRect(x, y, w, h);
       }
 
+      /* Where a dragged wall picture has been pulled flush with the wall. Drawn
+       * across the whole viewport, so it is obvious which edge caught it even
+       * when the picture hangs far past the grid. */
+      if (guides.length) {
+        ctx.strokeStyle = "rgba(255, 90, 200, 0.95)";
+        ctx.lineWidth = 1;
+        for (const g of guides) {
+          ctx.beginPath();
+          if (g.axis === "x") {
+            const x = Math.round(g.at * vt[0] + vt[4]) + 0.5;
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, ctx.canvas.height);
+          } else {
+            const y = Math.round(g.at * vt[3] + vt[5]) + 0.5;
+            ctx.moveTo(0, y);
+            ctx.lineTo(ctx.canvas.width, y);
+          }
+          ctx.stroke();
+        }
+      }
+
       /* The band itself, on top of the marks it is producing. Drawn here
        * rather than through Fabric's own selection rectangle, because that one
        * selects objects and this one selects tiles — different things that
@@ -430,6 +458,49 @@
     canvas.on("selection:cleared", () => {
       if (!rebuilding) selectLayer("");
     });
+
+    /* Snapping a wall picture to the wall.
+     *
+     *  Baking reaches a tile only if the picture covers it whole, so the one
+     *  arrangement that never loses a row is the one where the picture encloses
+     *  the grid — and the grid's own box is therefore the only thing worth
+     *  snapping to here. Its edges and its centre, on each axis independently,
+     *  the same rule the Layout editor uses against the sheet.
+     *
+     *  Grid-space objects only. A tile layer lives inside one cell; pulling it
+     *  onto the far edge of the wall would be a snap to something it has no
+     *  relationship with. */
+    canvas.on("object:moving", (opt) => {
+      guides = [];
+      const target = opt.target as Tagged | undefined;
+      if (!target || target.space !== "grid" || (opt.e as MouseEvent | undefined)?.altKey) return;
+
+      /* Fabric has written the new left/top but not refreshed the cached corner
+       * coordinates getBoundingRect reads — without this the box is one
+       * drag-step stale and the correction lands short. */
+      target.setCoords();
+      const grid = gridSize(visibleIds().length);
+      // Threshold in screen pixels, converted here, so the pull feels the same
+      // however far the view is zoomed out — and the wall is usually far out.
+      const snap = snapBox(
+        target.getBoundingRect(),
+        [{ left: 0, top: 0, width: grid.w, height: grid.h }],
+        SNAP_PX / canvas!.getZoom(),
+      );
+      if (!snap.dx && !snap.dy) return;
+
+      target.set({ left: (target.left ?? 0) + snap.dx, top: (target.top ?? 0) + snap.dy });
+      target.setCoords();
+      guides = snap.guides;
+    });
+
+    const dropGuides = () => {
+      if (!guides.length) return;
+      guides = [];
+      canvas?.requestRenderAll();
+    };
+    canvas.on("mouse:up", dropGuides);
+    canvas.on("selection:cleared", dropGuides);
 
     canvas.on("object:modified", (opt) => {
       const obj = opt.target as Tagged | undefined;

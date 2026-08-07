@@ -96,6 +96,7 @@ describe("cellsIn", () => {
 import {
   cellAt,
   coverCrop,
+  coverScale,
   gridSize,
   gradientLine,
   layerFont,
@@ -140,6 +141,42 @@ describe("tileCover", () => {
       expect(c.w / c.h).toBeCloseTo(TILE_W / TILE_H, 8);
       expect(c.x + c.w).toBeLessThanOrEqual(w + 1e-9);
       expect(c.y + c.h).toBeLessThanOrEqual(h + 1e-9);
+    }
+  });
+});
+
+describe("coverScale", () => {
+  /* A wall picture has one size number and keeps its aspect, so its four edges
+   * cannot be laid on the grid's four edges at once — the shorter axis decides.
+   * This is the scale at which the picture just encloses the grid, which is the
+   * only condition under which baking reaches every tile. */
+  it("matches the width when the picture is taller than the grid", () => {
+    const grid = { w: 4500, h: 5796 }; // 44 tiles: seven rows, portrait
+    // 1000x2000 is far taller in proportion, so width is what binds.
+    expect(coverScale({ w: 1000, h: 2000 }, grid)).toBeCloseTo(1, 9);
+  });
+
+  it("overshoots the width when the picture is wider than the grid", () => {
+    const grid = { w: 4500, h: 5796 };
+    /* A 16:9 photo on a portrait wall: laying its sides on the grid's would
+     * leave the bottom rows bare, so it has to be blown up until its height
+     * reaches — which is exactly the "21 of 44" case, solved. */
+    const s = coverScale({ w: 1920, h: 1080 }, grid);
+    expect(s).toBeGreaterThan(1);
+    expect(s * grid.w * (1080 / 1920)).toBeCloseTo(grid.h, 6);
+  });
+
+  it("is exactly 1 when the picture already has the grid's proportions", () => {
+    expect(coverScale({ w: 4500, h: 5796 }, { w: 4500, h: 5796 })).toBeCloseTo(1, 9);
+  });
+
+  it("actually covers every tile at the scale it returns", () => {
+    // The claim that matters, checked against the bake rule itself rather than
+    // against the arithmetic that produced it.
+    const grid = gridSize(44);
+    for (const nat of [{ w: 1920, h: 1080 }, { w: 1000, h: 3000 }, { w: 800, h: 800 }]) {
+      const scale = coverScale(nat, grid);
+      expect(mosaicBakeCrops({ x: 0.5, y: 0.5, scale }, nat, 44).size).toBe(44);
     }
   });
 });

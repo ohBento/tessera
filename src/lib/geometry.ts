@@ -226,6 +226,24 @@ export function coverCrop(sw: number, sh: number, aspect: number): Crop {
 export const tileCover = (img: { width: number; height: number }) =>
   coverCrop(img.width, img.height, TILE_W / TILE_H);
 
+/** The scale at which a wall picture just encloses the whole grid.
+ *
+ *  `scale` is the picture's width as a share of the grid's, and the height
+ *  follows from the picture's own proportions — one number, so the four edges
+ *  cannot be laid on the grid's four edges at once. The shorter axis decides:
+ *  a picture wider in proportion than the grid has to be blown up until its
+ *  height reaches, and a taller one until its width does.
+ *
+ *  Enclosing the grid is exactly the condition under which baking reaches every
+ *  tile, since the per-tile test is "does the picture cover this cell whole" and
+ *  every cell is inside the grid box. Which is why this exists: a picture
+ *  dropped in at scale 1 is only as wide as the wall, and on a seven-row wall
+ *  that leaves the top and bottom rows bare with nothing saying so. */
+export const coverScale = (
+  natural: { w: number; h: number },
+  grid: { w: number; h: number },
+) => Math.max(1, grid.h / (grid.w * (natural.h / natural.w)));
+
 /** Endpoints of a gradient line through the centre of a bw x bh box at the
  *  given angle (degrees, 0 = left to right). Kept separate from any gradient
  *  construction so the angle maths is testable on its own. */

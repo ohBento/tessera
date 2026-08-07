@@ -2,7 +2,7 @@
 import { open as pickFile } from "./platform";
 
 import { saveTiles } from "./export";
-import { mosaicBakeCrops } from "./geometry";
+import { coverScale, gridSize, mosaicBakeCrops } from "./geometry";
 import { canRedo, canUndo, checkpoint, emptyHistory, endRun, redo, undo } from "./history";
 import { renderLayout } from "./layout";
 import {
@@ -771,6 +771,29 @@ export const coverCounts = () => ({
   covered: app.coverPreview.length,
   total: openProject()?.order.length ?? 0,
 });
+
+/** Sizes and centres the selected wall picture so it encloses the whole grid.
+ *
+ *  One press for the guarantee. The picture keeps its proportions, so whichever
+ *  axis is short decides the scale and the other one overhangs — there is no
+ *  arrangement that lays all four edges on the wall's unless the shapes match.
+ *  Centred as well as sized, because a correctly sized picture nudged sideways
+ *  still leaves a column bare. */
+export async function coverTheWall() {
+  const layer = selectedMosaic();
+  const p = openProject();
+  if (!layer || !p) return;
+  await run("fit", async () => {
+    const bmp = await loadAsset(app.dir, layer.asset);
+    const scale = coverScale({ w: bmp.width, h: bmp.height }, gridSize(p.order.length));
+    await mutate(() => {
+      layer.scale = scale;
+      layer.x = 0.5;
+      layer.y = 0.5;
+    });
+    await refreshCoverPreview();
+  });
+}
 
 /** How many tiles are showing a baked mosaic instead of their own portrait —
  *  the number on the button, so it says what it is about to touch. */
