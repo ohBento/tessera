@@ -21,28 +21,39 @@ TypeScript + Fabric.js, Windows only.
 
 | Word | Meaning |
 |---|---|
-| **Kachel** (tile) | one portrait; one BMP file |
-| **Ebene** (layer) | something drawn on top: image, text, shape, group |
-| **Gruppe** | a named set of tiles plus a stack of layers. A tile belongs to **at most one** |
+| **Tile** | one portrait; one BMP file |
+| **Layer** | something drawn on top: image, text, shape, group |
+| **Project** | one wall — which portraits belong together. A tile belongs to **at most one**; the FaceTexture folder is shared by every account on the machine, which is why projects exist |
+| **Unsorted** | the tiles no project has claimed. Derived, never stored. It is a wall too |
+| **Group** | a drawer in the tile list. Purely cosmetic: renders nothing, owns nothing, dissolving one moves no tile |
+| **Shelf** | a project's tiles with no slot on its grid. Drag one onto the wall to place it |
 | **Layout** | a separate tile-sized document, composed on its own canvas |
-| **Stempel** (stamp) | a Layout rendered to a flat PNG and dropped on a group as an image layer |
+| **Stamp** | a Layout rendered to a flat PNG and dropped on **one tile** as an image layer |
+| **Mask** | a layer clipped to the outline, pixels or letters of another layer in the same Layout. The one doing the cutting stops drawing itself |
 
-Two documents share one shell: the **Wand** (the whole grid) and one open
-**Layout**. The header buttons and the right sidebar change with it.
+Two documents share one shell: the **wall** (the whole grid) and one open
+**Layout**. The header buttons and the right sidebar change with it. The
+sidebar's sections, top to bottom: Projects, Layouts, Shelf (only when it has
+something), Groups, Tiles.
 
 The manifest is the only truth; Fabric is a view that writes deltas back, and
 every edit is meant to reach disk immediately. Treat that as the invariant to
 **check**, not as a guarantee: it has been false before, and the way it fails
 is that the sidebar, the canvas and the file each show something different.
 
-Two traps worth knowing before judging behaviour:
+Three traps worth knowing before judging behaviour:
 
 - A **stamp is frozen pixels.** Editing a Layout does not change what is on
-  the tiles until "Stempel aktualisieren". A caption marked *pro Kachel* is
-  the exception: it is kept out of the render and copied onto the group as a
-  live layer, which is the only way per-tile wording can work.
-- **Position and style are shared, wording is not.** One layer in a group is
-  drawn on every tile of that group. Dragging any copy moves all of them.
+  the tiles until "Update stamps". A layer marked *Editable in grid* is the
+  exception: it is kept out of the render and copied onto each tile as a live
+  layer, which is the only way per-tile wording and per-tile logos can work.
+- **A layer exists in exactly one place.** Every tile carries its own stack;
+  nothing is shared between tiles. Two tiles wearing the same Layout hold two
+  separate stamps of it.
+- **A layer used as a mask deliberately vanishes.** It is the hole, not
+  something in the picture, so it draws at opacity 0 and ignores the pointer —
+  its row in the list is the only way to select and move it, and it only wakes
+  up while that row is picked. "The shape disappeared" is the feature.
 
 ## Running it
 
@@ -67,7 +78,8 @@ filesystem** — do it between scenarios for a clean slate.
 
 - `tessera.app` — live state: `manifest`, `selectedTiles`, `selected`,
   `layoutSelection`, `openLayoutId`, `error`, `busy`, `version`
-- `tessera.groups()`, `layouts()`, `openLayout()`, `freeCount()`
+- `tessera.folders()` (the Groups), `layouts()`, `projects()`, `openProject()`,
+  `openLayout()`, `visibleIds()`, `freeCount()`
 - `tessera.stashPickedFile(name, bytes)` → puts bytes in the mock filesystem,
   returns a path
 - `tessera.queuePick(path)` → the next file-picker call returns that path
@@ -118,15 +130,25 @@ the interface. Use the handle to set state up quickly and to read results out.
 
 ## Gestures
 
-**Wall:** click picks a tile, Ctrl/Shift-click adds, drag sweeps a band over
-tiles, **Alt+drag swaps two tiles**, right-click opens the group menu, a click
-past the last tile clears everything, wheel zooms, space or middle-button
-pans.
+**Wall:** click picks a tile, **Ctrl-click adds one, Shift takes the range**
+(over wall order, in the list as well as on the canvas), drag sweeps a band,
+**Alt+drag swaps two tiles**, right-click opens the selection menu (new
+project, move to another project, assign a layout to all of them, put them in
+a group, send back to Unsorted), a click past the last tile clears everything,
+wheel zooms unless the HUD's padlock is on, space or middle-button pans.
+
+Picking a single tile opens its row in the sidebar and scrolls to it; picking
+several only marks them. Only one tile row is open at a time.
 
 **Layout:** Ctrl-click in the layer list multi-selects, dragging snaps to the
-sheet and to other layers (pink guides) with **Alt suppressing it**, shapes
-stretch freely while **Shift constrains**, right-click a layer row for
-grouping and moving.
+sheet and to other layers (pink guides) with **Alt suppressing it**, **handles
+snap too** — the edge under the pointer catches on the sheet and the
+neighbours — shapes stretch freely while **Shift constrains**, right-click a
+layer row for grouping, duplicating and moving, Ctrl+D duplicates, double-click
+the Layout's own tab to rename it.
+
+A caption has **no scale handles at all**: its size is a font size and lives in
+the properties panel. Rotate and move are all it offers.
 
 Reordering rows is **native HTML5 drag-and-drop**, which synthetic mouse
 events cannot drive at all — a coordinate drag there looks like a control that
@@ -180,6 +202,10 @@ then `drop`.
 - A handle drag only registers when the object is the canvas's active object.
   A stray click that cleared the selection turns the next one into a rubber
   band that does nothing — which looks exactly like a broken control.
+- **An object with `evented: false` has no working handles either**, even while
+  it is active: Fabric looks a control up by hit-testing the object first. That
+  is why a mask's stencil is woken only while its row is picked, and why "the
+  handles do nothing" on one is expected rather than a defect.
 
 ## What to report
 
