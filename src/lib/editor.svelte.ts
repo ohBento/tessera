@@ -333,6 +333,19 @@ export async function fileTile(tileId: string, folderId: string) {
   await mutate(() => (folderId ? putInFolder(p, folderId, tileId) : takeOutOfFolder(p, tileId)));
 }
 
+/** Files every picked tile into one group, in a single step.
+ *
+ *  One mutation, so one Ctrl+Z takes the whole armful back out — twenty
+ *  separate calls would be twenty undo steps for one gesture. */
+export async function fileSelectionInto(folderId: string) {
+  const p = openProject();
+  const moving = [...app.selectedTiles];
+  if (!p || !moving.length) return;
+  await mutate(() => {
+    for (const id of moving) putInFolder(p, folderId, id);
+  });
+}
+
 /** Hands the picked tiles to another project. Their layers, wording and
  *  pictures go with them for free — those live under the tile id, which no
  *  project owns. */
@@ -1300,6 +1313,32 @@ async function stampOnto(into: { layers: Layer[] } | undefined, layoutId: string
  *  now that groups no longer hold layers of their own. */
 export const assignTileLayout = (tileId: string, layoutId: string) =>
   stampOnto(app.manifest.tiles[tileId], layoutId);
+
+/** Stamps one layout onto every picked tile.
+ *
+ *  Rendered once, not once per tile: it is the same flat sheet for all of
+ *  them, so forty-four renders would be forty-three too many — and one
+ *  mutation, so giving a wall its design is one undo step rather than
+ *  forty-four. */
+export async function assignLayoutToSelection(layoutId: string) {
+  const layout = app.manifest.layouts.find((l) => l.id === layoutId);
+  const ids = [...app.selectedTiles];
+  if (!layout || !app.deps || !ids.length) return;
+  await run("stamp", async () => {
+    const { asset, seen } = await stampAsset(layout);
+    await mutate(() => {
+      for (const id of ids) {
+        const tile = app.manifest.tiles[id];
+        if (!tile) continue;
+        stampInto(tile, layoutId, asset);
+        // After the stamp, so a live caption sits on top of the picture it was
+        // composed over rather than behind it.
+        syncLiveLayers(tile, layout);
+      }
+      layout.stamped = seen;
+    });
+  });
+}
 
 /** One tile's own layers — what the tile list shows under its row. */
 export const tileLayers = (tileId: string) => app.manifest.tiles[tileId]?.layers ?? [];

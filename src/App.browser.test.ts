@@ -20,6 +20,7 @@ import {
   addLayoutText,
   app,
   applyLayoutTransform,
+  assignLayoutToSelection,
   canGroupLayers,
   closeLayoutDoc,
   dropLayoutLayer,
@@ -44,7 +45,7 @@ import {
   toggleTile,
 } from "./lib/editor.svelte";
 import { addLayoutImage, assignTileLayout, newLayoutDoc, openLayout } from "./lib/editor.svelte";
-import { emptyManifest, findLayer, groupShift, layerLabel } from "./lib/model";
+import { emptyManifest, findLayer, groupShift, layerLabel, type ImageLayer } from "./lib/model";
 import { queuePick, resetMockFiles, stashPickedFile } from "./lib/platform";
 
 /** Waits for a condition instead of a fixed delay: the app loads tiles and
@@ -213,6 +214,29 @@ describe("the wall", () => {
     toggleTile(d, {});
     toggleTile(b, { shift: true });
     expect(app.selectedTiles).toEqual([b, c, d]);
+  });
+
+  it("stamps one layout onto every picked tile in one step", async () => {
+    /* Assigning was one dropdown per row: forty-four visits to give a wall its
+     * design, forty-four renders of the same flat sheet, forty-four undo
+     * steps. The picture is identical for all of them, so it is rendered once
+     * and every tile is pointed at it inside a single mutation. */
+    const [a, b, c] = app.folderIds;
+
+    queuePick(await magentaSquare("blatt"));
+    await newLayoutDoc("Rahmen");
+    await addLayoutImage();
+    await closeLayoutDoc();
+
+    const steps = history.past.length;
+    app.selectedTiles = [a, b, c];
+    await assignLayoutToSelection(layouts()[0].id);
+
+    for (const id of [a, b, c]) expect(tileLayers(id)).toHaveLength(1);
+    // One asset for all three: the same rendered sheet, not three of them.
+    const assets = new Set([a, b, c].map((id) => (tileLayers(id)[0] as ImageLayer).asset));
+    expect(assets.size).toBe(1);
+    expect(history.past.length).toBe(steps + 1);
   });
 
   it("makes a project from the picked tiles and counts only the free ones", async () => {

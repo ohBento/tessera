@@ -16,6 +16,7 @@
     addLayoutShape,
     addLayoutText,
     app,
+    assignLayoutToSelection,
     assignTileLayout,
     bakedCount,
     bakeMosaic,
@@ -39,6 +40,7 @@
     dropTileLayer,
     duplicateLayoutDoc,
     endGesture,
+    fileSelectionInto,
     fileTile,
     folders,
     freeCount,
@@ -434,8 +436,30 @@
           label: `Move to "${p.name}"`,
           run: () => void moveTilesToProject(p.id),
         })),
+        /* Assigning used to be one dropdown per row — forty-four visits to
+           give a wall one design. The layouts are the same library the
+           sidebar lists; this is only a second way in, on the selection. */
+        ...(layouts().length
+          ? [
+              { separator: true } as Item,
+              ...layouts().map((l) => ({
+                label:
+                  picked === 1 ? `Assign "${l.name}"` : `Assign "${l.name}" to ${picked} tiles`,
+                run: () => void assignLayoutToSelection(l.id),
+              })),
+            ]
+          : []),
         ...(app.openProjectId
           ? [
+              { separator: true } as Item,
+              ...folders().map((f) => ({
+                label: picked === 1 ? `Put in "${f.name}"` : `Put ${picked} in "${f.name}"`,
+                run: () => void fileSelectionInto(f.id),
+              })),
+              {
+                label: picked === 1 ? "Put in a new group" : `Put ${picked} in a new group`,
+                run: () => void newFolderHere(""),
+              },
               { separator: true } as Item,
               {
                 label: picked === 1 ? "Back to Unsorted" : `Send ${picked} back to Unsorted`,
@@ -446,6 +470,8 @@
       ],
     };
   }
+
+
 
   /** Right-click in the Layout's layer list. Picks the row first when it is
    *  not already part of the selection, the way every list does. */
