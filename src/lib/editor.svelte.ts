@@ -306,7 +306,7 @@ export async function newFolderHere(name: string) {
   const p = openProject();
   if (!p) return;
   await mutate(() => {
-    const f = newFolder(name.trim() || `Folder ${p.folders.length + 1}`);
+    const f = newFolder(name.trim() || `Group ${p.folders.length + 1}`);
     // The picked tiles go straight in: making a drawer is something you do
     // *to* a selection, and an empty one would then have to be filled by hand.
     for (const id of app.selectedTiles) f.tiles.push(id);

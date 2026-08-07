@@ -670,6 +670,165 @@
   </ul>
 {/snippet}
 
+<!-- One tile, everywhere a tile is listed. Loose on the wall or put away in a
+     group, it is the same row with the same reach — sorting a portrait into a
+     drawer used to strip it of its wording fields and its picture gallery,
+     which made the drawer a place work went to die.
+
+     `inGroup` is the drawer holding it, "" when it is loose. The only
+     difference it makes is the way out: back to the pile, or off the wall. -->
+{#snippet tileRow(id: string, inGroup: string)}
+  {@const own = stampsOf(tileLayers(id))}
+  {@const owner = tileProject(id)}
+  <div
+    class="group"
+    role="presentation"
+    data-tile={id}
+    onmouseenter={() => (app.hoverTile = id)}
+    onmouseleave={() => app.hoverTile === id && (app.hoverTile = "")}
+  >
+    <div class="grouphead" class:selected={app.selectedTiles.includes(id)}>
+      <button class="twisty" onclick={() => toggleTileRow(id)}>
+        {open.has(id) ? "▾" : "▸"}
+      </button>
+      <button
+        class="name"
+        onclick={(e) => toggleTile(id, { ctrl: e.ctrlKey, shift: e.shiftKey })}
+        title="Picks this tile on the wall · Ctrl adds one, Shift takes the range"
+      >
+        {id}
+        <span class="usage">
+          {own.length ? `${own.length} layout(s)` : owner ? "no layout" : "unassigned"}
+        </span>
+      </button>
+      {#if inGroup}
+        <!-- Out of the drawer, back among the loose ones. It never left the
+             wall, so this is the only way out a filed tile needs. -->
+        <button title="Back to the loose pile" onclick={() => fileTile(id, "")}>↓</button>
+      {:else if owner && app.openProjectId}
+        <!-- Off the grid, not out of the project: the tile keeps
+             every layer and only gives up its slot, and the tiles
+             after it close the gap. -->
+        <button title="Off the wall, onto the shelf" onclick={() => unplace(id)}
+          >↩</button
+        >
+      {/if}
+    </div>
+
+    {#if open.has(id)}
+      {@render stampRows(
+        own,
+        (moving, beforeId) => void dropTileLayer(id, moving, beforeId),
+      )}
+      <select
+        class="indent assign"
+        disabled={!layouts().length || !!app.busy}
+        onchange={(e) => {
+          const layoutId = e.currentTarget.value;
+          e.currentTarget.value = "";
+          if (layoutId) void assignTileLayout(id, layoutId);
+        }}
+      >
+        <option value="">+ Assign layout…</option>
+        {#each layouts() as layout (layout.id)}
+          <option value={layout.id}>{layout.name}</option>
+        {/each}
+      </select>
+
+      <!-- What this tile alone says and shows. In the row rather
+           than in a panel below the list: with forty-four rows,
+           editing the first one meant scrolling past all of them
+           and back. Here the fields cannot be further away than
+           the row they belong to. -->
+      {#each tileCaptions(id) as caption (caption.id)}
+        <label class="field indent">
+          <span>{layerLabel(caption)}</span>
+          <!-- The default shows as a placeholder, not as a value:
+               typing over a real value and clearing a field look
+               identical, and only one of them should mean "this
+               tile says nothing". -->
+          <input
+            value={tileText(id, caption.id) ?? ""}
+            placeholder={caption.text}
+            oninput={(e) => void setTileText(id, caption.id, e.currentTarget.value)}
+          />
+          <button
+            title="Use the layer's default text again"
+            disabled={tileText(id, caption.id) === undefined}
+            onclick={() => void clearTileText(id, caption.id)}>↺</button
+          >
+        </label>
+      {/each}
+
+      {#each tileImages(id) as pic (pic.id)}
+        {@const chosen = tileAsset(id, pic.id)}
+        <p class="sub">{layerLabel(pic)}</p>
+        <!-- A gallery rather than a file dialog per tile: class
+             logos repeat across a wall, so from the second tile
+             on the picture is almost always one already
+             imported. The dialog stays, as the "+" that feeds
+             the gallery. -->
+        <div class="gallery indent">
+          {#each tileImageChoices(id, pic.id) as asset (asset)}
+            <button
+              class="swatch"
+              class:on={(chosen ?? pic.asset) === asset}
+              title={asset === pic.asset
+                ? "The layer's own picture"
+                : "Use this picture"}
+              onclick={() => void setTileAsset(id, pic.id, asset)}
+            >
+              {#await assetUrl(asset) then url}
+                <img src={url} alt="" />
+              {/await}
+            </button>
+          {/each}
+          <button
+            class="swatch"
+            title="Pick a new picture…"
+            onclick={() => void pickTileImage(id, pic.id)}
+          >
+            +
+          </button>
+          <!-- A circle with a slash: the sign for "none of them",
+               which is a choice here and not the absence of one. -->
+          <button
+            class="swatch none"
+            class:on={chosen === ""}
+            title="Show no picture on this tile"
+            onclick={() => void setTileAsset(id, pic.id, "")}
+          >
+            <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+              <circle
+                cx="9"
+                cy="9"
+                r="7"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.6"
+              />
+              <line
+                x1="4"
+                y1="14"
+                x2="14"
+                y2="4"
+                stroke="currentColor"
+                stroke-width="1.6"
+              />
+            </svg>
+          </button>
+          <button
+            class="swatch"
+            title="Use the layer's own picture again"
+            disabled={chosen === undefined}
+            onclick={() => void clearTileAsset(id, pic.id)}>↺</button
+          >
+        </div>
+      {/each}
+    {/if}
+  </div>
+{/snippet}
+
 <main>
   <header>
     <div class="docs" role="group" aria-label="Document">
@@ -1145,10 +1304,21 @@
           <p class="empty">Drag onto the wall to choose the slot.</p>
         {/if}
 
-        <!-- The tiles of whichever wall is showing, with any cosmetic drawers
-             first. A drawer is a place to put finished portraits so the list
-             stays scannable — it renders nothing and owns nothing. -->
-        <h2 class="spaced">Tiles</h2>
+        <!-- Groups: drawers for finished portraits, so a wall of forty-four
+             rows stays scannable. Purely cosmetic — a group renders nothing,
+             owns nothing, and dissolving one leaves every tile exactly where
+             it was. Its own section rather than a preamble to Tiles, because
+             it is a list that grows and wants a twisty like the rest. -->
+        <h2 class="spaced">
+          <button class="twisty inline" onclick={() => toggleOpen("groups")}>
+            {open.has("groups") ? "▾" : "▸"}
+          </button>
+          Groups{#if folders().length}&nbsp;({folders().length}){/if}
+        </h2>
+        {#if open.has("groups")}
+          {#if !folders().length}
+            <p class="empty">None yet.</p>
+          {/if}
         {#each folders() as folder (folder.id)}
           <div
             class="group"
@@ -1198,32 +1368,28 @@
               >
             </div>
             {#if open.has(folder.id)}
-              <ul class="indent">
+              <div class="indent">
                 {#each folder.tiles as id (id)}
-                  <li class:selected={app.selectedTiles.includes(id)}>
-                    <button
-                      class="name"
-                      onclick={(e) => toggleTile(id, { ctrl: e.ctrlKey, shift: e.shiftKey })}>{id}</button
-                    >
-                    <button title="Back to the loose pile" onclick={() => fileTile(id, "")}>↓</button>
-                  </li>
+                  {@render tileRow(id, folder.id)}
                 {/each}
-              </ul>
+              </div>
             {/if}
           </div>
         {/each}
 
-        {#if openProject()}
-          <button
-            class="wide"
-            onclick={() => newFolderHere("")}
-            disabled={!!app.busy}
-            title="A drawer for finished tiles, so the list stays short"
-          >
-            + New folder{#if app.selectedTiles.length}&nbsp;({app.selectedTiles.length}){/if}
-          </button>
+          {#if openProject()}
+            <button
+              class="wide"
+              onclick={() => newFolderHere("")}
+              disabled={!!app.busy}
+              title="A drawer for finished tiles, so the list stays short"
+            >
+              + New group{#if app.selectedTiles.length}&nbsp;({app.selectedTiles.length}){/if}
+            </button>
+          {/if}
         {/if}
 
+        <h2 class="spaced">Tiles</h2>
         <div class="group">
           <div class="grouphead">
             <button class="twisty" onclick={() => toggleOpen("tiles")}>
@@ -1238,151 +1404,7 @@
           {#if open.has("tiles")}
             <div class="indent">
               {#each looseIds() as id (id)}
-                {@const own = stampsOf(tileLayers(id))}
-                {@const owner = tileProject(id)}
-                <div
-                  class="group"
-                  role="presentation"
-                  data-tile={id}
-                  onmouseenter={() => (app.hoverTile = id)}
-                  onmouseleave={() => app.hoverTile === id && (app.hoverTile = "")}
-                >
-                  <div class="grouphead" class:selected={app.selectedTiles.includes(id)}>
-                    <button class="twisty" onclick={() => toggleTileRow(id)}>
-                      {open.has(id) ? "▾" : "▸"}
-                    </button>
-                    <button
-                      class="name"
-                      onclick={(e) => toggleTile(id, { ctrl: e.ctrlKey, shift: e.shiftKey })}
-                      title="Picks this tile on the wall · Ctrl adds one, Shift takes the range"
-                    >
-                      {id}
-                      <span class="usage">
-                        {own.length ? `${own.length} layout(s)` : owner ? "no layout" : "unassigned"}
-                      </span>
-                    </button>
-                    {#if owner && app.openProjectId}
-                      <!-- Off the grid, not out of the project: the tile keeps
-                           every layer and only gives up its slot, and the tiles
-                           after it close the gap. -->
-                      <button title="Off the wall, onto the shelf" onclick={() => unplace(id)}
-                        >↩</button
-                      >
-                    {/if}
-                  </div>
-
-                  {#if open.has(id)}
-                    {@render stampRows(
-                      own,
-                      (moving, beforeId) => void dropTileLayer(id, moving, beforeId),
-                    )}
-                    <select
-                      class="indent assign"
-                      disabled={!layouts().length || !!app.busy}
-                      onchange={(e) => {
-                        const layoutId = e.currentTarget.value;
-                        e.currentTarget.value = "";
-                        if (layoutId) void assignTileLayout(id, layoutId);
-                      }}
-                    >
-                      <option value="">+ Assign layout…</option>
-                      {#each layouts() as layout (layout.id)}
-                        <option value={layout.id}>{layout.name}</option>
-                      {/each}
-                    </select>
-
-                    <!-- What this tile alone says and shows. In the row rather
-                         than in a panel below the list: with forty-four rows,
-                         editing the first one meant scrolling past all of them
-                         and back. Here the fields cannot be further away than
-                         the row they belong to. -->
-                    {#each tileCaptions(id) as caption (caption.id)}
-                      <label class="field indent">
-                        <span>{layerLabel(caption)}</span>
-                        <!-- The default shows as a placeholder, not as a value:
-                             typing over a real value and clearing a field look
-                             identical, and only one of them should mean "this
-                             tile says nothing". -->
-                        <input
-                          value={tileText(id, caption.id) ?? ""}
-                          placeholder={caption.text}
-                          oninput={(e) => void setTileText(id, caption.id, e.currentTarget.value)}
-                        />
-                        <button
-                          title="Use the layer's default text again"
-                          disabled={tileText(id, caption.id) === undefined}
-                          onclick={() => void clearTileText(id, caption.id)}>↺</button
-                        >
-                      </label>
-                    {/each}
-
-                    {#each tileImages(id) as pic (pic.id)}
-                      {@const chosen = tileAsset(id, pic.id)}
-                      <p class="sub">{layerLabel(pic)}</p>
-                      <!-- A gallery rather than a file dialog per tile: class
-                           logos repeat across a wall, so from the second tile
-                           on the picture is almost always one already
-                           imported. The dialog stays, as the "+" that feeds
-                           the gallery. -->
-                      <div class="gallery indent">
-                        {#each tileImageChoices(id, pic.id) as asset (asset)}
-                          <button
-                            class="swatch"
-                            class:on={(chosen ?? pic.asset) === asset}
-                            title={asset === pic.asset
-                              ? "The layer's own picture"
-                              : "Use this picture"}
-                            onclick={() => void setTileAsset(id, pic.id, asset)}
-                          >
-                            {#await assetUrl(asset) then url}
-                              <img src={url} alt="" />
-                            {/await}
-                          </button>
-                        {/each}
-                        <button
-                          class="swatch"
-                          title="Pick a new picture…"
-                          onclick={() => void pickTileImage(id, pic.id)}
-                        >
-                          +
-                        </button>
-                        <!-- A circle with a slash: the sign for "none of them",
-                             which is a choice here and not the absence of one. -->
-                        <button
-                          class="swatch none"
-                          class:on={chosen === ""}
-                          title="Show no picture on this tile"
-                          onclick={() => void setTileAsset(id, pic.id, "")}
-                        >
-                          <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
-                            <circle
-                              cx="9"
-                              cy="9"
-                              r="7"
-                              fill="none"
-                              stroke="currentColor"
-                              stroke-width="1.6"
-                            />
-                            <line
-                              x1="4"
-                              y1="14"
-                              x2="14"
-                              y2="4"
-                              stroke="currentColor"
-                              stroke-width="1.6"
-                            />
-                          </svg>
-                        </button>
-                        <button
-                          class="swatch"
-                          title="Use the layer's own picture again"
-                          disabled={chosen === undefined}
-                          onclick={() => void clearTileAsset(id, pic.id)}>↺</button
-                        >
-                      </div>
-                    {/each}
-                  {/if}
-                </div>
+                {@render tileRow(id, "")}
               {/each}
             </div>
           {/if}
