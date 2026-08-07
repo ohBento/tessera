@@ -3,7 +3,7 @@
    * and which is showing decides both the canvas in the middle and what the
    * side panel lists. The tool strip and dense token set land in M4; this
    * exists to drive the layout/stamp path end to end. */
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { ask } from "./lib/platform";
 
   import ContextMenu, { type Item } from "./ContextMenu.svelte";
@@ -95,6 +95,7 @@
     toggleLayerLocked,
     toggleLayoutLayerHidden,
     toggleLayoutPick,
+    toggleTile,
     undoEdit,
     undoable,
   } from "./lib/editor.svelte";
@@ -131,6 +132,28 @@
     open.has(id) ? open.delete(id) : open.add(id);
     open = new Set(open);
   };
+
+  /* Follow the pick into the list. One tile: open its row, so the wording and
+     the picture it carries are right there — with forty-four rows the tile you
+     just clicked on the wall is usually somewhere off-screen. Several: leave
+     the rows shut, because twenty open editors is not a list any more, and
+     only scroll to the topmost of them.
+
+     Nothing happens while the section is collapsed: it was collapsed on
+     purpose, and there is no row to scroll to anyway. */
+  $effect(() => {
+    const picked = app.selectedTiles;
+    if (!picked.length || !open.has("tiles")) return;
+    if (picked.length === 1 && !open.has(picked[0])) {
+      open.add(picked[0]);
+      open = new Set(open);
+    }
+    const first = visibleIds().find((id) => picked.includes(id)) ?? picked[0];
+    // After the row exists, not before — opening it is what creates it.
+    void tick().then(() =>
+      document.querySelector(`[data-tile="${first}"]`)?.scrollIntoView({ block: "nearest" }),
+    );
+  });
 
   /** The row being renamed, "" for none. One at a time by construction. */
   let renaming = $state("");
@@ -989,7 +1012,10 @@
                 ondragend={() => (dragTile = "")}
               >
                 <canvas class="thumb" width="31" height="40" use:portrait={id}></canvas>
-                <button class="name" onclick={() => (app.selectedTiles = [id])}>{id}</button>
+                <button
+                  class="name"
+                  onclick={(e) => toggleTile(id, { ctrl: e.ctrlKey, shift: e.shiftKey })}>{id}</button
+                >
                 <button title="Put it at the end of the wall" onclick={() => placeTileAt(id, null)}
                   >↦</button
                 >
@@ -1055,7 +1081,10 @@
               <ul class="indent">
                 {#each folder.tiles as id (id)}
                   <li class:selected={app.selectedTiles.includes(id)}>
-                    <button class="name" onclick={() => (app.selectedTiles = [id])}>{id}</button>
+                    <button
+                      class="name"
+                      onclick={(e) => toggleTile(id, { ctrl: e.ctrlKey, shift: e.shiftKey })}>{id}</button
+                    >
                     <button title="Back to the loose pile" onclick={() => fileTile(id, "")}>↑</button>
                   </li>
                 {/each}
@@ -1094,6 +1123,7 @@
                 <div
                   class="group"
                   role="presentation"
+                  data-tile={id}
                   onmouseenter={() => (app.hoverTile = id)}
                   onmouseleave={() => app.hoverTile === id && (app.hoverTile = "")}
                 >
@@ -1103,8 +1133,8 @@
                     </button>
                     <button
                       class="name"
-                      onclick={() => (app.selectedTiles = [id])}
-                      title="Picks this tile on the wall"
+                      onclick={(e) => toggleTile(id, { ctrl: e.ctrlKey, shift: e.shiftKey })}
+                      title="Picks this tile on the wall · Ctrl adds one, Shift takes the range"
                     >
                       {id}
                       <span class="usage">

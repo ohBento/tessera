@@ -40,6 +40,7 @@ import {
   setLayoutSelection,
   tileCaptions,
   toggleLayoutPick,
+  toggleTile,
 } from "./lib/editor.svelte";
 import { addLayoutImage, assignTileLayout, newLayoutDoc, openLayout } from "./lib/editor.svelte";
 import { emptyManifest, findLayer, groupShift, layerLabel } from "./lib/model";
@@ -186,6 +187,32 @@ describe("the wall", () => {
     // And the wording panel can find it.
     app.selectedTiles = [a];
     expect(tileCaptions()).toHaveLength(1);
+  });
+
+  it("takes a range with shift and a single tile with ctrl", async () => {
+    /* Twenty tiles into a drawer used to mean twenty ctrl-clicks: the grid
+     * treated shift as another ctrl, and a click in the list replaced the
+     * selection outright. The range runs over wall order, so it is the same
+     * answer whether it was clicked on the wall or in the list. */
+    await enterInbox();
+    const [a, b, c, d] = app.folderIds;
+
+    toggleTile(a, {});
+    toggleTile(c, { shift: true });
+    expect(app.selectedTiles).toEqual([a, b, c]);
+
+    // The anchor stays put, so a second shift-click reshapes the same range
+    // instead of starting over from the last one.
+    toggleTile(d, { shift: true });
+    expect(app.selectedTiles).toEqual([a, b, c, d]);
+
+    toggleTile(b, { ctrl: true });
+    expect(app.selectedTiles).toEqual([a, c, d]);
+
+    // Upwards from the anchor reads the same way round as downwards.
+    toggleTile(d, {});
+    toggleTile(b, { shift: true });
+    expect(app.selectedTiles).toEqual([b, c, d]);
   });
 
   it("makes a project from the picked tiles and counts only the free ones", async () => {

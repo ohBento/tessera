@@ -332,7 +332,7 @@
       // click toggles the tile it landed on. Mouse-down past the last tile
       // already cleared everything, layer included.
       else if (!wasBand && from && tileAt(opt.e) === from)
-        toggleTile(from, opt.e.ctrlKey || opt.e.shiftKey);
+        toggleTile(from, { ctrl: opt.e.ctrlKey, shift: opt.e.shiftKey });
     });
 
     /* Tile boundaries. Drawn straight onto the context after Fabric has

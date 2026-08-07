@@ -92,6 +92,8 @@ export const app = $state({
   selected: "",
   /** Tiles picked on the canvas. What a new project gets built from. */
   selectedTiles: [] as string[],
+  /** Where a Shift-range measures from: the last tile picked without Shift. */
+  tileAnchor: "",
   /** Folder being hovered in the sidebar — its tiles get outlined on the wall,
    *  so you can see what a drawer holds without opening it. */
   hoverFolder: "",
@@ -136,12 +138,36 @@ export const app = $state({
   layoutSelection: [] as string[],
 });
 
-export function toggleTile(id: string, additive: boolean) {
+/** Everything between two ids, inclusive, in the order the list is in.
+ *
+ *  Either end missing — a shelved tile has no slot on the wall — means there
+ *  is no range to take, so the click stands on its own. */
+export const tileRange = (ids: string[], from: string, to: string): string[] => {
+  const a = ids.indexOf(from);
+  const b = ids.indexOf(to);
+  if (a < 0 || b < 0) return [to];
+  return ids.slice(Math.min(a, b), Math.max(a, b) + 1);
+};
+
+/** What a click on a tile does, on the wall and in the list alike.
+ *
+ *  Ctrl adds or removes one, Shift takes everything from the anchor to here —
+ *  the two gestures every list has. Filing twenty tiles into a drawer used to
+ *  cost twenty ctrl-clicks, because Shift was merely a second Ctrl. */
+export function toggleTile(id: string, mods: { ctrl?: boolean; shift?: boolean }) {
   // Picking something is the user moving on; a note about the last action has
   // had its moment and is now in the way of the selection count.
   app.error = "";
   const current = app.selectedTiles;
-  if (additive) {
+  /* The anchor deliberately stays where it is: a second shift-click reshapes
+   * the same range rather than starting over from the last one, which is what
+   * makes "a bit further down after all" one click instead of three. */
+  if (mods.shift && app.tileAnchor) {
+    app.selectedTiles = tileRange(visibleIds(), app.tileAnchor, id);
+    return;
+  }
+  app.tileAnchor = id;
+  if (mods.ctrl) {
     app.selectedTiles = current.includes(id) ? current.filter((t) => t !== id) : [...current, id];
     return;
   }
