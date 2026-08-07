@@ -22,6 +22,9 @@ jobs:
         with:
           workspaces: src-tauri
       - run: npm ci
+      # The browser test project renders through Fabric in a real Chromium, and
+      # npm ci does not fetch it.
+      - run: npx playwright install chromium
       - run: npm test
       - run: npm run tauri build
 
