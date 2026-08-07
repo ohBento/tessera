@@ -58,6 +58,20 @@ function block(colour: string, size = 200): HTMLCanvasElement {
   return c;
 }
 
+/** A filled disc on transparency. What a PNG logo looks like to a mask: the
+ *  cut has to follow the pixels that are actually there, not the box they
+ *  arrived in. */
+function disc(colour: string, size = 200): HTMLCanvasElement {
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const ctx = c.getContext("2d")!;
+  ctx.fillStyle = colour;
+  ctx.beginPath();
+  ctx.arc(size / 2, size / 2, size * 0.3, 0, Math.PI * 2);
+  ctx.fill();
+  return c;
+}
+
 const canvases = new Map<string, HTMLCanvasElement>();
 
 const canvasFor = (key: string, make: () => HTMLCanvasElement) => {
@@ -69,11 +83,15 @@ const canvasFor = (key: string, make: () => HTMLCanvasElement) => {
   return c;
 };
 
-/** An asset name of the form "block:#rrggbb" yields a flat colour block;
- *  anything else yields the asymmetric test picture. */
+/** "block:#rrggbb" yields a flat colour block, "disc:#rrggbb" a filled circle
+ *  on transparency, anything else the asymmetric test picture. */
 const assetCanvas = (name: string) =>
   canvasFor(`asset:${name}`, () =>
-    name.startsWith("block:") ? block(name.slice(6)) : paint(name, 400, 300),
+    name.startsWith("block:")
+      ? block(name.slice(6))
+      : name.startsWith("disc:")
+        ? disc(name.slice(5))
+        : paint(name, 400, 300),
   );
 
 export const testDeps: SceneDeps = {

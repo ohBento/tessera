@@ -311,7 +311,7 @@
   <p class="empty">A group has no properties of its own.</p>
 {/if}
 
-{#if inLayout && layer.kind !== "group" && masks.length}
+{#if inLayout && layer.kind !== "group"}
   <!-- Masking is a Layout matter: that is where shapes and pictures lie in one
        stack. A tile carries only stamps and the copies a Layout keeps live,
        and there is nothing there to cut with. -->
@@ -319,12 +319,18 @@
     class="field"
     title={layer.perTile
       ? "Not while it is editable in the grid — the cut happens here, and the tile only gets the result"
-      : "Clips this layer to a shape in this Layout"}
+      : masks.length
+        ? "Clips this layer to another one in this Layout"
+        : "Add another layer to this Layout first — there is nothing to cut with"}
   >
     <span>Mask</span>
+    <!-- Shown even with nothing to offer. A control that appears and vanishes
+         with the document's contents reads as a bug, and this one did: the row
+         only existed once a shape happened to be present, so the feature
+         looked missing. -->
     <select
       value={layer.maskId ?? ""}
-      disabled={!!layer.perTile}
+      disabled={!!layer.perTile || !masks.length}
       onchange={(e) => set("maskId", e.currentTarget.value)}
     >
       <option value="">none</option>

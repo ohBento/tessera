@@ -526,13 +526,17 @@ type Masking = { root: Layer[]; stencils: Set<string> };
  *  draws unclipped, which is the documented behaviour of a deleted shape. */
 async function maskFor(l: Layer, deps: SceneDeps, m: Masking): Promise<fabric.Object | undefined> {
   if (!l.maskId) return undefined;
-  const shape = findLayer(m.root, l.maskId);
-  // A switched-off shape stops cutting. The eye has to mean the same thing
-  // everywhere: something that is not there cannot be why half a picture is
-  // missing, and nothing else on screen would have explained it.
-  if (shape?.kind !== "shape" || shape.hidden) return undefined;
-  const shift = nestingShift(m.root, shape.id) ?? { dx: 0, dy: 0 };
-  const placed = { ...shape, x: shape.x + shift.dx, y: shape.y + shift.dy };
+  const cutter = findLayer(m.root, l.maskId);
+  /* Anything that draws: a shape cuts with its outline, a picture with the
+   * pixels it has, a caption with its letters. A group draws nothing of its
+   * own — it is a displacement — so there is nothing there to cut with.
+   *
+   * A switched-off layer stops cutting. The eye has to mean the same thing
+   * everywhere: something that is not there cannot be why half a picture is
+   * missing, and nothing else on screen would have explained it. */
+  if (!cutter || cutter.kind === "group" || cutter.hidden) return undefined;
+  const shift = nestingShift(m.root, cutter.id) ?? { dx: 0, dy: 0 };
+  const placed = { ...cutter, x: cutter.x + shift.dx, y: cutter.y + shift.dy } as Layer;
   const obj = await layerObject(placed, deps, { w: TILE_W, h: TILE_H, x: 0, y: 0 }, "", {});
   if (!obj) return undefined;
   obj.absolutePositioned = true;

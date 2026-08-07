@@ -60,10 +60,10 @@ type Common = {
   glow?: number; // blur radius as a fraction of tile width, 0 or absent = off
   glowColor?: Paint;
   glowOpacity?: number; // 0..1, independent of the layer's own opacity
-  /* A shape layer's id to clip this layer to. A dangling id (the shape got
-   * deleted) simply fails to resolve at render time and the layer draws
-   * unclipped — no cleanup pass needed on delete. Lives on Common so both
-   * image and text layers can use it. */
+  /* Another layer's id to clip this one to — a shape by its outline, a picture
+   * by the pixels it actually has, a caption by its letters. A dangling id (the
+   * layer got deleted) simply fails to resolve at render time and this one
+   * draws unclipped, so nothing needs cleaning up on delete. */
   maskId?: string;
   /* Keep what falls outside the mask instead of inside it — a hole punched
    * through the layer rather than a piece cut out of it. Absent means the
@@ -747,14 +747,19 @@ export const stencilIds = (layers: Layer[]): Set<string> =>
       .filter((id): id is string => !!id),
   );
 
-/** The shapes a layer may be masked by: any in this Layout except itself.
+/** What a layer may be cut to: anything else in this Layout that draws.
  *
- *  Itself, because a layer clipped to its own outline is either a no-op or an
- *  empty picture, and neither is worth a control. Two layers masking each
- *  other is left possible — both become stencils, nothing draws, and one
+ *  A shape cuts with its outline, a picture with the pixels it actually has —
+ *  a PNG badge is mostly transparent, and clipping to the box it arrived in
+ *  would defeat the point — and a caption with its letters.
+ *
+ *  Groups are out: a group is a displacement, not a picture, and it draws
+ *  nothing of its own to cut with. Itself is out too, since a layer clipped to
+ *  its own outline is either a no-op or an empty picture. Two layers masking
+ *  each other is left possible — both become stencils, nothing draws, and one
  *  click puts it back. */
-export const maskChoices = (layers: Layer[], layerId: string): ShapeLayer[] =>
-  [...walkLayers(layers)].filter((l): l is ShapeLayer => l.kind === "shape" && l.id !== layerId);
+export const maskChoices = (layers: Layer[], layerId: string): Layer[] =>
+  [...walkLayers(layers)].filter((l) => l.kind !== "group" && l.id !== layerId);
 
 export const layerLabel = (l: Layer) => {
   if (l.name) return l.name;

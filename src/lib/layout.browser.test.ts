@@ -7,7 +7,14 @@ import { renderLayout } from "./layout";
 import * as fabric from "fabric";
 
 import { buildLayout } from "./scene";
-import { newGroupLayer, newImageLayer, newLayout, newShapeLayer, newTextLayer } from "./model";
+import {
+  maskChoices,
+  newGroupLayer,
+  newImageLayer,
+  newLayout,
+  newShapeLayer,
+  newTextLayer,
+} from "./model";
 import { testDeps } from "../test/images";
 
 /** Decodes a PNG back into pixels, the same shape pixel-reading tests
@@ -414,15 +421,14 @@ describe("masks", () => {
     expect(await ink(layout, 0.5, 0.9)).toBe(0);
   });
 
-  it("draws unclipped when the mask names something that is not a shape", async () => {
-    // The dropdown cannot produce this; a hand-edited manifest can.
+  it("draws unclipped when the mask names a group", async () => {
+    /* A group is the one kind that draws nothing of its own, so there is
+     * nothing to cut with. The dropdown leaves groups out; a hand-edited
+     * manifest can still name one. */
     const { layout, pic } = sheet();
-    const other = newImageLayer("block:#00ff00");
-    other.x = 0.5;
-    other.y = 0.5;
-    other.scale = 0.2;
-    layout.layers.unshift(other);
-    pic.maskId = other.id;
+    const group = newGroupLayer([]);
+    layout.layers.unshift(group);
+    pic.maskId = group.id;
 
     const px = await decodeProbe(layout);
     expect(px(0.1, 0.5)).toEqual([255, 0, 255, 255]);
@@ -525,5 +531,88 @@ describe("masks and the eye", () => {
     pic.hidden = true;
     const px = await probe(layout);
     expect(px(0.5, 0.5)).toEqual([0, 255, 0, 255]);
+  });
+});
+
+describe("anything can be the mask", () => {
+  const probe = async (layout: Parameters<typeof renderLayout>[0]) => {
+    const bytes = await renderLayout(layout, testDeps);
+    const bmp = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+    const c = new OffscreenCanvas(bmp.width, bmp.height);
+    const ctx = c.getContext("2d")!;
+    ctx.drawImage(bmp, 0, 0);
+    const { data } = ctx.getImageData(0, 0, bmp.width, bmp.height);
+    return (x: number, y: number) => {
+      const o = (Math.round(y * TILE_H) * bmp.width + Math.round(x * TILE_W)) * 4;
+      return [data[o], data[o + 1], data[o + 2], data[o + 3]];
+    };
+  };
+
+  /** A magenta sheet over the whole tile, ready to be cut by something. */
+  const sheet = () => {
+    const pic = newImageLayer("block:#ff00ff");
+    pic.x = 0.5;
+    pic.y = 0.5;
+    pic.scale = 1;
+    return pic;
+  };
+
+  it("cuts to a picture's own pixels, not to the box it arrived in", async () => {
+    /* A PNG logo is mostly transparent. Masking with it has to follow the ink,
+     * or every badge would come out as a rectangle. */
+    const layout = newLayout("Loch aus einem PNG");
+    const stencil = newImageLayer("disc:#ffffff");
+    stencil.x = 0.5;
+    stencil.y = 0.5;
+    stencil.scale = 0.5;
+    const pic = sheet();
+    pic.maskId = stencil.id;
+    layout.layers.push(stencil, pic);
+
+    const px = await probe(layout);
+    expect(px(0.5, 0.5)).toEqual([255, 0, 255, 255]);
+    /* Just inside the stencil's square but outside its disc: a box-shaped clip
+     * would keep this, the alpha-shaped one drops it. The disc's radius is 0.3
+     * of a 0.5-wide picture, so its corner sits well clear of the circle. */
+    expect(px(0.29, 0.29)[3]).toBe(0);
+    // And well outside the whole thing.
+    expect(px(0.05, 0.5)[3]).toBe(0);
+  });
+
+  it("cuts to the letters of a caption", async () => {
+    const layout = newLayout("Loch aus Buchstaben");
+    const words = newTextLayer();
+    words.text = "M";
+    words.x = 0.5;
+    words.y = 0.5;
+    words.size = 0.5;
+    const pic = sheet();
+    pic.maskId = words.id;
+    layout.layers.push(words, pic);
+
+    const px = await probe(layout);
+    // Some of the sheet survives, and the corners of the tile do not.
+    const { data } = await (async () => {
+      const bytes = await renderLayout(layout, testDeps);
+      const bmp = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+      const c = new OffscreenCanvas(bmp.width, bmp.height);
+      c.getContext("2d")!.drawImage(bmp, 0, 0);
+      return c.getContext("2d")!.getImageData(0, 0, bmp.width, bmp.height);
+    })();
+    let kept = 0;
+    for (let i = 3; i < data.length; i += 4) if (data[i] > 0) kept++;
+    expect(kept).toBeGreaterThan(0);
+    // A whole tile is 501696 pixels; a single letter is a small fraction.
+    expect(kept).toBeLessThan(TILE_W * TILE_H * 0.3);
+    expect(px(0.05, 0.05)[3]).toBe(0);
+  });
+
+  it("leaves a group out of the choices", async () => {
+    // A group is a displacement, not a picture — there is nothing to cut with.
+    const inner = newShapeLayer("rect");
+    const pic = sheet();
+    const group = newGroupLayer([inner]);
+    const choices = maskChoices([group, pic], pic.id).map((l) => l.id);
+    expect(choices).toEqual([inner.id]);
   });
 });
