@@ -67,6 +67,8 @@
     renameLayout,
     renameFolder,
     renameProject,
+    restorableCount,
+    restoreProject,
     removeFolder,
     saveLayout,
     saveToGame,
@@ -281,6 +283,25 @@
     )
       return;
     await deleteLayoutDoc(id);
+  }
+
+  /** Puts the game's own portraits back over this project's tiles.
+   *
+   *  Asks first even though nothing in the document changes: it is the one
+   *  action here that reaches into the game folder without being reversible by
+   *  Ctrl+Z, and the way back is a second deliberate press of Write to game. */
+  async function resetProject() {
+    const p = openProject();
+    if (!p) return;
+    if (
+      !(await confirmed(
+        `Put the game's original portraits back for ${restorableCount()} tile(s) of "${p.name}"? ` +
+          `Your layers and arrangement stay — press Write to game to put them back on.`,
+        "Reset in game?",
+      ))
+    )
+      return;
+    await restoreProject();
   }
 
   /** Deleting a project hands its tiles back to the inbox with every layer
@@ -652,6 +673,20 @@
           : "Open a project with tiles on its grid — the inbox is not a wall"}
       >
         Write to game
+      </button>
+      <!-- The way back into the game, not out of the work: this writes the
+           vaulted originals over the game's files and touches neither a layer
+           nor an arrangement, so Write to game puts everything straight back.
+           Not undoable, because nothing in the document changed — which is
+           exactly why it asks first. -->
+      <button
+        onclick={resetProject}
+        disabled={!restorableCount() || !!app.busy}
+        title={restorableCount()
+          ? "Puts the game's own portraits back for this project; your layers stay"
+          : "Open a project first"}
+      >
+        Reset in game
       </button>
     {/if}
 

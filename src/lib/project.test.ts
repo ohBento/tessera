@@ -9,7 +9,7 @@ import { emptyManifest, newProject, projectOf } from "./model";
  * second call after a failure actually reaches the filesystem again. */
 
 const readFile = vi.hoisted(() => vi.fn());
-const exists = vi.hoisted(() => vi.fn(async () => false));
+const exists = vi.hoisted(() => vi.fn(async (_p?: string) => false));
 
 /* A filesystem that takes a moment, so two writes started in the same tick
  * really do overlap — an instant mock would hide the very race under test. */
@@ -53,7 +53,7 @@ vi.stubGlobal("createImageBitmap", vi.fn(async () => ({ width: 1, height: 1 })))
 // constructor, and Vite's own module resolution needs `new URL` to work.
 URL.createObjectURL = () => "blob:x";
 
-const { loadOriginal, assetUrl, saveManifest, loadManifest } = await import("./project");
+const { loadOriginal, assetUrl, saveManifest, loadManifest, restoreTiles } = await import("./project");
 
 describe("saveManifest survives overlapping writes", () => {
   /** Dragging a multi-selection fires one save per member in the same tick.
@@ -102,6 +102,33 @@ describe("a failed read does not poison the cache", () => {
 
     readFile.mockResolvedValueOnce(new Uint8Array([1]));
     await expect(assetUrl("/dir", "a.png")).resolves.toBe("blob:x");
+  });
+});
+
+describe("restoreTiles", () => {
+  /* Putting the game's own portraits back is the way out of a wall that went
+   * wrong, and it must never depend on the manifest: the vault is the record of
+   * what BDO shipped, and a tile with no vault copy was simply never written to
+   * — there is nothing to undo and nothing to report. */
+  it("copies back only the tiles that were ever written, and counts them", async () => {
+    const platform = await import("./platform");
+    const copyFile = vi.mocked(platform.copyFile);
+    copyFile.mockClear();
+    // "b" was never written to the game, so it has no vault copy.
+    exists.mockImplementation(async (p) => !!p && p.includes("/vault/") && !p.includes("b.bmp"));
+
+    const n = await restoreTiles("/docs/FaceTexture", ["a", "b", "c"]);
+
+    expect(n).toBe(2);
+    const targets = copyFile.mock.calls.map((c) => String(c[1]));
+    expect(targets).toEqual(["/docs/FaceTexture/a.bmp", "/docs/FaceTexture/c.bmp"]);
+    // Copied *out of* the vault, not into it: the direction is the whole point.
+    expect(String(copyFile.mock.calls[0][0])).toContain("/vault/");
+  });
+
+  it("reports zero when nothing was ever written", async () => {
+    exists.mockImplementation(async () => false);
+    expect(await restoreTiles("/docs/FaceTexture", ["a"])).toBe(0);
   });
 });
 

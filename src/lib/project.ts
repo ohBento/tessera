@@ -219,6 +219,28 @@ export async function restoreFromVault(dir: string, id: string) {
   if (await exists(backup)) await copyFile(backup, await tilePath(dir, id));
 }
 
+/** Puts the game's own portraits back for a list of tiles, and says how many
+ *  it actually replaced.
+ *
+ *  The vault is the record of what BDO shipped: a copy is made in the instant
+ *  before Tessera first overwrites a file, so an id with no vault copy was
+ *  never written to and has nothing to undo. That is why this counts what it
+ *  found rather than what it was asked for — "0 restored" on a project that was
+ *  never written is the honest answer, not a failure.
+ *
+ *  Deliberately touches nothing but the game folder. The manifest keeps every
+ *  layer and every arrangement, so this is "show the originals in game again",
+ *  not "throw the work away" — and pressing Write to game puts it all back. */
+export async function restoreTiles(dir: string, ids: string[]): Promise<number> {
+  let n = 0;
+  for (const id of ids) {
+    if (!(await exists(await vaultPath(dir, id)))) continue;
+    await copyFile(await vaultPath(dir, id), await tilePath(dir, id));
+    n++;
+  }
+  return n;
+}
+
 /* A snapshot is a copy of the manifest, nothing more. A look is fully described
  * by it plus the content-hashed assets, which are never deleted — storing
  * rendered images would cost megabytes per look and lose editability. */

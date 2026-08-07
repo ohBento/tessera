@@ -33,6 +33,7 @@ import {
   newTextLayer,
   placeTile,
   projectOf,
+  projectTiles,
   putInFolder,
   refreshStamps,
   removeFromProjectToInbox,
@@ -62,6 +63,7 @@ import {
   loadAsset,
   loadManifest,
   pruneVault,
+  restoreTiles,
   saveGeneratedAsset,
   saveManifest,
   tauriDeps,
@@ -1228,6 +1230,36 @@ export async function saveLayout(layoutId: string) {
 /** Only a project can be written: the inbox is the tiles nobody has arranged
  *  yet, and writing it would push unfinished portraits into the game. */
 export const canSaveToGame = () => !!openProject()?.order.length;
+
+/** How many of this project's tiles could be put back — everything it owns,
+ *  placed or shelved, since a tile written to the game keeps its vault copy
+ *  whether or not it still has a slot. */
+export const restorableCount = () => {
+  const p = openProject();
+  return p ? projectTiles(p).length : 0;
+};
+
+/** Writes the game's own portraits back over this project's tiles.
+ *
+ *  Touches the game folder and nothing else: every layer, layout and slot stays
+ *  exactly as it is, so this is "show the originals in game again" rather than
+ *  "throw the work away", and Write to game puts it all back. Nothing to undo
+ *  either — the manifest never changed, which is why no checkpoint is taken. */
+export async function restoreProject() {
+  const p = openProject();
+  if (!p) return;
+  const ids = projectTiles(p);
+  await run("restore", async () => {
+    const n = await restoreTiles(app.dir, ids);
+    app.error = n
+      ? `${n} portrait(s) put back in the game`
+      : "Nothing to put back — none of these were written";
+    /* No rebuild, and no cache to drop: loadOriginal already prefers the vault
+     * copy over the file in the game folder, and the vault copy is exactly what
+     * was just written there. The editor's idea of each original is unchanged,
+     * so the wall on screen is already right. */
+  });
+}
 
 export async function saveToGame() {
   const project = openProject();
