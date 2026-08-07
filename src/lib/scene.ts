@@ -36,7 +36,17 @@ export type Wall = { ids: string[]; gridLayers: Layer[] };
  * mosaicBakeCrops also needs — and are re-exported here so every existing
  * caller of scene.ts keeps working unchanged. */
 export { cellAt, gridSize, rowsFor } from "./geometry";
-import { cellAt, gradientLine, gridSize, LINE_HEIGHT, polygonPoints } from "./geometry";
+import {
+  cellAt,
+  gradientLine,
+  gridSize,
+  LINE_HEIGHT,
+  polygonPoints,
+  snapEdges,
+  type Box,
+  type Edge,
+  type Guide,
+} from "./geometry";
 
 /** What a Fabric object remembers about where it came from, so a drag can be
  *  written back to the right layer without searching the model for a match. */
@@ -286,6 +296,76 @@ async function background(
  *  nowhere to be stored and would spring back the moment the scene rebuilt —
  *  better not to offer the handle than to offer one that lies. */
 export const freeScale = (l: Layer) => l.kind === "shape";
+
+/** Which edges each handle has hold of. */
+const HANDLE_EDGES: Record<string, Edge[]> = {
+  tl: ["left", "top"],
+  tr: ["right", "top"],
+  bl: ["left", "bottom"],
+  br: ["right", "bottom"],
+  ml: ["left"],
+  mr: ["right"],
+  mt: ["top"],
+  mb: ["bottom"],
+};
+
+/** Pulls the edges under the pointer onto nearby lines, mid-resize, and says
+ *  which lines they landed on so the caller can draw them.
+ *
+ *  The correction is applied here rather than handed back, because every
+ *  caller would otherwise repeat the same anchor bookkeeping: the opposite
+ *  side must not move a pixel, and the only way to be sure of that across
+ *  Fabric's origin handling is to scale, measure where the box actually ended
+ *  up, and shift it back by the difference.
+ *
+ *  A rotated frame is left alone. Its bounding rect has no edge that belongs
+ *  to the object, and scaling along one is not a scale at all. */
+export function snapScale(
+  target: fabric.Object,
+  corner: string,
+  targets: Box[],
+  threshold: number,
+  uniform: boolean,
+): Guide[] {
+  const edges = HANDLE_EDGES[corner];
+  if (!edges || (target.angle ?? 0) % 360 !== 0) return [];
+
+  target.setCoords();
+  const box = target.getBoundingRect();
+  if (!box.width || !box.height) return [];
+  const snap = snapEdges(box, edges, targets, threshold);
+  if (!snap.dx && !snap.dy) return [];
+
+  /* Growing rightwards adds the correction to the width; growing leftwards
+   * subtracts it, because the edge that moved is the one the width is measured
+   * from. */
+  let fx = snap.dx ? (box.width + (edges.includes("right") ? snap.dx : -snap.dx)) / box.width : 1;
+  let fy = snap.dy ? (box.height + (edges.includes("bottom") ? snap.dy : -snap.dy)) / box.height : 1;
+  let guides = snap.guides;
+
+  /* An image or a caption has one size field, so both axes take the same
+   * factor or the next rebuild would throw half of it away. The gentler pull
+   * wins and the other axis follows it — and only the winner's guide is drawn,
+   * since the edge that merely came along does not actually land on anything. */
+  if (uniform) {
+    const useX = snap.dx !== 0 && (snap.dy === 0 || Math.abs(1 - fx) <= Math.abs(1 - fy));
+    fx = fy = useX ? fx : fy;
+    guides = guides.filter((g) => g.axis === (useX ? "x" : "y"));
+  }
+  if (fx <= 0 || fy <= 0) return [];
+
+  target.scaleX = (target.scaleX ?? 1) * fx;
+  target.scaleY = (target.scaleY ?? 1) * fy;
+  target.setCoords();
+  const now = target.getBoundingRect();
+  // Where the anchored side has to stay: the edge the pointer is not holding.
+  const wantLeft = edges.includes("left") ? box.left + box.width - now.width : box.left;
+  const wantTop = edges.includes("top") ? box.top + box.height - now.height : box.top;
+  target.left = (target.left ?? 0) + (wantLeft - now.left);
+  target.top = (target.top ?? 0) + (wantTop - now.top);
+  target.setCoords();
+  return guides;
+}
 
 /** `allowRotate` is false for a grid-space image: it gets baked into every
  *  tile's `base` (see mosaicBakeCrops in geometry.ts), and `Base` has no

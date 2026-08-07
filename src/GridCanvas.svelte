@@ -21,7 +21,7 @@
   } from "./lib/editor.svelte";
   import { TILE_H, TILE_W } from "./lib/bmp";
   import { cellsIn, COLS, isTyping, snapBox, type Guide } from "./lib/geometry";
-  import { buildGrid, cellAt, gridSize, readBack, type Tagged } from "./lib/scene";
+  import { buildGrid, cellAt, gridSize, readBack, snapScale, type Tagged } from "./lib/scene";
 
   let host: HTMLDivElement;
   let el: HTMLCanvasElement;
@@ -515,6 +515,26 @@
       target.set({ left: (target.left ?? 0) + snap.dx, top: (target.top ?? 0) + snap.dy });
       target.setCoords();
       guides = snap.guides;
+    });
+
+    /* The same pull on the handles. A wall picture is sized to cover the grid
+     * and the last few pixels are exactly the ones that decide whether a whole
+     * column gets a crop — dragging a corner to a box edge by eye is how a row
+     * goes missing. Uniform, because a picture carries one scale. */
+    canvas.on("object:scaling", (opt) => {
+      guides = [];
+      const target = opt.target as Tagged | undefined;
+      const corner = opt.transform?.corner;
+      if (!target || !corner || target.space !== "grid") return;
+      if ((opt.e as MouseEvent | undefined)?.altKey) return;
+      const grid = gridSize(visibleIds().length);
+      guides = snapScale(
+        target,
+        corner,
+        [{ left: 0, top: 0, width: grid.w, height: grid.h }],
+        SNAP_PX / canvas!.getZoom(),
+        true,
+      );
     });
 
     const dropGuides = () => {

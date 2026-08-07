@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { alignBoxes, cellsIn, distributeBoxes, GAP_X, GAP_Y, snapBox } from "./geometry";
+import {
+  alignBoxes,
+  cellsIn,
+  distributeBoxes,
+  GAP_X,
+  GAP_Y,
+  snapBox,
+  snapEdges,
+} from "./geometry";
 import { TILE_H as H, TILE_W as W } from "./bmp";
 
 describe("snapBox", () => {
@@ -422,5 +430,40 @@ describe("distributeBoxes", () => {
     const d = distributeBoxes([b(0, 0), b(0, 30), b(0, 200)], "y");
     expect(d[1].dx).toBe(0);
     expect(d[1].dy).not.toBe(0);
+  });
+});
+
+describe("snapEdges", () => {
+  const sheet = [{ left: 0, top: 0, width: 1000, height: 1000 }];
+  const box = { left: 100, top: 100, width: 895, height: 400 };
+
+  it("pulls only the edge under the pointer", () => {
+    // The right edge is 5 short of the sheet's; the left one is nowhere near
+    // anything and must not be dragged along.
+    const s = snapEdges(box, ["right"], sheet, 8);
+    expect(s.dx).toBe(5);
+    expect(s.guides).toEqual([{ axis: "x", at: 1000 }]);
+  });
+
+  it("leaves the anchor edge out of it", () => {
+    /* Dragging the right handle with the left edge sitting exactly on the
+     * sheet's: snapBox would report "already lined up, nothing to do" and the
+     * pointer's own edge would never reach anything. */
+    const flush = { left: 0, top: 100, width: 995, height: 400 };
+    expect(snapEdges(flush, ["right"], sheet, 8).dx).toBe(5);
+  });
+
+  it("takes a corner on both axes at once", () => {
+    const s = snapEdges({ left: 100, top: 100, width: 895, height: 897 }, ["right", "bottom"], sheet, 8);
+    expect([s.dx, s.dy]).toEqual([5, 3]);
+  });
+
+  it("stays out of it when nothing is close", () => {
+    expect(snapEdges(box, ["left"], sheet, 8)).toEqual({ dx: 0, dy: 0, guides: [] });
+  });
+
+  it("ignores middles — a half-scaled box lining up is a coincidence", () => {
+    // Right edge at 495, the sheet's middle at 500: close, and not a snap.
+    expect(snapEdges({ left: 0, top: 0, width: 495, height: 10 }, ["right"], sheet, 8).dx).toBe(0);
   });
 });

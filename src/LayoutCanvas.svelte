@@ -26,8 +26,9 @@
     type Box,
     type Guide,
   } from "./lib/geometry";
+
   import { findLayer, walkLayers } from "./lib/model";
-  import { buildLayout, freeScale, readBackLayout } from "./lib/scene";
+  import { buildLayout, freeScale, readBackLayout, snapScale } from "./lib/scene";
 
   let host: HTMLDivElement;
   let el: HTMLCanvasElement;
@@ -335,7 +336,38 @@
       transforming = false;
       cancelled = false;
     });
-    canvas.on("object:scaling", () => (transforming = true));
+    /** The sheet and every object that is not part of this gesture. */
+    function others(target: fabric.Object): Box[] {
+      const mine = new Set(
+        ((target as fabric.ActiveSelection).getObjects?.() ?? [target]).map(
+          (o) => (o as { layerId?: string }).layerId,
+        ),
+      );
+      return [
+        { left: 0, top: 0, width: TILE_W, height: TILE_H },
+        ...canvas!
+          .getObjects()
+          .filter((o) => !mine.has((o as { layerId?: string }).layerId))
+          .map((o) => o.getBoundingRect()),
+      ];
+    }
+
+    canvas.on("object:scaling", (opt) => {
+      transforming = true;
+      guides = [];
+      const target = opt.target;
+      const corner = opt.transform?.corner;
+      if (!target || !corner || (opt.e as MouseEvent | undefined)?.altKey) return;
+      const id = (target as { layerId?: string }).layerId ?? "";
+      const layer = openLayout() && findLayer(openLayout()!.layers, id);
+      guides = snapScale(
+        target,
+        corner,
+        others(target),
+        SNAP_PX / canvas!.getZoom(),
+        !layer || !freeScale(layer),
+      );
+    });
     canvas.on("object:rotating", () => (transforming = true));
 
     /* Snapping. Fabric has none of its own, so the pull happens here: on every

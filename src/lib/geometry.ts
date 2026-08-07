@@ -131,6 +131,56 @@ export function snapBox(moving: Box, targets: Box[], threshold: number): Snap {
   };
 }
 
+/** Which side of a box the pointer has hold of. */
+export type Edge = "left" | "right" | "top" | "bottom";
+
+/** How far the edges under the pointer must travel to land on a nearby line.
+ *
+ *  Scaling is not moving. Only the dragged edges go anywhere; the opposite
+ *  side is the anchor and has to stay exactly where it is — so the whole-box
+ *  correction snapBox computes would drag that anchor along with it, and a box
+ *  already flush on its anchor side would report "nothing to do" while the
+ *  edge under the pointer sailed past everything.
+ *
+ *  Edges only, no middles: a half-scaled box lining its centre up with
+ *  something is a coincidence rather than an intent, and pulling towards it
+ *  would fight the hand that is sizing the thing. */
+export function snapEdges(moving: Box, edges: Edge[], targets: Box[], threshold: number): Snap {
+  const best = {
+    x: { d: threshold, at: 0, from: 0, hit: false },
+    y: { d: threshold, at: 0, from: 0, hit: false },
+  };
+  const at = (e: Edge) =>
+    e === "left"
+      ? moving.left
+      : e === "right"
+        ? moving.left + moving.width
+        : e === "top"
+          ? moving.top
+          : moving.top + moving.height;
+
+  for (const t of targets) {
+    for (const e of edges) {
+      const axis = e === "left" || e === "right" ? "x" : "y";
+      const mine = at(e);
+      const theirs = axis === "x" ? [t.left, t.left + t.width] : [t.top, t.top + t.height];
+      for (const o of theirs) {
+        const d = Math.abs(o - mine);
+        if (d < best[axis].d) best[axis] = { d, at: o, from: mine, hit: true };
+      }
+    }
+  }
+
+  const guides: Guide[] = [];
+  if (best.x.hit) guides.push({ axis: "x", at: best.x.at });
+  if (best.y.hit) guides.push({ axis: "y", at: best.y.at });
+  return {
+    dx: best.x.hit ? best.x.at - best.x.from : 0,
+    dy: best.y.hit ? best.y.at - best.y.from : 0,
+    guides,
+  };
+}
+
 /* --- Align and distribute. GIMP's tool, reduced to what a tile sheet needs:
  * six edges against a fixed reference, and equal gaps between three or more.
  * Pure deltas in, deltas out, so the maths is testable without a canvas and
