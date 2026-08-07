@@ -993,6 +993,73 @@
           + New project{#if freeCount()}&nbsp;({freeCount()}){/if}
         </button>
 
+        <!-- One library across every project: a design fits characters from
+             any account, and keeping a copy per wall would mean editing the
+             same frame twice. Collapsible, because that library is the list
+             that grows without bound. -->
+        <h2 class="spaced">
+          <button class="twisty inline" onclick={() => toggleOpen("layouts")}>
+            {open.has("layouts") ? "▾" : "▸"}
+          </button>
+          Layouts{#if layouts().length}&nbsp;({layouts().length}){/if}
+        </h2>
+        {#if !layouts().length}
+          <p class="empty">None yet.</p>
+        {/if}
+        <ul class:collapsed={!open.has("layouts")}>
+          {#each layouts() as layout (layout.id)}
+            <li>
+              {#if renaming === layout.id}
+                <!-- svelte-ignore a11y_autofocus -->
+                <input
+                  class="rename"
+                  autofocus
+                  value={layout.name}
+                  onblur={(e) => {
+                    void renameLayout(layout.id, e.currentTarget.value);
+                    renaming = "";
+                  }}
+                  onkeydown={(e) => renameKey(e, layout.name)}
+                />
+              {:else}
+                <!-- Double-click renames, like a group row — and opening lives
+                     on the pencil, not on the name. Both cannot share the
+                     name: the first click of a double-click would open the
+                     document, unmount this row, and the second click would
+                     land on nothing, which is exactly how layouts were
+                     unrenamable for a while. -->
+                <button
+                  class="name"
+                  ondblclick={() => (renaming = layout.id)}
+                  title="Double-click to rename"
+                >
+                  {layout.name}
+                  <!-- Both numbers, because they answer different questions:
+                       the stamps are what a refresh or a delete touches, the
+                       tiles are how much of the wall wears the design. One
+                       group of fifteen tiles used to read "stamped 1 time". -->
+                  <span class="usage">
+                    {layoutUsage(layout.id)
+                      ? `${layoutUsage(layout.id)} stamp(s) · ${layoutTiles(layout.id)} tile(s)`
+                      : "unused"}
+                  </span>
+                </button>
+              {/if}
+              <button title="Edit layout" onclick={() => openLayoutDoc(layout.id)}>✎</button>
+              <button title="Duplicate" onclick={() => duplicateLayoutDoc(layout.id)}>⧉</button>
+              <button title="Delete" onclick={() => removeLayout(layout.id, layout.name)}>×</button
+              >
+            </li>
+          {/each}
+        </ul>
+        <button
+          class="wide"
+          onclick={() => newLayoutDoc(`Layout ${layouts().length + 1}`)}
+          disabled={!app.dir || !!app.busy}
+        >
+          + New layout
+        </button>
+
         {#if shelfIds().length}
           <!-- Collected but not placed. Sorting a wall is two jobs — decide
                which portraits belong to it, then decide where each one sits —
@@ -1267,72 +1334,6 @@
           {/if}
         </div>
 
-        <!-- One library across every project: a design fits characters from
-             any account, and keeping a copy per wall would mean editing the
-             same frame twice. Collapsible, because that library is the list
-             that grows without bound. -->
-        <h2 class="spaced">
-          <button class="twisty inline" onclick={() => toggleOpen("layouts")}>
-            {open.has("layouts") ? "▾" : "▸"}
-          </button>
-          Layouts{#if layouts().length}&nbsp;({layouts().length}){/if}
-        </h2>
-        {#if !layouts().length}
-          <p class="empty">None yet.</p>
-        {/if}
-        <ul class:collapsed={!open.has("layouts")}>
-          {#each layouts() as layout (layout.id)}
-            <li>
-              {#if renaming === layout.id}
-                <!-- svelte-ignore a11y_autofocus -->
-                <input
-                  class="rename"
-                  autofocus
-                  value={layout.name}
-                  onblur={(e) => {
-                    void renameLayout(layout.id, e.currentTarget.value);
-                    renaming = "";
-                  }}
-                  onkeydown={(e) => renameKey(e, layout.name)}
-                />
-              {:else}
-                <!-- Double-click renames, like a group row — and opening lives
-                     on the pencil, not on the name. Both cannot share the
-                     name: the first click of a double-click would open the
-                     document, unmount this row, and the second click would
-                     land on nothing, which is exactly how layouts were
-                     unrenamable for a while. -->
-                <button
-                  class="name"
-                  ondblclick={() => (renaming = layout.id)}
-                  title="Double-click to rename"
-                >
-                  {layout.name}
-                  <!-- Both numbers, because they answer different questions:
-                       the stamps are what a refresh or a delete touches, the
-                       tiles are how much of the wall wears the design. One
-                       group of fifteen tiles used to read "stamped 1 time". -->
-                  <span class="usage">
-                    {layoutUsage(layout.id)
-                      ? `${layoutUsage(layout.id)} stamp(s) · ${layoutTiles(layout.id)} tile(s)`
-                      : "unused"}
-                  </span>
-                </button>
-              {/if}
-              <button title="Edit layout" onclick={() => openLayoutDoc(layout.id)}>✎</button>
-              <button title="Duplicate" onclick={() => duplicateLayoutDoc(layout.id)}>⧉</button>
-              <button title="Delete" onclick={() => removeLayout(layout.id, layout.name)}>×</button
-              >
-            </li>
-          {/each}
-        </ul>
-        <button
-          class="wide"
-          onclick={() => newLayoutDoc(`Layout ${layouts().length + 1}`)}
-          disabled={!app.dir || !!app.busy}
-        >
-          + New layout
-        </button>
       {/if}
     </aside>
   </div>
