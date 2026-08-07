@@ -1279,7 +1279,7 @@
 
                     {#each tileImages(id) as pic (pic.id)}
                       {@const chosen = tileAsset(id, pic.id)}
-                      <p class="sub nolead indent">{layerLabel(pic)}</p>
+                      <p class="sub">{layerLabel(pic)}</p>
                       <!-- A gallery rather than a file dialog per tile: class
                            logos repeat across a wall, so from the second tile
                            on the picture is almost always one already
@@ -1720,16 +1720,14 @@
   .swatch.none {
     color: #8b979f;
   }
+  /* The gallery's label and the wording field's label name the same kind of
+     thing — a layer on this tile — so they are set the same and start on the
+     same column. It used to be a small-caps subtitle sitting one notch to the
+     left, which read as a heading over the row rather than a label in it. */
   .sub {
     margin: 4px 0 2px 18px;
-    color: #6c777e;
-    font-size: 10px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-  }
-  /* The gallery's own label sits flush, not indented under a group row. */
-  .sub.nolead {
-    margin-left: 0;
+    color: #8b979f;
+    font-size: 11px;
   }
   .indent {
     margin-left: 18px;

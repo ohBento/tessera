@@ -9,11 +9,14 @@ import * as fabric from "fabric";
 
 import { TILE_H, TILE_W } from "./bmp";
 import {
+  findLayer,
   groupShift,
   isGradient,
   layerAsset,
   layerText,
+  nestingShift,
   resolveLayers,
+  stencilIds,
   type Base,
   type Layer,
   type Layout,
@@ -494,11 +497,47 @@ export async function buildLayout(
   layout: Layout,
   deps: SceneDeps,
   interactive = false,
+  /* Overridable because the stamp path renders a stripped copy of the Layout
+   * (see bakeable) and the answer has to come from the whole of it. */
+  stencils = stencilIds(layout.layers),
 ): Promise<void> {
   canvas.remove(...canvas.getObjects());
-  const objs = await layoutObjects(layout.layers, deps, interactive, { dx: 0, dy: 0 }, false, 1);
+  const objs = await layoutObjects(layout.layers, deps, interactive, { dx: 0, dy: 0 }, false, 1, {
+    root: layout.layers,
+    stencils,
+  });
   for (const obj of objs) canvas.add(obj);
   canvas.renderAll();
+}
+
+/** What a layer needs to know about masking that its own fields cannot say:
+ *  where to look a mask id up, and which shapes have stopped being pictures. */
+type Masking = { root: Layer[]; stencils: Set<string> };
+
+/** Builds the clip path for one layer, or nothing when it has no mask.
+ *
+ *  The shape is drawn at its own place on the sheet, group displacement folded
+ *  in exactly as the visible copy would have been — a mask that ignored the
+ *  group it sits in would cut somewhere else entirely.
+ *
+ *  `absolutePositioned` because a clipPath is otherwise expressed relative to
+ *  the clipped object's own centre, which would drag the hole around with
+ *  whatever it is cutting. A dangling id resolves to nothing and the layer
+ *  draws unclipped, which is the documented behaviour of a deleted shape. */
+async function maskFor(l: Layer, deps: SceneDeps, m: Masking): Promise<fabric.Object | undefined> {
+  if (!l.maskId) return undefined;
+  const shape = findLayer(m.root, l.maskId);
+  // A switched-off shape stops cutting. The eye has to mean the same thing
+  // everywhere: something that is not there cannot be why half a picture is
+  // missing, and nothing else on screen would have explained it.
+  if (shape?.kind !== "shape" || shape.hidden) return undefined;
+  const shift = nestingShift(m.root, shape.id) ?? { dx: 0, dy: 0 };
+  const placed = { ...shape, x: shape.x + shift.dx, y: shape.y + shift.dy };
+  const obj = await layerObject(placed, deps, { w: TILE_W, h: TILE_H, x: 0, y: 0 }, "", {});
+  if (!obj) return undefined;
+  obj.absolutePositioned = true;
+  obj.inverted = !!l.maskInvert;
+  return obj;
 }
 
 /** One Layout's layers as Fabric objects, groups flattened into their members.
@@ -524,6 +563,7 @@ async function layoutObjects(
   shift: { dx: number; dy: number },
   locked: boolean,
   fade: number,
+  masking: Masking,
 ): Promise<fabric.Object[]> {
   const out: fabric.Object[] = [];
   for (const l of layers) {
@@ -540,6 +580,7 @@ async function layoutObjects(
           { dx: shift.dx + own.dx, dy: shift.dy + own.dy },
           locked || !!l.locked,
           fade * l.opacity,
+          masking,
         )),
       );
       continue;
@@ -547,9 +588,34 @@ async function layoutObjects(
     const placed = { ...l, x: l.x + shift.dx, y: l.y + shift.dy, opacity: l.opacity * fade } as Layer;
     const obj = await layerObject(placed, deps, { w: TILE_W, h: TILE_H, x: 0, y: 0 }, "", {});
     if (!obj) continue;
+    const mask = await maskFor(l, deps, masking);
+    if (mask) {
+      obj.clipPath = mask;
+      /* A cached object is painted from a bitmap rendered before the clip
+       * applied, which shows up as the mask simply not working — the same trap
+       * the tile clip fell into further up. */
+      obj.objectCaching = false;
+    }
     // A locked group locks its members, so the flag has to travel down.
     if (interactive) makeInteractive(obj, locked ? { ...l, locked: true } : l);
     else obj.selectable = obj.evented = false;
+
+    /* A shape someone masks with is the hole, not something in the picture, so
+     * it paints nothing — in the editor and in the stamp alike.
+     *
+     * It still gets an object, though, or it could never be moved again: the
+     * list picks a layer by finding its object, and a stencil skipped outright
+     * would be a mask you can set and then never adjust. Deaf to the pointer,
+     * because it lies exactly over the part of the picture it lets through and
+     * would otherwise swallow every click meant for what is underneath. The
+     * row remains the way in. */
+    if (masking.stencils.has(l.id)) {
+      obj.opacity = 0;
+      obj.evented = false;
+      // Said outright rather than inferred from the opacity: a layer someone
+      // faded to nothing by hand is still an ordinary layer.
+      Object.assign(obj, { stencil: true });
+    }
     Object.assign(obj, { layerId: l.id, tileId: "", space: "tile" });
     out.push(obj);
   }

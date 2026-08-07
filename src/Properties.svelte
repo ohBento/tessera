@@ -4,8 +4,8 @@
      repeated here. A caption whose words cannot be typed is useless, which is
      why this exists at all rather than waiting for the full panel system. */
   import { TILE_W } from "./lib/bmp";
-  import { setLayerField, type LayerField } from "./lib/editor.svelte";
-  import { isGradient, type Layer, type Paint } from "./lib/model";
+  import { openLayout, setLayerField, type LayerField } from "./lib/editor.svelte";
+  import { isGradient, layerLabel, maskChoices, type Layer, type Paint } from "./lib/model";
   import { systemFonts } from "./lib/platform";
 
   /** What this machine has installed. Fetched once behind the module-level
@@ -24,6 +24,11 @@
   let { layer, inLayout = false }: { layer: Layer; inLayout?: boolean } = $props();
 
   const set = (key: LayerField, value: unknown) => void setLayerField(layer.id, key, value);
+
+  /** The shapes this layer could be cut to. Empty outside a Layout, and empty
+   *  in one that holds no shape but this — which is what hides the control
+   *  rather than offering a list with nothing in it. */
+  const masks = $derived(inLayout ? maskChoices(openLayout()?.layers ?? [], layer.id) : []);
 
   /** A Paint is a colour or a gradient; the picker only edits flat colours, so
    *  a gradient shows its start colour and editing it drops back to flat. */
@@ -106,10 +111,16 @@
     <!-- A state, not an action: the rest of this panel's little buttons all do
          something the moment they are pressed, and this one only says how the
          layer is treated later. -->
-    <label class="check" title="Makes this layer editable in the grid-view">
+    <label
+      class="check"
+      title={layer.maskId
+        ? "Not while it is masked — the shape that cuts it stays behind in the Layout"
+        : "Makes this layer editable in the grid-view"}
+    >
       <input
         type="checkbox"
         checked={layer.perTile}
+        disabled={!!layer.maskId}
         onchange={(e) => set("perTile", e.currentTarget.checked)}
       />
       Editable in grid
@@ -263,10 +274,16 @@
   {/if}
 {:else if layer.kind === "image"}
   {#if inLayout}
-    <label class="check" title="Makes this layer editable in the grid-view">
+    <label
+      class="check"
+      title={layer.maskId
+        ? "Not while it is masked — the shape that cuts it stays behind in the Layout"
+        : "Makes this layer editable in the grid-view"}
+    >
       <input
         type="checkbox"
         checked={layer.perTile}
+        disabled={!!layer.maskId}
         onchange={(e) => set("perTile", e.currentTarget.checked)}
       />
       Editable in grid
@@ -292,6 +309,40 @@
   </div>
 {:else}
   <p class="empty">A group has no properties of its own.</p>
+{/if}
+
+{#if inLayout && layer.kind !== "group" && masks.length}
+  <!-- Masking is a Layout matter: that is where shapes and pictures lie in one
+       stack. A tile carries only stamps and the copies a Layout keeps live,
+       and there is nothing there to cut with. -->
+  <label
+    class="field"
+    title={layer.perTile
+      ? "Not while it is editable in the grid — the cut happens here, and the tile only gets the result"
+      : "Clips this layer to a shape in this Layout"}
+  >
+    <span>Mask</span>
+    <select
+      value={layer.maskId ?? ""}
+      disabled={!!layer.perTile}
+      onchange={(e) => set("maskId", e.currentTarget.value)}
+    >
+      <option value="">none</option>
+      {#each masks as shape (shape.id)}
+        <option value={shape.id}>{layerLabel(shape)}</option>
+      {/each}
+    </select>
+  </label>
+  {#if layer.maskId}
+    <label class="check" title="Keeps what falls outside the shape instead of inside it">
+      <input
+        type="checkbox"
+        checked={layer.maskInvert}
+        onchange={(e) => set("maskInvert", e.currentTarget.checked)}
+      />
+      Invert
+    </label>
+  {/if}
 {/if}
 
 <!-- Rotation is on the canvas handle too, but a handle cannot be told "exactly

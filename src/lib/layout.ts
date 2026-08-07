@@ -6,7 +6,7 @@
 import * as fabric from "fabric";
 
 import { TILE_H, TILE_W } from "./bmp";
-import { bakeable, type Layout } from "./model";
+import { bakeable, stencilIds, type Layout } from "./model";
 import { buildLayout, type SceneDeps } from "./scene";
 
 /** Renders a Layout at tile resolution and returns it as PNG bytes.
@@ -26,7 +26,11 @@ export async function renderLayout(layout: Layout, deps: SceneDeps): Promise<Uin
      * syncLiveLayers. Baking one would turn it into pixels, and pixels cannot
      * say a different word on every tile. The editor still shows it, so what
      * you compose is what you get; only this one path drops it. */
-    await buildLayout(canvas, bakeable(layout), deps);
+    /* The stencils are worked out from the whole Layout, not from what is left
+     * after the stripping. A shape whose only user is one of those live layers
+     * is still a hole — read off the stripped list it stopped counting as one
+     * and painted itself into the stamp, onto every tile wearing the design. */
+    await buildLayout(canvas, bakeable(layout), deps, false, stencilIds(layout.layers));
     const blob = await new Promise<Blob | null>((resolve) =>
       canvas.getElement().toBlob(resolve, "image/png"),
     );

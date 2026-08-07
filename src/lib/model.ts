@@ -65,6 +65,10 @@ type Common = {
    * unclipped — no cleanup pass needed on delete. Lives on Common so both
    * image and text layers can use it. */
   maskId?: string;
+  /* Keep what falls outside the mask instead of inside it — a hole punched
+   * through the layer rather than a piece cut out of it. Absent means the
+   * ordinary way round. */
+  maskInvert?: boolean;
   /* Set on anything a Layout put here: the picture rendered from it, and any
    * caption it keeps live. Lets one Layout find every copy of itself across
    * every overlay and bring them all up to date in one pass. Absent on a layer
@@ -726,6 +730,31 @@ export function nameInStack(layer: Layer, layers: Layer[]) {
   layer.seq = n + 1;
   layer.name = `${LAYER_PREFIX[layer.kind]}${String(layer.seq).padStart(2, "0")}`;
 }
+
+/** Every shape in this Layout that some layer is using as a mask.
+ *
+ *  A stencil stops drawing itself the moment it is one: it is the hole, not
+ *  something in the picture. Asked once per render, and once by the list so a
+ *  shape that has vanished from the canvas can say why. */
+export const stencilIds = (layers: Layer[]): Set<string> =>
+  new Set(
+    [...walkLayers(layers)]
+      // A switched-off layer is not cutting anything, so the shape it names is
+      // an ordinary shape again — otherwise it would sit there invisible with
+      // nothing on screen to say why.
+      .filter((l) => !l.hidden)
+      .map((l) => l.maskId)
+      .filter((id): id is string => !!id),
+  );
+
+/** The shapes a layer may be masked by: any in this Layout except itself.
+ *
+ *  Itself, because a layer clipped to its own outline is either a no-op or an
+ *  empty picture, and neither is worth a control. Two layers masking each
+ *  other is left possible — both become stencils, nothing draws, and one
+ *  click puts it back. */
+export const maskChoices = (layers: Layer[], layerId: string): ShapeLayer[] =>
+  [...walkLayers(layers)].filter((l): l is ShapeLayer => l.kind === "shape" && l.id !== layerId);
 
 export const layerLabel = (l: Layer) => {
   if (l.name) return l.name;

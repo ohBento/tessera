@@ -242,6 +242,19 @@
     if (!canvas) return;
     void building.then(() => {
       if (!canvas) return;
+      /* A stencil paints nothing and is deaf to the pointer — it lies exactly
+       * over the part of the picture it lets through, so a click there is
+       * always meant for what is underneath. That deafness also switches off
+       * its handles, though: Fabric looks a control up by hit-testing the
+       * object first, so an unevented one cannot be dragged even while it is
+       * active. Picking its row is therefore what wakes it, and leaving the
+       * row puts it back to sleep. */
+      const picked = new Set(ids ? ids.split(" ") : []);
+      for (const o of canvas.getObjects()) {
+        if (!(o as { stencil?: boolean }).stencil) continue;
+        o.evented = picked.has((o as { layerId?: string }).layerId ?? "");
+      }
+
       const objs = objectsFor(ids ? ids.split(" ") : []);
       const active = canvas.getActiveObject();
       const shown = active

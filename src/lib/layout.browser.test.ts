@@ -280,3 +280,188 @@ describe("group opacity", () => {
     }
   });
 });
+
+describe("masks", () => {
+  const decodeProbe = async (layout: Parameters<typeof renderLayout>[0]) => {
+    const bytes = await renderLayout(layout, testDeps);
+    const bmp = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+    const c = new OffscreenCanvas(bmp.width, bmp.height);
+    const ctx = c.getContext("2d")!;
+    ctx.drawImage(bmp, 0, 0);
+    const { data } = ctx.getImageData(0, 0, bmp.width, bmp.height);
+    return (x: number, y: number) => {
+      const o = (Math.round(y * TILE_H) * bmp.width + Math.round(x * TILE_W)) * 4;
+      return [data[o], data[o + 1], data[o + 2], data[o + 3]];
+    };
+  };
+
+  /** A picture over the whole sheet, and a small circle in the middle of it. */
+  function sheet() {
+    const layout = newLayout("Maske");
+    const pic = newImageLayer("block:#ff00ff");
+    pic.x = 0.5;
+    pic.y = 0.5;
+    pic.scale = 1;
+    const hole = newShapeLayer("ellipse");
+    hole.x = 0.5;
+    hole.y = 0.5;
+    hole.w = 0.3;
+    hole.h = 0.3;
+    layout.layers.push(hole, pic);
+    return { layout, pic, hole };
+  }
+
+  it("keeps what lies inside the shape and drops the rest", async () => {
+    const { layout, pic, hole } = sheet();
+    pic.maskId = hole.id;
+    const px = await decodeProbe(layout);
+    expect(px(0.5, 0.5)).toEqual([255, 0, 255, 255]);
+    // Well outside the circle but well inside the picture.
+    expect(px(0.1, 0.5)[3]).toBe(0);
+  });
+
+  it("turns it round when inverted", async () => {
+    const { layout, pic, hole } = sheet();
+    pic.maskId = hole.id;
+    pic.maskInvert = true;
+    const px = await decodeProbe(layout);
+    expect(px(0.5, 0.5)[3]).toBe(0);
+    expect(px(0.1, 0.5)).toEqual([255, 0, 255, 255]);
+  });
+
+  it("does not paint the shape it cuts with", async () => {
+    /* The shape is the hole, not something in the picture. Given a fill of its
+     * own, what shows through the hole has to be the picture's colour and not
+     * the shape's — and the shape lies on top, so it would win if it painted. */
+    const { layout, pic, hole } = sheet();
+    hole.fill = "#00ff00";
+    layout.layers = [pic, hole];
+    pic.maskId = hole.id;
+
+    const px = await decodeProbe(layout);
+    expect(px(0.5, 0.5)).toEqual([255, 0, 255, 255]);
+    expect(px(0.1, 0.5)[3]).toBe(0);
+  });
+
+  it("cuts where the shape sits, group displacement and all", async () => {
+    const layout = newLayout("Maske im Verbund");
+    const pic = newImageLayer("block:#ff00ff");
+    pic.x = 0.5;
+    pic.y = 0.5;
+    pic.scale = 1;
+    const hole = newShapeLayer("rect");
+    hole.x = 0.5;
+    hole.y = 0.5;
+    hole.w = 0.2;
+    hole.h = 0.2;
+    const group = newGroupLayer([hole]);
+    // A group's x is measured from the middle (groupShift), so 0.75 shifts
+    // its member a quarter of the tile to the right.
+    group.x = 0.75;
+    pic.maskId = hole.id;
+    layout.layers.push(group, pic);
+
+    const px = await decodeProbe(layout);
+    expect(px(0.75, 0.5)).toEqual([255, 0, 255, 255]);
+    expect(px(0.5, 0.5)[3]).toBe(0);
+  });
+
+  it("draws unclipped when the shape is gone", async () => {
+    const { layout, pic } = sheet();
+    pic.maskId = "nie-dagewesen";
+    const px = await decodeProbe(layout);
+    expect(px(0.1, 0.5)).toEqual([255, 0, 255, 255]);
+  });
+});
+
+describe("masks and the stamp", () => {
+  const probe = async (layout: Parameters<typeof renderLayout>[0]) => {
+    const bytes = await renderLayout(layout, testDeps);
+    const bmp = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+    const c = new OffscreenCanvas(bmp.width, bmp.height);
+    const ctx = c.getContext("2d")!;
+    ctx.drawImage(bmp, 0, 0);
+    const { data } = ctx.getImageData(0, 0, bmp.width, bmp.height);
+    return (x: number, y: number) => {
+      const o = (Math.round(y * TILE_H) * bmp.width + Math.round(x * TILE_W)) * 4;
+      return [data[o], data[o + 1], data[o + 2], data[o + 3]];
+    };
+  };
+
+  it("keeps a mask shape out of the stamp even when its only user is live", async () => {
+    /* bakeable() strips the layers a Layout keeps live on the tiles, and the
+     * stencil set was worked out from what was left — so a shape whose only
+     * user was such a layer stopped counting as a hole and painted itself into
+     * the stamp instead. That stamp goes onto every tile wearing the Layout,
+     * and from there into the BMP the game reads. */
+    const layout = newLayout("Loch fuer eine lebende Ebene");
+    const hole = newShapeLayer("ellipse");
+    hole.x = 0.5;
+    hole.y = 0.5;
+    hole.w = 0.3;
+    hole.h = 0.3;
+    hole.fill = "#00ff00";
+    const live = newImageLayer("block:#ff00ff");
+    live.x = 0.5;
+    live.y = 0.5;
+    live.scale = 1;
+    live.perTile = true;
+    live.maskId = hole.id;
+    layout.layers.push(hole, live);
+
+    const px = await probe(layout);
+    // The stamp holds neither the live picture nor the shape that cuts it.
+    expect(px(0.5, 0.5)[3]).toBe(0);
+  });
+});
+
+describe("masks and the eye", () => {
+  const probe = async (layout: Parameters<typeof renderLayout>[0]) => {
+    const bytes = await renderLayout(layout, testDeps);
+    const bmp = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+    const c = new OffscreenCanvas(bmp.width, bmp.height);
+    const ctx = c.getContext("2d")!;
+    ctx.drawImage(bmp, 0, 0);
+    const { data } = ctx.getImageData(0, 0, bmp.width, bmp.height);
+    return (x: number, y: number) => {
+      const o = (Math.round(y * TILE_H) * bmp.width + Math.round(x * TILE_W)) * 4;
+      return [data[o], data[o + 1], data[o + 2], data[o + 3]];
+    };
+  };
+
+  function sheet() {
+    const layout = newLayout("Auge");
+    const hole = newShapeLayer("ellipse");
+    hole.x = 0.5;
+    hole.y = 0.5;
+    hole.w = 0.3;
+    hole.h = 0.3;
+    const pic = newImageLayer("block:#ff00ff");
+    pic.x = 0.5;
+    pic.y = 0.5;
+    pic.scale = 1;
+    pic.maskId = hole.id;
+    layout.layers.push(hole, pic);
+    return { layout, pic, hole };
+  }
+
+  it("stops cutting once the shape is switched off", async () => {
+    // The eye has to mean the same thing everywhere: a shape that is not there
+    // cannot be the reason half a picture is missing.
+    const { layout, hole } = sheet();
+    hole.hidden = true;
+    const px = await probe(layout);
+    expect(px(0.1, 0.5)).toEqual([255, 0, 255, 255]);
+  });
+
+  it("gives a shape back once nothing masks with it any more", async () => {
+    /* A shape is only a hole while something is using it. With its one user
+     * switched off it is an ordinary shape again — otherwise it would sit
+     * there invisible with nothing on screen to say why. */
+    const { layout, pic, hole } = sheet();
+    hole.fill = "#00ff00";
+    pic.hidden = true;
+    const px = await probe(layout);
+    expect(px(0.5, 0.5)).toEqual([0, 255, 0, 255]);
+  });
+});
