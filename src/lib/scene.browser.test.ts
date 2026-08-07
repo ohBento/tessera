@@ -216,6 +216,32 @@ describe("a tile keeps its own content", () => {
   });
 });
 
+describe("a wall picture sits under what the tiles carry", () => {
+  /* It is a preview of the background: Apply turns it into each tile's `base`,
+   * and a base draws beneath everything. Drawing it on top until then made the
+   * preview contradict its own result — and worse, renderTiles builds this same
+   * scene, so a Write to game before applying buried every stamp under the
+   * picture in the file itself. */
+  it("does not cover a layer the tile carries", async () => {
+    const m = manifest(8);
+    const own = newImageLayer("block:#00ff00");
+    own.scale = 0.4;
+    m.tiles[order(m)[2]].layers.push(own);
+    gridBlock(m, 0.5, 0.5, 1); // magenta, across the whole wall
+
+    const tiles = [...(await renderTiles(view(m), m, testDeps)).values()];
+    const [r, g, b] = pixel(tiles[2], TILE_W / 2, TILE_H / 2);
+    expect([r, g, b]).toEqual([0, 255, 0]);
+  });
+
+  it("still shows through where the tile carries nothing", async () => {
+    const m = manifest(8);
+    gridBlock(m, 0.5, 0.5, 1);
+    const tiles = [...(await renderTiles(view(m), m, testDeps)).values()];
+    expect(pixel(tiles[3], TILE_W / 2, TILE_H / 2)).toEqual([255, 0, 255, 255]);
+  });
+});
+
 describe("grid-space layers", () => {
   it("land in the tile whose cell they sit over, and only there", async () => {
     const m = manifest(8);

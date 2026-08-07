@@ -316,10 +316,34 @@ export async function buildGrid(
   const ids = wall.ids;
   const grid = gridSize(ids.length);
 
+  /* Three passes, because the wall picture belongs between them: every tile's
+   * background, then anything spread across the wall, then what the tiles
+   * themselves carry. Tiles never overlap — each is clipped to its own cell —
+   * so splitting the per-tile work in two changes nothing about them. */
+  for (const [index, id] of ids.entries()) {
+    canvas.add(await background(m.tiles[id]?.base ?? null, id, deps, cellAt(index)));
+  }
+
+  /* The picture spread across this wall. Once, not per tile — drawing it per
+   * cell would paint the same pixels COLS*rows times over.
+   *
+   * Under the tiles' own layers, not over them. It is a preview of the
+   * background: Apply turns it into each tile's `base`, and a base draws
+   * beneath everything, so putting it on top made the preview contradict its
+   * own result. It also reached the file — renderTiles builds this same scene,
+   * so writing to the game before applying buried every stamp under the
+   * picture in the BMP itself. */
+  for (const l of wall.gridLayers) {
+    if (l.hidden || l.kind !== "image" || l.space !== "grid") continue;
+    const obj = await imageObject(l, deps, { w: grid.w, h: grid.h, x: 0, y: 0 });
+    if (interactive) makeInteractive(obj, l, false);
+    else obj.selectable = obj.evented = false;
+    Object.assign(obj, { layerId: l.id, tileId: "", space: "grid", locked: !!l.locked });
+    canvas.add(obj);
+  }
+
   for (const [index, id] of ids.entries()) {
     const at = cellAt(index);
-    canvas.add(await background(m.tiles[id]?.base ?? null, id, deps, at));
-
     const box = { w: TILE_W, h: TILE_H, x: at.x, y: at.y };
     const texts = m.tiles[id]?.text ?? {};
     const swaps = m.tiles[id]?.swap ?? {};
@@ -371,20 +395,6 @@ export async function buildGrid(
       Object.assign(obj, { layerId: l.id, tileId: id, space: "tile", locked });
       canvas.add(obj);
     }
-  }
-
-  /* Grid-space layers span the whole wall, so they are placed once on top of
-   * everything — drawing them per tile would paint the same pixels COLS*rows
-   * times over. They belong to the wall being drawn, which is why they arrive
-   * with the id list rather than being hunted for in the manifest: the inbox
-   * has ids and no wall picture, a project has both. */
-  for (const l of wall.gridLayers) {
-    if (l.hidden || l.kind !== "image" || l.space !== "grid") continue;
-    const obj = await imageObject(l, deps, { w: grid.w, h: grid.h, x: 0, y: 0 });
-    if (interactive) makeInteractive(obj, l, false);
-    else obj.selectable = obj.evented = false;
-    Object.assign(obj, { layerId: l.id, tileId: "", space: "grid", locked: !!l.locked });
-    canvas.add(obj);
   }
 
   canvas.renderAll();
