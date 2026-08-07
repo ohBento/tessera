@@ -20,6 +20,7 @@ import {
   inboxIds,
   looseTiles,
   moveToProject,
+  nameInStack,
   layerLabel,
   layoutFingerprint,
   layoutNeedsRestamp,
@@ -692,17 +693,6 @@ export async function openFolder(dir?: string) {
 
 const IMAGE_FILTER = { name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "bmp"] };
 
-/** The picked file's name, without folders or extension.
- *
- *  Assets are stored under their content hash, so the original name is gone by
- *  the time a layer exists — which is why layers used to be called "813b27fb".
- *  Capturing it here is the only chance. */
-const baseName = (path: string) =>
-  path
-    .split(/[\\/]/)
-    .pop()
-    ?.replace(/\.[^.]+$/, "") ?? "";
-
 /** Adds a picture spanning the whole wall — what used to be "the mosaic", now
  *  an ordinary layer that happens to live in grid space.
  *
@@ -721,7 +711,7 @@ export async function addGridImage() {
     const asset = await importAsset(app.dir, path);
     await mutate(() => {
       const layer = newImageLayer(asset);
-      layer.name = baseName(path);
+      nameInStack(layer, project.gridLayers);
       layer.space = "grid";
       layer.scale = 1;
       project.gridLayers.push(layer);
@@ -992,7 +982,7 @@ export async function addLayoutImage() {
     const asset = await importAsset(app.dir, path);
     await mutate(() => {
       const l = newImageLayer(asset);
-      l.name = baseName(path);
+      nameInStack(l, layout.layers);
       layout.layers.push(l);
       selectLayoutLayer(l.id);
     });
@@ -1020,6 +1010,7 @@ export async function addLayoutText() {
      * pinned along the bottom of a tile, and wrong for one dropped in the
      * middle of a sheet. */
     l.align = "center";
+    nameInStack(l, layout.layers);
     layout.layers.push(l);
     selectLayoutLayer(l.id);
   });
@@ -1030,6 +1021,7 @@ export async function addLayoutShape(shape: ShapeKind) {
   if (!layout) return;
   await mutate(() => {
     const l = newShapeLayer(shape);
+    nameInStack(l, layout.layers);
     layout.layers.push(l);
     selectLayoutLayer(l.id);
   });
@@ -1176,7 +1168,9 @@ export async function groupLayoutLayers() {
     for (const [i, l] of layout.layers.entries()) if (picked.has(l.id)) topMost = i;
     const above = layout.layers.slice(topMost + 1).filter((l) => !picked.has(l.id)).length;
     const group = newGroupLayer(members);
-    group.name = `Group ${kept.filter((l) => l.kind === "group").length + 1}`;
+    // Counted in the list the group is spliced into, which no longer holds its
+    // members — they moved inside it, and nameInStack walks in there anyway.
+    nameInStack(group, kept);
     kept.splice(kept.length - above, 0, group);
     layout.layers = kept;
     setLayoutSelection([group.id]);

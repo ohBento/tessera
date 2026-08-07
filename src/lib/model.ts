@@ -43,6 +43,10 @@ type Common = {
   blend: GlobalCompositeOperation;
   /* Optional so manifests written before these existed still load unchanged. */
   name?: string;
+  /* Which img/text/shape this was in its stack when it was created. Kept apart
+   * from the name so renaming cannot hand the number to the next layer — see
+   * nameInStack. Absent on everything written before names were numbered. */
+  seq?: number;
   locked?: boolean;
   hidden?: boolean;
   /* Which coordinate space x/y (and any size) are fractions of. Absent means
@@ -698,6 +702,30 @@ export const newTextLayer = (): TextLayer => ({
   shadowColor: "#000000",
   y: 0.9,
 });
+
+const LAYER_PREFIX: Record<Layer["kind"], string> = {
+  image: "img",
+  text: "text",
+  shape: "shape",
+  group: "group",
+};
+
+/** Names a layer for the stack it is about to join: img01, text01, img02.
+ *
+ *  The count comes off a hidden `seq`, never off the names, because renaming
+ *  is the whole point of a name: img02 renamed to "classIcon" is still the
+ *  second picture, and a third one arriving as img02 would sit in the list
+ *  beside a name that no longer says so. Per stack, so a Layout counts for
+ *  itself and the wall for itself — the two are never read together.
+ *
+ *  A stack written before any of this carries no numbers at all and starts
+ *  again at one. Nothing is renamed for it: a name someone typed is theirs. */
+export function nameInStack(layer: Layer, layers: Layer[]) {
+  let n = 0;
+  for (const l of walkLayers(layers)) if (l.kind === layer.kind) n = Math.max(n, l.seq ?? 0);
+  layer.seq = n + 1;
+  layer.name = `${LAYER_PREFIX[layer.kind]}${String(layer.seq).padStart(2, "0")}`;
+}
 
 export const layerLabel = (l: Layer) => {
   if (l.name) return l.name;

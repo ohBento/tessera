@@ -328,13 +328,12 @@ describe("the wall", () => {
     const layer = openLayout()!.layers[0];
     const steps = history.past.length;
 
-    /* What a cancelled rename does: Escape restores the *display label* into
-     * the field and blur still fires. For an unnamed layer that label is a
-     * fallback, not layer.name — writing it in gave the layer a name it never
-     * had and burned an undo step on nothing. */
+    /* What a cancelled rename does: Escape restores the display label into the
+     * field and blur still fires. Writing it back in has to leave both the
+     * name and the history exactly as they were. */
     await renameLayer(layer.id, layerLabel(layer));
     expect(history.past.length).toBe(steps);
-    expect(findLayer(openLayout()!.layers, layer.id)!.name).toBeUndefined();
+    expect(findLayer(openLayout()!.layers, layer.id)!.name).toBe("text01");
 
     // A real rename still lands and costs its one step.
     await renameLayer(layer.id, "Mein Text");
@@ -355,11 +354,19 @@ describe("the Layout editor", () => {
     return openLayout()!.layers.map((l) => l.id);
   }
 
-  it("names a layer after the file it came from, not its content hash", async () => {
+  it("numbers a new layer rather than naming it after the file", async () => {
+    /* The file name was misleading the moment a Layout was involved — the same
+     * picture is a frame in one and a class logo in another — and the asset it
+     * would otherwise fall back to is a content hash, which says nothing at
+     * all. The number is per kind and per stack. */
     await newLayoutDoc("Namen");
     queuePick(await magentaSquare("mein-bild"));
     await addLayoutImage();
-    expect(openLayout()!.layers[0].name).toBe("mein-bild");
+    await addLayoutText();
+    queuePick(await magentaSquare("noch-eins"));
+    await addLayoutImage();
+    await until(() => openLayout()!.layers.length === 3);
+    expect(openLayout()!.layers.map((l) => l.name)).toEqual(["img01", "text01", "img02"]);
   });
 
   it("keeps a Ctrl-picked second layer selected", async () => {

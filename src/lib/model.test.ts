@@ -22,6 +22,7 @@ import {
   layerText,
   migrate,
   moveToProject,
+  nameInStack,
   nestingShift,
   newGroupLayer,
   newImageLayer,
@@ -1309,5 +1310,53 @@ describe("pruneToFolder", () => {
     const m = pruneToFolder(wall(), ["a", "b", "c", "z"]);
     expect(projectOf(m, "z")).toBeUndefined();
     expect(inboxIds(m, ["a", "b", "c", "z"])).toEqual(["z"]);
+  });
+});
+
+describe("layer names", () => {
+  it("numbers each kind for itself, per stack", () => {
+    const layers: Layer[] = [];
+    for (const l of [newImageLayer("a.png"), newTextLayer(), newImageLayer("b.png")]) {
+      nameInStack(l, layers);
+      layers.push(l);
+    }
+    expect(layers.map((l) => l.name)).toEqual(["img01", "text01", "img02"]);
+  });
+
+  it("does not hand a renamed layer's number to the next one", () => {
+    /* The whole reason the count is not read off the names: img02 renamed to
+     * "classIcon" is still the second picture, and a third one that came back
+     * as img02 would sit in the list next to a name that no longer says so. */
+    const layers: Layer[] = [];
+    for (const l of [newImageLayer("a.png"), newImageLayer("b.png")]) {
+      nameInStack(l, layers);
+      layers.push(l);
+    }
+    layers[1].name = "classIcon";
+
+    const third = newImageLayer("c.png");
+    nameInStack(third, layers);
+    expect(third.name).toBe("img03");
+  });
+
+  it("counts a picture inside a group", () => {
+    const inner = newImageLayer("a.png");
+    nameInStack(inner, []);
+    const layers: Layer[] = [newGroupLayer([inner])];
+
+    const next = newImageLayer("b.png");
+    nameInStack(next, layers);
+    expect(next.name).toBe("img02");
+  });
+
+  it("leaves an old stack alone and starts at one", () => {
+    // Nothing written before this carries a number, and nothing gets renamed
+    // for it — a name the user typed is theirs.
+    const old = newImageLayer("logo.png");
+    old.name = "logo";
+    const next = newImageLayer("b.png");
+    nameInStack(next, [old]);
+    expect(next.name).toBe("img01");
+    expect(old.name).toBe("logo");
   });
 });
