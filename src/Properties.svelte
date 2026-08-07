@@ -3,6 +3,7 @@
      in: position, rotation and size are on the canvas handles, so they are not
      repeated here. A caption whose words cannot be typed is useless, which is
      why this exists at all rather than waiting for the full panel system. */
+  import { TILE_W } from "./lib/bmp";
   import { setLayerField, type LayerField } from "./lib/editor.svelte";
   import { isGradient, type Layer, type Paint } from "./lib/model";
 
@@ -32,12 +33,11 @@
     <input value={layer.font} onchange={(e) => set("font", e.currentTarget.value)} />
   </label>
   <label class="field">
-    <span>Size</span>
-    <!-- The ceiling follows the layer, and there is no step. A canvas handle
-         has no limits, so a caption scaled past the end of the track showed as
-         pinned at the maximum and the next nudge — the gesture that means "a
-         hair smaller" — shrank it by half. Rounding did the same in miniature:
-         touching the slider at all snapped the size to the nearest step. -->
+    <span>Font size</span>
+    <!-- The ceiling still follows the layer, and there is still no step. The
+         canvas handle no longer scales a caption, but every layout built while
+         it did carries whatever size that produced — a fixed ceiling would
+         stamp those flat the first time the slider was touched. -->
     <input
       type="range"
       min="0.02"
@@ -45,6 +45,18 @@
       step="any"
       value={layer.size}
       oninput={(e) => set("size", num(e))}
+    />
+    <!-- Pixels, because that is what a font size means to a person; the model
+         keeps its fraction of the tile so a layout survives a change of tile
+         resolution. On change rather than on input: typing "64" over "8"
+         passes through "6", and the caption should not jump there and back. -->
+    <input
+      class="px"
+      type="number"
+      min="1"
+      step="1"
+      value={Math.round(layer.size * TILE_W)}
+      onchange={(e) => set("size", Math.max(1, num(e)) / TILE_W)}
     />
   </label>
   {#if inLayout}
@@ -290,6 +302,10 @@
   }
   input[type="range"] {
     padding: 0;
+  }
+  .px {
+    flex: none;
+    width: 48px;
   }
   /* A checkbox is a fixed little square, not a field that grows — the shared
      `input` rule above would stretch it across the panel. */

@@ -586,15 +586,16 @@ describe("the Layout editor", () => {
     expect(history.past.length).toBe(before);
   });
 
-  it("does not resize a caption just for being dragged", async () => {
+  it("leaves a caption's size to the properties panel, whatever the canvas says", async () => {
+    /* The font size is a field now, and only a field. A caption's box is
+     * measured against its words, so a handle had no honest size to report
+     * anyway — dragging one multiplied the number you had just typed, and a
+     * plain move used to do it too. Moving still lands; scaling does not. */
     await newLayoutDoc("Textzug");
     await addLayoutText();
     const l = openLayout()!.layers[0];
     const size = l.kind === "text" ? l.size : 0;
 
-    /* A caption's box is measured against its words, so its share of the tile
-     * is an arbitrary number — reading the size back from it meant every plain
-     * move rescaled the text, and the slider and the drag then fought over it. */
     await applyLayoutTransform(l.id, {
       x: 0.8, y: 0.2, rotation: 0, scale: 0.21, scaleH: 0.09, fx: 1, fy: 1,
     });
@@ -602,12 +603,11 @@ describe("the Layout editor", () => {
     expect(moved.kind === "text" && moved.size).toBeCloseTo(size, 6);
     expect(moved.x).toBeCloseTo(0.8);
 
-    // A real scale still lands.
     await applyLayoutTransform(l.id, {
       x: 0.8, y: 0.2, rotation: 0, scale: 0.42, scaleH: 0.18, fx: 2, fy: 2,
     });
     const scaled = findLayer(openLayout()!.layers, l.id)!;
-    expect(scaled.kind === "text" && scaled.size).toBeCloseTo(size * 2, 6);
+    expect(scaled.kind === "text" && scaled.size).toBeCloseTo(size, 6);
   });
 
   it("rebuilds after a scale, so the factor is not applied twice", async () => {

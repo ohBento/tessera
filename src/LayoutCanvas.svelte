@@ -127,6 +127,18 @@
     const free = !!only && freeScale(only);
     canvas.uniformScaling = !free;
     canvas.uniScaleKey = free ? "shiftKey" : null;
+    /* A caption has no handles to scale by. Its size is a font size and the
+     * box around it is measured off its own words, so there was never an
+     * honest number to read back — dragging a corner simply multiplied
+     * whatever was in the properties field, which is where the size belongs.
+     * Rotation and the move stay; only the eight scale controls go. */
+    if (only?.kind === "text") {
+      canvas.getActiveObject()?.setControlsVisibility({
+        tl: false, tr: false, bl: false, br: false,
+        ml: false, mr: false, mt: false, mb: false,
+      });
+      return;
+    }
     /* uniformScaling only governs the corner handles. An ActiveSelection shows
      * all four mid-side handles of its own accord, and those scale one axis
      * whatever it is set to — so a sideways stretch of a mixed selection made
