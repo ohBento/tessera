@@ -21,6 +21,7 @@ import {
   type Layer,
   type Layout,
   type Manifest,
+  type Corners,
   type Paint,
   type ShapeLayer,
   type TextLayer,
@@ -224,15 +225,43 @@ function shapeObject(l: ShapeLayer, box: { w: number; h: number; x: number; y: n
   if (l.shape === "ellipse") return new fabric.Ellipse({ ...common, rx: w / 2, ry: h / 2 });
   if (l.shape === "polygon")
     return new fabric.Polygon(polygonPoints(l.sides, w, h), { ...common, objectCaching: false });
-  return new fabric.Rect({
-    ...common,
-    width: w,
-    height: h,
-    // A radius past half the short side is not a rounder rectangle, it is a
-    // broken path — Canvas draws nothing at all past that point.
-    rx: Math.min(l.cornerRadius, 0.5) * Math.min(w, h),
-    ry: Math.min(l.cornerRadius, 0.5) * Math.min(w, h),
-  });
+  // A radius past half the short side is not a rounder rectangle, it is a
+  // broken path — Canvas draws nothing at all past that point.
+  const r = Math.min(l.cornerRadius, 0.5) * Math.min(w, h);
+  const corners = l.corners;
+  /* The plain Rect stays for the plain case, which is every rect drawn before
+   * corners existed: Fabric places a Path by its own bounding box rather than
+   * by the box it was asked for, and there is no reason to put every existing
+   * layout through that just so a rarer one can have three round corners. */
+  if (!corners || (corners.tl && corners.tr && corners.bl && corners.br)) {
+    return new fabric.Rect({ ...common, width: w, height: h, rx: r, ry: r });
+  }
+  return new fabric.Path(cornerPath(w, h, r, corners), { ...common, objectCaching: false });
+}
+
+/** A rectangle rounded only where `corners` says so, drawn around its centre.
+ *
+ *  Around the centre because that is the origin every layer here is placed by;
+ *  a path starting at 0,0 would hang down and to the right of where it was
+ *  asked to sit. */
+function cornerPath(w: number, h: number, r: number, c: Corners): string {
+  const x = -w / 2;
+  const y = -h / 2;
+  const arc = (rad: number, toX: number, toY: number) =>
+    rad ? `A ${rad} ${rad} 0 0 1 ${toX} ${toY}` : `L ${toX} ${toY}`;
+  const [tl, tr, br, bl] = [c.tl ? r : 0, c.tr ? r : 0, c.br ? r : 0, c.bl ? r : 0];
+  return [
+    `M ${x + tl} ${y}`,
+    `L ${x + w - tr} ${y}`,
+    arc(tr, x + w, y + tr),
+    `L ${x + w} ${y + h - br}`,
+    arc(br, x + w - br, y + h),
+    `L ${x + bl} ${y + h}`,
+    arc(bl, x, y + h - bl),
+    `L ${x} ${y + tl}`,
+    arc(tl, x + tl, y),
+    "Z",
+  ].join(" ");
 }
 
 /** Any layer as a Fabric object, or undefined for a kind that has no shape of

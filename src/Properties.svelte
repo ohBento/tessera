@@ -5,7 +5,14 @@
      why this exists at all rather than waiting for the full panel system. */
   import { TILE_W } from "./lib/bmp";
   import { openLayout, setLayerField, type LayerField } from "./lib/editor.svelte";
-  import { isGradient, layerLabel, maskChoices, type Layer, type Paint } from "./lib/model";
+  import {
+    CORNER_KEYS,
+    isGradient,
+    layerLabel,
+    maskChoices,
+    type Layer,
+    type Paint,
+  } from "./lib/model";
   import { systemFonts } from "./lib/platform";
 
   /** What this machine has installed. Fetched once behind the module-level
@@ -257,6 +264,39 @@
         oninput={(e) => set("cornerRadius", num(e))}
       />
     </label>
+    <!-- Which corners the radius reaches. A tab, a speech bubble and a
+         half-round bar are all the same rect with two of these off, so one
+         radius and four switches covers them without four more sliders. -->
+    <div class="row">
+      {#each CORNER_KEYS as corner (corner)}
+        {@const on = layer.corners ? layer.corners[corner] : true}
+        <button
+          class:on
+          title={`Round the ${{ tl: "top-left", tr: "top-right", bl: "bottom-left", br: "bottom-right" }[corner]} corner`}
+          onclick={() =>
+            set("corners", {
+              ...{ tl: true, tr: true, bl: true, br: true },
+              ...layer.corners,
+              [corner]: !on,
+            })}
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+            <!-- The square drawn with one corner cut, turned to whichever one
+                 this button owns. -->
+            <g
+              transform={`rotate(${{ tl: 0, tr: 90, br: 180, bl: 270 }[corner]} 8 8)`}
+            >
+              <path
+                d={on ? "M3 8a5 5 0 0 1 5-5h5v10H3z" : "M3 3h10v10H3z"}
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.3"
+              />
+            </g>
+          </svg>
+        </button>
+      {/each}
+    </div>
   {/if}
   {#if layer.shape === "polygon"}
     <label class="field">

@@ -616,3 +616,72 @@ describe("anything can be the mask", () => {
     expect(choices).toEqual([inner.id]);
   });
 });
+
+describe("rect corners", () => {
+  const probe = async (layout: Parameters<typeof renderLayout>[0]) => {
+    const bytes = await renderLayout(layout, testDeps);
+    const bmp = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+    const c = new OffscreenCanvas(bmp.width, bmp.height);
+    c.getContext("2d")!.drawImage(bmp, 0, 0);
+    const { data } = c.getContext("2d")!.getImageData(0, 0, bmp.width, bmp.height);
+    return (x: number, y: number) => {
+      const o = (Math.round(y * TILE_H) * bmp.width + Math.round(x * TILE_W)) * 4;
+      return [data[o], data[o + 1], data[o + 2], data[o + 3]];
+    };
+  };
+
+  /** A big rect filling most of the sheet, rounded hard so a corner is
+   *  unmistakably in or out. */
+  function boxed() {
+    const layout = newLayout("Ecken");
+    const box = newShapeLayer("rect");
+    box.x = 0.5;
+    box.y = 0.5;
+    box.w = 0.8;
+    box.h = 0.8;
+    box.cornerRadius = 0.4;
+    box.fill = "#ff00ff";
+    box.borderWidth = 0;
+    layout.layers.push(box);
+    return { layout, box };
+  }
+
+  /** Just inside each corner of that rect. */
+  const CORNERS = {
+    tl: [0.115, 0.115],
+    tr: [0.885, 0.115],
+    bl: [0.115, 0.885],
+    br: [0.885, 0.885],
+  } as const;
+
+  it("rounds all four when nothing says otherwise", async () => {
+    const { layout } = boxed();
+    const px = await probe(layout);
+    for (const [x, y] of Object.values(CORNERS)) expect(px(x, y)[3]).toBe(0);
+  });
+
+  it("keeps the corners that are switched off square", async () => {
+    const { layout, box } = boxed();
+    box.corners = { tl: true, tr: false, bl: false, br: true };
+    const px = await probe(layout);
+    expect(px(...CORNERS.tl)[3]).toBe(0);
+    expect(px(...CORNERS.br)[3]).toBe(0);
+    // Square corners reach all the way out.
+    expect(px(...CORNERS.tr)).toEqual([255, 0, 255, 255]);
+    expect(px(...CORNERS.bl)).toEqual([255, 0, 255, 255]);
+  });
+
+  it("stays where it was put, whichever corners are rounded", async () => {
+    // A path is positioned differently from a rect in Fabric, and getting that
+    // wrong moves the shape rather than reshaping it.
+    const square = boxed();
+    square.box.corners = { tl: false, tr: false, bl: false, br: false };
+    const px = await probe(square.layout);
+    // The rect spans 0.1..0.9 on both axes; just outside stays empty.
+    expect(px(0.5, 0.5)).toEqual([255, 0, 255, 255]);
+    expect(px(0.08, 0.5)[3]).toBe(0);
+    expect(px(0.92, 0.5)[3]).toBe(0);
+    expect(px(0.5, 0.08)[3]).toBe(0);
+    expect(px(0.5, 0.92)[3]).toBe(0);
+  });
+});

@@ -101,12 +101,19 @@ export type ImageLayer = Common & {
 
 export type ShapeKind = "rect" | "ellipse" | "polygon";
 
+/** Which corners of a rect the radius reaches. Absent means all four, which is
+ *  what every rect drawn before this did. */
+export type Corners = { tl: boolean; tr: boolean; bl: boolean; br: boolean };
+
+export const CORNER_KEYS = ["tl", "tr", "bl", "br"] as const;
+
 export type ShapeLayer = Common & {
   kind: "shape";
   shape: ShapeKind;
   w: number; // fraction of tile width
   h: number; // fraction of tile height
   cornerRadius: number; // 0..0.5 of min(w,h); rect only
+  corners?: Corners; // rect only; absent means all four
   sides: number; // polygon only; rotation reuses the common field
   fill: Paint;
   borderColor: string;
