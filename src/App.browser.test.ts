@@ -80,6 +80,18 @@ async function mountApp() {
   await until(() => !!app.dir && app.folderIds.length > 0 && !app.busy);
 }
 
+/** The app opens on the overview, so there is no wall canvas until one is
+ *  entered. Clicked rather than set from the outside: the card is the only way
+ *  in, and a test that bypassed it would not notice the card going missing. */
+async function enterInbox() {
+  const card = [...document.querySelectorAll("button")].find((b) =>
+    b.textContent!.includes("Inbox"),
+  ) as HTMLButtonElement | undefined;
+  if (!card) throw new Error("no way into the inbox from the overview");
+  card.click();
+  await until(() => !!document.querySelector("canvas.lower-canvas"));
+}
+
 async function magentaSquare(name: string) {
   const c = new OffscreenCanvas(200, 200);
   const ctx = c.getContext("2d")!;
@@ -101,9 +113,15 @@ beforeEach(async () => {
 });
 
 describe("the wall", () => {
-  it("opens its folder without being asked and shows every tile", () => {
+  it("opens its folder without being asked and offers a way into it", async () => {
     expect(app.dir).toContain("FaceTexture");
     expect(app.folderIds.length).toBeGreaterThan(0);
+    /* The overview first, not a wall. With several accounts sharing one folder
+     * there is no single wall to guess at, and every tile starts unassigned —
+     * so the inbox card is the way in and has to be there before anything
+     * else works. */
+    expect(document.querySelector("canvas.lower-canvas")).toBeNull();
+    await enterInbox();
     expect(document.querySelector("canvas.lower-canvas")).toBeTruthy();
   });
 
@@ -118,6 +136,7 @@ describe("the wall", () => {
      *
      * Measured on the top canvas rather than by eye: at 100% display scale the
      * offset is small enough to look like anti-aliasing. */
+    await enterInbox();
     const canvas = (window as { tesseraWall?: fabric.Canvas }).tesseraWall!;
     await until(() => canvas.getObjects().length > 0);
 

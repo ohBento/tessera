@@ -9,25 +9,31 @@ import {
   bakeMosaicInto,
   clearBases,
   deleteStampCascade,
+  dissolveFolder,
   duplicateLayout,
   emptyManifest,
   findLayer,
   findList,
   groupShift,
   holdersUsingLayout,
+  folderOf,
   inboxIds,
+  looseTiles,
   moveToProject,
   layerLabel,
   layoutFingerprint,
   layoutNeedsRestamp,
   nestingShift,
   newGroupLayer,
+  newFolder,
   newImageLayer,
   newLayout,
   newProject,
   newShapeLayer,
   newTextLayer,
+  placeTile,
   projectOf,
+  putInFolder,
   refreshStamps,
   removeFromProjectToInbox,
   relocateLayer,
@@ -36,8 +42,10 @@ import {
   shiftLayer,
   stampInto,
   swapPlaced,
+  takeOutOfFolder,
   syncLiveLayers,
   tilesUsingLayout,
+  unplaceTile,
   type ImageLayer,
   type Layer,
   type Layout,
@@ -165,6 +173,75 @@ export function openProjectView(id: string) {
 /** The tile ids of the picked tiles that no project has claimed — what a new
  *  project may be built from, and why a greyed button has a readable reason. */
 export const freeCount = () => inboxIds(app.manifest, app.selectedTiles).length;
+
+/* --- The shelf: a project's tiles that have no slot on its grid yet. Sorting
+ * forty-four portraits into a wall is a two-step job — collect, then arrange —
+ * and this is the holding area between them. --- */
+
+export const shelfIds = () => openProject()?.shelf ?? [];
+
+/** Drops a shelved tile onto the grid, in front of `beforeId` or at the end.
+ *  Dense: the game's grid has no holes, so neither does this. */
+export async function placeTileAt(tileId: string, beforeId: string | null) {
+  const p = openProject();
+  if (!p) return;
+  await mutate(() => placeTile(p, tileId, beforeId));
+}
+
+/** Takes a tile off the grid without giving up the project. Its layers stay:
+ *  only the slot is surrendered, and the tiles after it close the gap. */
+export async function unplace(tileId: string) {
+  const p = openProject();
+  if (!p) return;
+  await mutate(() => unplaceTile(p, tileId));
+}
+
+/* --- Cosmetic folders. Drawers in the tile list, nothing more: dissolving one
+ * leaves every tile on its slot with every layer still on it. --- */
+
+export const folders = () => openProject()?.folders ?? [];
+
+export const tileFolder = (tileId: string) => {
+  const p = openProject();
+  return p ? folderOf(p, tileId) : undefined;
+};
+
+/** The visible tiles no drawer has taken, in grid order. */
+export const looseIds = () => {
+  const p = openProject();
+  return p ? looseTiles(p, visibleIds()) : visibleIds();
+};
+
+export async function newFolderHere(name: string) {
+  const p = openProject();
+  if (!p) return;
+  await mutate(() => {
+    const f = newFolder(name.trim() || `Folder ${p.folders.length + 1}`);
+    // The picked tiles go straight in: making a drawer is something you do
+    // *to* a selection, and an empty one would then have to be filled by hand.
+    for (const id of app.selectedTiles) f.tiles.push(id);
+    p.folders.push(f);
+  });
+}
+
+export async function renameFolder(folderId: string, name: string) {
+  const f = folders().find((x) => x.id === folderId);
+  if (!f || !name.trim() || f.name === name.trim()) return;
+  await mutate(() => (f.name = name.trim()), true, `folder:${folderId}`);
+}
+
+export async function removeFolder(folderId: string) {
+  const p = openProject();
+  if (!p) return;
+  await mutate(() => dissolveFolder(p, folderId));
+}
+
+/** Puts a tile into a drawer, or back on the loose pile when `folderId` is "". */
+export async function fileTile(tileId: string, folderId: string) {
+  const p = openProject();
+  if (!p) return;
+  await mutate(() => (folderId ? putInFolder(p, folderId, tileId) : takeOutOfFolder(p, tileId)));
+}
 
 /** Hands the picked tiles to another project. Their layers, wording and
  *  pictures go with them for free — those live under the tile id, which no

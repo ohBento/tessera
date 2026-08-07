@@ -6,7 +6,9 @@ import {
   DEFAULT_SHAPE_SIZE,
   DEFAULT_TEXT_SIZE,
   deleteStampCascade,
+  dissolveFolder,
   dropOrphanLiveLayers,
+  folderOf,
   effectiveTile,
   emptyManifest,
   emptyTile,
@@ -26,10 +28,13 @@ import {
   layoutFingerprint,
   layoutNeedsRestamp,
   newLayout,
+  newFolder,
   newProject,
   newShapeLayer,
   newTextLayer,
+  looseTiles,
   placeTile,
+  putInFolder,
   projectOf,
   projectTiles,
   clearBases,
@@ -154,6 +159,61 @@ describe("projects own tiles exclusively", () => {
 
     removeFromProjectToInbox(m, "a", true);
     expect(m.tiles.a).toEqual(emptyTile());
+  });
+});
+
+describe("cosmetic folders", () => {
+  /* A drawer in the tile list and nothing else. It does not render, does not
+   * stamp, and dissolving one must leave every tile and every layer untouched —
+   * that is the whole difference from the group it replaces, which deleted
+   * artwork every time someone reorganised. */
+  const withFolder = () => {
+    const m = withProject();
+    const p = main(m);
+    const f = newFolder("Done");
+    p.folders = [f];
+    return { m, p, f };
+  };
+
+  it("holds tiles and reports which drawer one is in", () => {
+    const { p, f } = withFolder();
+    expect(putInFolder(p, f.id, "a")).toBe(true);
+    expect(folderOf(p, "a")?.name).toBe("Done");
+    expect(folderOf(p, "b")).toBeUndefined();
+  });
+
+  it("keeps a tile in one drawer at a time", () => {
+    const { p, f } = withFolder();
+    const other = newFolder("Later");
+    p.folders.push(other);
+    putInFolder(p, f.id, "a");
+    putInFolder(p, other.id, "a");
+    expect(f.tiles).toEqual([]);
+    expect(other.tiles).toEqual(["a"]);
+  });
+
+  it("refuses a tile the project does not own", () => {
+    const { p, f } = withFolder();
+    expect(putInFolder(p, f.id, "stranger")).toBe(false);
+    expect(f.tiles).toEqual([]);
+  });
+
+  it("dissolving takes nothing with it", () => {
+    const { m, p, f } = withFolder();
+    m.tiles.a.layers.push({ ...newTextLayer(), id: "art" });
+    putInFolder(p, f.id, "a");
+
+    dissolveFolder(p, f.id);
+    expect(p.folders).toEqual([]);
+    // The tile keeps its slot on the grid and every layer on it.
+    expect(p.order).toEqual(["a", "b", "c"]);
+    expect(m.tiles.a.layers.map((l) => l.id)).toEqual(["art"]);
+  });
+
+  it("lists the tiles no drawer has taken, in grid order", () => {
+    const { p, f } = withFolder();
+    putInFolder(p, f.id, "b");
+    expect(looseTiles(p, p.order)).toEqual(["a", "c"]);
   });
 });
 

@@ -38,15 +38,19 @@
     dropTileLayer,
     duplicateLayoutDoc,
     endGesture,
+    fileTile,
+    folders,
     freeCount,
     groupLayoutLayers,
     inbox,
     layoutGroups,
+    looseIds,
     layoutTiles,
     layoutUsage,
     layouts,
     moveLayersIntoGroup,
     moveTilesToProject,
+    newFolderHere,
     newLayoutDoc,
     newProjectFrom,
     openFolder,
@@ -54,13 +58,16 @@
     openLayoutDoc,
     openProject,
     openProjectView,
+    placeTileAt,
     projects,
     redoEdit,
     redoable,
     releaseTilesToInbox,
     renameLayer,
     renameLayout,
+    renameFolder,
     renameProject,
+    removeFolder,
     saveLayout,
     saveToGame,
     selectLayer,
@@ -73,7 +80,9 @@
     tileImageChoices,
     tileImages,
     tileLayers,
+    shelfIds,
     tileProject,
+    unplace,
     tileText,
     visibleIds,
     toggleLayerHidden,
@@ -129,6 +138,40 @@
    *  same logo on twenty tiles costs one decode. */
   const assetUrl = (asset: string) => app.deps?.asset(asset) ?? Promise.resolve("");
 
+  /** Paints a tile's untouched portrait into a small canvas.
+   *
+   *  Through `deps.original`, which is the same cached loader the wall uses, so
+   *  a thumbnail costs no decode of its own. A canvas rather than an image
+   *  element, because that loader hands back an ImageBitmap and there is no URL
+   *  for one — and adding a second IO path for pictures the app already holds
+   *  in memory would be a cache to keep in step for no gain. */
+  function portrait(el: HTMLCanvasElement, id: string) {
+    let live = true;
+    void (async () => {
+      const bmp = await app.deps?.original(id);
+      if (!live || !bmp) return;
+      const ctx = el.getContext("2d");
+      if (!ctx) return;
+      ctx.clearRect(0, 0, el.width, el.height);
+      ctx.drawImage(bmp, 0, 0, el.width, el.height);
+    })();
+    return { destroy: () => (live = false) };
+  }
+
+  /** Which wall the stage is showing, or the overview when none. */
+  let home = $state(true);
+  const enter = (id: string) => {
+    openProjectView(id);
+    home = false;
+  };
+  /* Back to the overview whenever a different folder is loaded: the walls it
+     offers are the ones in that folder, and a project id from the last one
+     names nothing here. */
+  $effect(() => {
+    app.dir;
+    home = true;
+  });
+
   /** The Layout canvas — the toolbar's align buttons act on its live objects. */
   let sheet: LayoutCanvas | undefined = $state();
   const noPick = $derived(!editing || !app.layoutSelection.length);
@@ -147,6 +190,11 @@
   type Where = "before" | "after" | "into";
   let dragId = $state("");
   let dropOn = $state<{ id: string; where: Where } | null>(null);
+
+  /** The shelved tile being carried onto the wall, "" for none. Separate from
+   *  `dragId`, which carries layer rows: the two land in different places and
+   *  sharing one field would let a layer drop reorder the grid. */
+  let dragTile = $state("");
 
   /** Which third of the row the pointer is in. "into" only where it means
    *  something, so a plain row never offers a target that cannot take it. */
@@ -372,6 +420,18 @@
      no `change` event and call endGesture themselves. -->
 <svelte:window onkeydown={shortcut} onchange={endGesture} />
 
+<!-- A few portraits off a wall, so a card is recognisable without being
+     opened. Four is enough to tell two accounts apart and cheap enough that the
+     overview costs nothing; the rest is a count. -->
+{#snippet thumbs(ids: string[])}
+  <span class="strip">
+    {#each ids.slice(0, 4) as id (id)}
+      <canvas class="thumb" width="39" height="50" use:portrait={id}></canvas>
+    {/each}
+    {#if ids.length > 4}<span class="more">+{ids.length - 4}</span>{/if}
+  </span>
+{/snippet}
+
 <!-- One Layout row per layer, recursing into groups. A snippet rather than a
      component because it needs nothing but the list it draws, and a component
      would mean threading every action through props. -->
@@ -519,7 +579,19 @@
 <main>
   <header>
     <div class="docs" role="group" aria-label="Document">
-      <button class:active={!editing} onclick={closeLayoutDoc} disabled={!app.dir}>Wall</button>
+      <button
+        class:active={!editing && home}
+        onclick={() => {
+          closeLayoutDoc();
+          home = true;
+        }}
+        disabled={!app.dir}>Home</button
+      >
+      {#if !home}
+        <button class:active={!editing} onclick={closeLayoutDoc} disabled={!app.dir}>
+          {openProject()?.name ?? "Inbox"}
+        </button>
+      {/if}
       {#if editing}
         <button class="active" title="Esc closes">{editing.name}</button>
       {/if}
@@ -645,9 +717,57 @@
          bubbling listener out here never sees a right-click on the wall.
          Capture runs on the way down, before the target's own handlers. -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="stage" oncontextmenucapture={wallMenu}>
+    <!-- The wall is the drop target for a shelved tile. GridCanvas already
+         knows how to turn a screen point into a cell (tileAtEvent), so the drop
+         only has to ask it which portrait it landed on and place the carried
+         tile in front of that one — or at the end, past the last. -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="stage"
+      class:dropping={!!dragTile}
+      oncontextmenucapture={wallMenu}
+      ondragover={(e) => dragTile && e.preventDefault()}
+      ondrop={(e) => {
+        e.preventDefault();
+        const moving = dragTile;
+        dragTile = "";
+        if (moving) void placeTileAt(moving, grid?.tileAtEvent(e) || null);
+      }}
+    >
       {#if editing}
         <LayoutCanvas bind:this={sheet} />
+      {:else if home}
+        <!-- The start view, always. With several accounts sharing one folder
+             there is no single "the" wall to open, and a newly created
+             character has to be visible the moment it turns up — so the way in
+             is a choice of wall rather than a guess at one. -->
+        <div class="home">
+          <div class="cards">
+            <button class="card inbox" onclick={() => enter("")}>
+              <span class="cardname">Inbox</span>
+              <span class="cardsub">
+                {inbox().length}
+                {inbox().length === 1 ? "tile" : "tiles"} waiting
+              </span>
+              {@render thumbs(inbox())}
+            </button>
+            {#each projects() as project (project.id)}
+              <button class="card" onclick={() => enter(project.id)}>
+                <span class="cardname">{project.name}</span>
+                <span class="cardsub">
+                  {project.order.length} placed{#if project.shelf.length}
+                    · {project.shelf.length} shelved{/if}
+                </span>
+                {@render thumbs(project.order)}
+              </button>
+            {/each}
+          </div>
+          {#if !projects().length}
+            <p class="empty">
+              Open the inbox, pick the portraits of one account, then "Project from selection".
+            </p>
+          {/if}
+        </div>
       {:else}
         <GridCanvas bind:this={grid} />
       {/if}
@@ -693,7 +813,7 @@
         <h2 class:spaced={wallLayers.length}>Projects</h2>
         <ul>
           <li class:selected={!app.openProjectId}>
-            <button class="name" onclick={() => openProjectView("")}>
+            <button class="name" onclick={() => enter("")}>
               Inbox
               <span class="usage">
                 {inbox().length} unassigned{#if !inbox().length} · all sorted{/if}
@@ -717,7 +837,7 @@
               {:else}
                 <button
                   class="name"
-                  onclick={() => openProjectView(project.id)}
+                  onclick={() => enter(project.id)}
                   ondblclick={() => (renaming = project.id)}
                   title="Click opens this wall, double-click renames"
                 >
@@ -743,11 +863,110 @@
           + New project{#if freeCount()}&nbsp;({freeCount()}){/if}
         </button>
 
-        <!-- Every portrait, whether or not a group ever claimed it. A tile in
-             a group takes its layout from there, so its row shows the group's
-             name where the dropdown would be: one place per tile for a layout
-             to come from, and no way to set the two against each other. -->
+        {#if shelfIds().length}
+          <!-- Collected but not placed. Sorting a wall is two jobs — decide
+               which portraits belong to it, then decide where each one sits —
+               and this is the pile between them. Drag a row onto the wall to
+               give it a slot; it lands in front of whatever it is dropped on. -->
+          <h2 class="spaced">Shelf</h2>
+          <ul>
+            {#each shelfIds() as id (id)}
+              <li
+                class="shelfrow"
+                draggable="true"
+                ondragstart={(e) => {
+                  dragTile = id;
+                  if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+                }}
+                ondragend={() => (dragTile = "")}
+              >
+                <canvas class="thumb" width="31" height="40" use:portrait={id}></canvas>
+                <button class="name" onclick={() => (app.selectedTiles = [id])}>{id}</button>
+                <button title="Put it at the end of the wall" onclick={() => placeTileAt(id, null)}
+                  >↦</button
+                >
+              </li>
+            {/each}
+          </ul>
+          <p class="empty">Drag onto the wall to choose the slot.</p>
+        {/if}
+
+        <!-- The tiles of whichever wall is showing, with any cosmetic drawers
+             first. A drawer is a place to put finished portraits so the list
+             stays scannable — it renders nothing and owns nothing. -->
         <h2 class="spaced">Tiles</h2>
+        {#each folders() as folder (folder.id)}
+          <div
+            class="group"
+            role="presentation"
+            onmouseenter={() => (app.hoverFolder = folder.id)}
+            onmouseleave={() => (app.hoverFolder = "")}
+          >
+            <div class="grouphead">
+              <button class="twisty" onclick={() => toggleOpen(folder.id)}>
+                {open.has(folder.id) ? "▾" : "▸"}
+              </button>
+              {#if renaming === folder.id}
+                <!-- svelte-ignore a11y_autofocus -->
+                <input
+                  class="rename"
+                  autofocus
+                  value={folder.name}
+                  onblur={(e) => {
+                    void renameFolder(folder.id, e.currentTarget.value);
+                    renaming = "";
+                  }}
+                  onkeydown={(e) => renameKey(e, folder.name)}
+                />
+              {:else}
+                <button
+                  class="name"
+                  onclick={() => toggleOpen(folder.id)}
+                  ondblclick={() => (renaming = folder.id)}
+                  title="Double-click to rename · hover outlines its tiles"
+                >
+                  {folder.name}
+                  <span class="usage">{folder.tiles.length} tiles</span>
+                </button>
+              {/if}
+              <button
+                title="Put the picked tiles in here"
+                disabled={!app.selectedTiles.length}
+                onclick={() => {
+                  for (const id of app.selectedTiles) void fileTile(id, folder.id);
+                }}>+</button
+              >
+              <!-- Dissolve, not delete: the tiles keep their slots and every
+                   layer on them. That is the whole difference from the group
+                   this replaced, where the same click threw artwork away. -->
+              <button title="Dissolve — the tiles stay" onclick={() => removeFolder(folder.id)}
+                >×</button
+              >
+            </div>
+            {#if open.has(folder.id)}
+              <ul class="indent">
+                {#each folder.tiles as id (id)}
+                  <li class:selected={app.selectedTiles.includes(id)}>
+                    <button class="name" onclick={() => (app.selectedTiles = [id])}>{id}</button>
+                    <button title="Back to the loose pile" onclick={() => fileTile(id, "")}>↑</button>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </div>
+        {/each}
+
+        {#if openProject()}
+          <button
+            class="wide"
+            onclick={() => newFolderHere("")}
+            disabled={!!app.busy}
+            title="A drawer for finished tiles, so the list stays short"
+          >
+            + New folder{#if app.selectedTiles.length}&nbsp;({app.selectedTiles.length}){/if}
+          </button>
+        {/if}
+
         <div class="group">
           <div class="grouphead">
             <button class="twisty" onclick={() => toggleOpen("tiles")}>
@@ -755,16 +974,13 @@
             </button>
             <button class="name" onclick={() => toggleOpen("tiles")}>
               {app.openProjectId ? "On this wall" : "In the inbox"}
-              <span class="usage">{visibleIds().length} · assign one at a time</span>
+              <span class="usage">{looseIds().length} · assign one at a time</span>
             </button>
           </div>
 
           {#if open.has("tiles")}
             <div class="indent">
-              <!-- The tiles of whichever wall is showing. A project's grid, or
-                   the inbox — everything the folder has that no project has
-                   claimed. -->
-              {#each visibleIds() as id (id)}
+              {#each looseIds() as id (id)}
                 {@const own = stampsOf(tileLayers(id))}
                 {@const owner = tileProject(id)}
                 <div class="group">
@@ -782,6 +998,14 @@
                         {own.length ? `${own.length} layout(s)` : owner ? "no layout" : "unassigned"}
                       </span>
                     </button>
+                    {#if owner && app.openProjectId}
+                      <!-- Off the grid, not out of the project: the tile keeps
+                           every layer and only gives up its slot, and the tiles
+                           after it close the gap. -->
+                      <button title="Off the wall, onto the shelf" onclick={() => unplace(id)}
+                        >↩</button
+                      >
+                    {/if}
                   </div>
 
                   {#if open.has(id)}
@@ -888,11 +1112,20 @@
           {/each}
         {/if}
 
-        <h2 class="spaced">Layouts</h2>
+        <!-- One library across every project: a design fits characters from
+             any account, and keeping a copy per wall would mean editing the
+             same frame twice. Collapsible, because that library is the list
+             that grows without bound. -->
+        <h2 class="spaced">
+          <button class="twisty inline" onclick={() => toggleOpen("layouts")}>
+            {open.has("layouts") ? "▾" : "▸"}
+          </button>
+          Layouts{#if layouts().length}&nbsp;({layouts().length}){/if}
+        </h2>
         {#if !layouts().length}
           <p class="empty">None yet.</p>
         {/if}
-        <ul>
+        <ul class:collapsed={!open.has("layouts")}>
           {#each layouts() as layout (layout.id)}
             <li>
               {#if renaming === layout.id}
@@ -976,6 +1209,80 @@
     flex: 1;
     min-width: 0;
     min-height: 0;
+  }
+  /* While a shelved tile is being carried, so the wall reads as a target
+     rather than as scenery the drag happens to be over. */
+  .stage.dropping {
+    outline: 2px dashed #78dcff;
+    outline-offset: -4px;
+  }
+  .home {
+    flex: 1;
+    min-width: 0;
+    overflow-y: auto;
+    padding: 24px;
+  }
+  .cards {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .card {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    width: 210px;
+    padding: 12px;
+    text-align: left;
+  }
+  .card:hover {
+    border-color: #78dcff;
+  }
+  /* The inbox is where a newly created character turns up, so it leads and
+     says so — the projects are arrangements, this one is a to-do. */
+  .card.inbox {
+    border-color: #3f5a68;
+    background: #162026;
+  }
+  .cardname {
+    font-size: 14px;
+    color: #cdeeff;
+  }
+  .cardsub {
+    color: #8b979f;
+    font-size: 11px;
+  }
+  .strip {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    margin-top: 6px;
+  }
+  .thumb {
+    flex: none;
+    border-radius: 2px;
+    background: #0d1114;
+  }
+  .more {
+    color: #6c777e;
+    font-size: 11px;
+  }
+  .shelfrow {
+    cursor: grab;
+  }
+  /* Hidden rather than unrendered: the list is short enough that keeping it in
+     the DOM costs nothing, and the rows keep their scroll position. */
+  ul.collapsed {
+    display: none;
+  }
+  h2 .twisty.inline {
+    height: auto;
+    min-width: 16px;
+    padding: 0;
+    font-size: 11px;
+    vertical-align: baseline;
   }
   header {
     display: flex;

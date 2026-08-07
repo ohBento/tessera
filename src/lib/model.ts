@@ -414,6 +414,43 @@ export function swapPlaced(p: Project, a: string, b: string) {
   [p.order[i], p.order[j]] = [p.order[j], p.order[i]];
 }
 
+/* --- Cosmetic folders. A drawer in the tile list, so forty-four rows can be
+ * put away as they are finished. It never reaches the canvas: no rendering, no
+ * stamping, and dissolving one leaves every tile exactly where it was. --- */
+
+export const newFolder = (name: string): Folder => ({ id: newId(), name, tiles: [] });
+
+/** The drawer a tile is in, if any. One at a time — a tile in two drawers would
+ *  appear twice in a list whose whole job is to be scannable. */
+export const folderOf = (p: Project, tileId: string) =>
+  p.folders.find((f) => f.tiles.includes(tileId));
+
+/** Puts a tile away. Refuses one the project does not own: a drawer naming a
+ *  stranger is a row that cannot be clicked. */
+export function putInFolder(p: Project, folderId: string, tileId: string): boolean {
+  const f = p.folders.find((x) => x.id === folderId);
+  if (!f || !projectTiles(p).includes(tileId)) return false;
+  for (const other of p.folders) other.tiles = other.tiles.filter((t) => t !== tileId);
+  f.tiles.push(tileId);
+  return true;
+}
+
+/** Back out of the drawer, onto the loose pile. */
+export function takeOutOfFolder(p: Project, tileId: string) {
+  for (const f of p.folders) f.tiles = f.tiles.filter((t) => t !== tileId);
+}
+
+/** Removes the drawer and nothing else. The tiles keep their slots, their
+ *  layers and their layouts — which is the entire reason this replaced the
+ *  group, where the same click threw artwork away. */
+export function dissolveFolder(p: Project, folderId: string) {
+  const at = p.folders.findIndex((f) => f.id === folderId);
+  if (at >= 0) p.folders.splice(at, 1);
+}
+
+/** Of `ids`, the ones no drawer has taken, in the order given. */
+export const looseTiles = (p: Project, ids: string[]) => ids.filter((id) => !folderOf(p, id));
+
 /** A tile-sized composition, edited on its own — not on the wall — and kept
  *  around as a reusable document rather than being consumed the moment it is
  *  used. It is never rendered directly onto a tile; it is only ever rendered
