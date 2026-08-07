@@ -344,7 +344,7 @@
     if (
       placed &&
       !(await confirmed(
-        `"${name}" holds ${placed} tile(s). They go back to the inbox and keep their layouts; ` +
+        `"${name}" holds ${placed} tile(s). They go back to Unsorted and keep their layouts; ` +
           `the arrangement is what you lose.`,
         "Delete project?",
       ))
@@ -420,7 +420,7 @@
           ? [
               { separator: true } as Item,
               {
-                label: picked === 1 ? "Back to inbox" : `Send ${picked} back to inbox`,
+                label: picked === 1 ? "Back to Unsorted" : `Send ${picked} back to Unsorted`,
                 run: () => void releaseTilesToInbox(),
               },
             ]
@@ -639,7 +639,7 @@
       >
       {#if !home}
         <button class:active={!editing} onclick={closeLayoutDoc} disabled={!app.dir}>
-          {openProject()?.name ?? "Inbox"}
+          {openProject()?.name ?? "Unsorted"}
         </button>
       {/if}
       {#if editing}
@@ -661,13 +661,18 @@
         Update stamps{#if layoutUsage(editing.id)}&nbsp;({layoutUsage(editing.id)}){/if}
       </button>
     {:else}
-      <button onclick={() => newProjectFrom("")} disabled={!freeCount() || !!app.busy}>
+      <!-- Every button below acts on the wall in front of you, and on the
+           overview there is none. The open project is deliberately remembered
+           while Home shows — that is what makes the way back one click — so
+           these cannot ask openProject() whether there is a wall; only `home`
+           knows. -->
+      <button onclick={() => newProjectFrom("")} disabled={!freeCount() || !!app.busy || home}>
         Project from selection
         {#if freeCount()}({freeCount()}){/if}
       </button>
       <button
         onclick={addGridImage}
-        disabled={!canAddGridImage() || !!app.busy}
+        disabled={!canAddGridImage() || !!app.busy || home}
         title={canAddGridImage()
           ? "A picture spread across this wall"
           : "Open a project first — a wall picture belongs to a wall"}
@@ -686,14 +691,14 @@
            those edges, with Alt to override. -->
       <button
         onclick={coverTheWall}
-        disabled={!canBakeMosaic() || !!app.busy}
+        disabled={!canBakeMosaic() || !!app.busy || home}
         title="Sizes and centres the picture so every tile lies under it"
       >
         Cover the wall
       </button>
       <button
         onclick={bakeMosaic}
-        disabled={!canBakeMosaic() || !!app.busy}
+        disabled={!canBakeMosaic() || !!app.busy || home}
         title={canBakeMosaic()
           ? `${coverCounts().covered} of ${coverCounts().total} tiles lie fully under the picture; the outlined ones are what Apply bakes`
           : "Select a wall picture first"}
@@ -708,17 +713,17 @@
            Ctrl+Z puts it back. -->
       <button
         onclick={clearMosaic}
-        disabled={!bakedCount() || !!app.busy}
+        disabled={!bakedCount() || !!app.busy || home}
         title="Removes the baked mosaic from every tile, so the portraits show again"
       >
         Restore portraits{#if bakedCount()}&nbsp;({bakedCount()}){/if}
       </button>
       <button
         onclick={saveToGame}
-        disabled={!canSaveToGame() || !!app.busy}
+        disabled={!canSaveToGame() || !!app.busy || home}
         title={canSaveToGame()
           ? "Writes this project's placed tiles into the game folder"
-          : "Open a project with tiles on its grid — the inbox is not a wall"}
+          : "Open a project with tiles on its grid — Unsorted is not a wall"}
       >
         Write to game
       </button>
@@ -729,7 +734,7 @@
            exactly why it asks first. -->
       <button
         onclick={resetProject}
-        disabled={!restorableCount() || !!app.busy}
+        disabled={!restorableCount() || !!app.busy || home}
         title={restorableCount()
           ? "Puts the game's own portraits back for this project; your layers stay"
           : "Open a project first"}
@@ -752,7 +757,7 @@
           of them unassigned{/if}
         <button class="link" onclick={clearTiles}>clear</button>
       {:else if app.dir}
-        {openProject()?.name ?? "Inbox"} &middot; {visibleIds().length} tiles &middot; drag selects,
+        {openProject()?.name ?? "Unsorted"} &middot; {visibleIds().length} tiles &middot; drag selects,
         Ctrl adds, Alt+drag swaps
       {/if}
     </span>
@@ -847,7 +852,7 @@
                     <button class="name">
                       {id}
                       <span class="usage">
-                        {tileProject(id)?.name ?? "in the inbox"} ·
+                        {tileProject(id)?.name ?? "unsorted"} ·
                         {tileLayers(id).length} layer(s)
                       </span>
                     </button>
@@ -855,7 +860,7 @@
                       Same character
                     </button>
                     <button
-                      title="Strip it and send it back to the inbox"
+                      title="Strip it and send it back to Unsorted"
                       onclick={() => replaceCharacter(id)}
                     >
                       New character
@@ -868,7 +873,7 @@
           <div class="cards">
             <button class="card inbox" onclick={() => enter("")}>
               <span class="cardname">
-                Inbox
+                Unsorted
                 <!-- Ids this folder had never shown us before: a first run, or
                      characters made since the last one. Not a problem to solve
                      — just something that must not be missed in a list of
@@ -894,7 +899,7 @@
           </div>
           {#if !projects().length}
             <p class="empty">
-              Open the inbox, pick the portraits of one account, then "Project from selection".
+              Open Unsorted, pick the portraits of one account, then "Project from selection".
             </p>
           {/if}
         </div>
@@ -944,7 +949,7 @@
         <ul>
           <li class:selected={!app.openProjectId}>
             <button class="name" onclick={() => enter("")}>
-              Inbox
+              Unsorted
               <span class="usage">
                 {inbox().length} unassigned{#if !inbox().length} · all sorted{/if}
               </span>
@@ -1176,7 +1181,7 @@
               {open.has("tiles") ? "▾" : "▸"}
             </button>
             <button class="name" onclick={() => toggleOpen("tiles")}>
-              {app.openProjectId ? "On this wall" : "In the inbox"}
+              {app.openProjectId ? "On this wall" : "Unsorted"}
               <span class="usage">{looseIds().length} · assign one at a time</span>
             </button>
           </div>

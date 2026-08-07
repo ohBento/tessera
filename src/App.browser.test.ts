@@ -87,9 +87,9 @@ async function mountApp() {
  *  in, and a test that bypassed it would not notice the card going missing. */
 async function enterInbox() {
   const card = [...document.querySelectorAll("button")].find((b) =>
-    b.textContent!.includes("Inbox"),
+    b.textContent!.includes("Unsorted"),
   ) as HTMLButtonElement | undefined;
-  if (!card) throw new Error("no way into the inbox from the overview");
+  if (!card) throw new Error("no way into Unsorted from the overview");
   card.click();
   await until(() => !!document.querySelector("canvas.lower-canvas"));
 }
@@ -261,8 +261,10 @@ describe("the wall", () => {
 
     // Through the list, because the list is where it was wrong.
     await closeLayoutDoc();
+    /* The tile-section head, not the project row of the same name — both read
+     * "Unsorted" now, and only this one carries the count. */
     const section = [...document.querySelectorAll("aside button.name")].find((b) =>
-      b.textContent!.includes("In the inbox"),
+      b.textContent!.includes("assign one at a time"),
     ) as HTMLButtonElement;
     section.click();
 
