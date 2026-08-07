@@ -17,7 +17,6 @@ import {
   findList,
   groupShift,
   holdersUsingLayout,
-  folderOf,
   inboxIds,
   looseTiles,
   moveToProject,
@@ -154,7 +153,7 @@ export const app = $state({
  *
  *  Either end missing — a shelved tile has no slot on the wall — means there
  *  is no range to take, so the click stands on its own. */
-export const tileRange = (ids: string[], from: string, to: string): string[] => {
+const tileRange = (ids: string[], from: string, to: string): string[] => {
   const a = ids.indexOf(from);
   const b = ids.indexOf(to);
   if (a < 0 || b < 0) return [to];
@@ -300,11 +299,6 @@ export async function unplace(tileId: string) {
  * leaves every tile on its slot with every layer still on it. --- */
 
 export const folders = () => openProject()?.folders ?? [];
-
-export const tileFolder = (tileId: string) => {
-  const p = openProject();
-  return p ? folderOf(p, tileId) : undefined;
-};
 
 /** The visible tiles no drawer has taken, in grid order. */
 export const looseIds = () => {
@@ -673,7 +667,7 @@ async function run(label: string, fn: () => Promise<void>) {
  *  event handler with no await behind it, so a rejection raised further down
  *  would be an unhandled promise rejection: the model would hold changes that
  *  never reached disk, with nothing on screen saying so. */
-export async function persist(): Promise<boolean> {
+async function persist(): Promise<boolean> {
   try {
     await saveManifest(app.dir, plain(app.manifest));
     return true;
@@ -1167,11 +1161,6 @@ function resize(layer: Layer, patch: Transform) {
 /* --- Layer groups inside a Layout. A group is which layers move together —
  * the other axis from a tile group, which is which tiles a stack lands on. --- */
 
-/** Layers picked in the Layout's list, in list order. Multi-select is what
- *  grouping needs and a single pick is just the one-element case, so the two
- *  selections are the same field. */
-export const layoutPicked = () => app.layoutSelection;
-
 export function toggleLayoutPick(id: string, additive: boolean) {
   const at = app.layoutSelection.indexOf(id);
   if (!additive) {
@@ -1297,21 +1286,6 @@ async function dropInto(layers: Layer[] | undefined, id: string, beforeId: strin
 
 export const dropTileLayer = (tileId: string, id: string, beforeId: string | null) =>
   dropInto(app.manifest.tiles[tileId]?.layers, id, beforeId);
-
-/** Dissolves a group, leaving its members where they visibly are.
- *
- *  removeLayerFrom already does exactly this — it hands a group's children back
- *  to the list at the group's index with the displacement folded in, precisely
- *  so one misplaced click on a folder cannot take a stack of layers with it. */
-export async function ungroupLayoutLayers(groupId: string) {
-  const layout = openLayout();
-  if (!layout) return;
-  await mutate(() => {
-    removeLayerFrom(layout.layers, groupId);
-    app.layoutSelection = app.layoutSelection.filter((id) => id !== groupId);
-    if (app.layoutSelected === groupId) app.layoutSelected = "";
-  });
-}
 
 /** Duplicates the picked layers in the open Layout.
  *

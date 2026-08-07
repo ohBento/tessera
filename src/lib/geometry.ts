@@ -40,8 +40,8 @@ export const GAP_X = Math.round(TILE_W * GAP);
 export const GAP_Y = Math.round(TILE_H * GAP);
 
 /** Distance from one slot to the next, tile plus gap. */
-export const STEP_X = TILE_W + GAP_X;
-export const STEP_Y = TILE_H + GAP_Y;
+const STEP_X = TILE_W + GAP_X;
+const STEP_Y = TILE_H + GAP_Y;
 
 export const gridSize = (count: number) => ({
   // The trailing gap is not part of the wall — there is nothing after the last

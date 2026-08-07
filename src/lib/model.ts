@@ -30,8 +30,6 @@ export type Paint = string | Gradient;
 
 export const isGradient = (paint: Paint): paint is Gradient => typeof paint !== "string";
 
-export const newGradient = (): Gradient => ({ from: "#ffffff", to: "#000000", angle: 0 });
-
 /** Geometry is stored as fractions of the tile, never pixels: the tile size is
  *  configurable, and px values would break every layout the moment it changes. */
 type Common = {
@@ -605,7 +603,7 @@ export type StampHolder = { layers: Layer[]; tiles: string[] };
  *  only kind. Kept as a named concept because refresh, count and delete all ask
  *  the same question, and asking it three times separately is how one of them
  *  quietly stops matching the others. */
-export function stampHolders(m: Manifest): StampHolder[] {
+function stampHolders(m: Manifest): StampHolder[] {
   return Object.entries(m.tiles).map(([id, t]) => ({ layers: t.layers, tiles: [id] }));
 }
 
@@ -672,7 +670,7 @@ export function refreshStamps(m: Manifest, layoutId: string, asset: string): num
   return n;
 }
 
-export const newId = () => Math.random().toString(36).slice(2, 10);
+const newId = () => Math.random().toString(36).slice(2, 10);
 
 const common = (id = newId()): Common => ({
   id,
@@ -881,7 +879,7 @@ export type LiveLayer = TextLayer | ImageLayer;
  *  picture appeared as a second row for the same layout. */
 export const isLiveCopy = (l: Layer) => !!l.layoutId && (!!l.live || l.kind === "text");
 
-export const perTileLayers = (layout: Layout): LiveLayer[] =>
+const perTileLayers = (layout: Layout): LiveLayer[] =>
   [...walkLayers(layout.layers)].filter(
     (l): l is LiveLayer => (l.kind === "text" || l.kind === "image") && !!l.perTile,
   );

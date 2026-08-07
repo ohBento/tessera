@@ -32,7 +32,7 @@ import {
 
 import { encodeBmp32, TILE_H, TILE_W } from "./bmp";
 
-export const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 /* --- In-memory filesystem. Flat: keys are full paths, directories exist only
  * as prefixes. Nothing here persists — reloading the page starts over, which

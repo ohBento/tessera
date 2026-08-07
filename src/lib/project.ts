@@ -16,7 +16,7 @@ import {
   writeTextFile,
 } from "./platform";
 
-import { emptyManifest, migrate, pruneToFolder, type Manifest, type Tile } from "./model";
+import { emptyManifest, migrate, pruneToFolder, type Manifest } from "./model";
 import type { SceneDeps } from "./scene";
 
 export async function defaultDir() {
@@ -24,10 +24,10 @@ export async function defaultDir() {
 }
 
 /** Everything Tessera owns lives beside the folder it edits, never inside it. */
-export const projectDir = (dir: string) => join(dir, "..", "FaceTexture.tessera");
+const projectDir = (dir: string) => join(dir, "..", "FaceTexture.tessera");
 const manifestPath = async (dir: string) => join(await projectDir(dir), "manifest.json");
-export const assetsDir = async (dir: string) => join(await projectDir(dir), "assets");
-export const vaultDir = async (dir: string) => join(await projectDir(dir), "vault");
+const assetsDir = async (dir: string) => join(await projectDir(dir), "assets");
+const vaultDir = async (dir: string) => join(await projectDir(dir), "vault");
 
 export async function listTiles(dir: string) {
   const entries = await readDir(dir);
@@ -118,25 +118,6 @@ export async function hashTiles(dir: string, ids: string[]): Promise<Record<stri
     }
   }
   return out;
-}
-
-/** What was last written into the game folder. Kept out of the manifest on
- *  purpose: undo must never change what is already on disk. */
-const appliedPath = async (dir: string) => join(await projectDir(dir), "applied.json");
-
-export type Applied = Record<string, Tile>;
-
-export async function loadApplied(dir: string): Promise<Applied> {
-  try {
-    return JSON.parse(await readTextFile(await appliedPath(dir)));
-  } catch {
-    return {};
-  }
-}
-
-export async function saveApplied(dir: string, tiles: Applied) {
-  await mkdir(await projectDir(dir), { recursive: true });
-  await writeTextFile(await appliedPath(dir), JSON.stringify(tiles));
 }
 
 /** Serialises manifest writes.
@@ -291,7 +272,7 @@ export async function vaultOriginal(dir: string, id: string) {
   if (!(await exists(backup))) await copyFile(await tilePath(dir, id), backup);
 }
 
-export const vaultPath = async (dir: string, id: string) => join(await vaultDir(dir), `${id}.bmp`);
+const vaultPath = async (dir: string, id: string) => join(await vaultDir(dir), `${id}.bmp`);
 
 /** Throws away a tile's vault copy.
  *
@@ -304,11 +285,6 @@ export const vaultPath = async (dir: string, id: string) => join(await vaultDir(
 export async function dropVaultCopy(dir: string, id: string) {
   const backup = await vaultPath(dir, id);
   if (await exists(backup)) await remove(backup);
-}
-
-export async function restoreFromVault(dir: string, id: string) {
-  const backup = await vaultPath(dir, id);
-  if (await exists(backup)) await copyFile(backup, await tilePath(dir, id));
 }
 
 /** Puts the game's own portraits back for a list of tiles, and says how many
@@ -387,7 +363,7 @@ export async function deleteSnapshot(dir: string, name: string) {
   await remove(await snapshotFile(dir, name));
 }
 
-export async function vaultedIds(dir: string): Promise<string[]> {
+async function vaultedIds(dir: string): Promise<string[]> {
   try {
     return (await readDir(await vaultDir(dir)))
       .filter((e) => e.isFile && e.name.toLowerCase().endsWith(".bmp"))
