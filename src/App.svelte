@@ -26,6 +26,7 @@
     captionsNeedOneTile,
     canSaveLayout,
     clearMosaic,
+    coverCounts,
     clearTileAsset,
     clearTileText,
     clearTiles,
@@ -651,12 +652,19 @@
       >
         Image across the grid
       </button>
+      <!-- The count is the point. Baking skips any tile the picture does not
+           cover completely — a tile's base is a full-bleed crop, so half of one
+           cannot be stored — and that rule used to be invisible until the wall
+           came back with a row missing. A new picture starts "as wide as the
+           grid", which on a seven-row wall reaches only the middle rows. -->
       <button
         onclick={bakeMosaic}
         disabled={!canBakeMosaic() || !!app.busy}
-        title="Bakes the selected wall picture into every fully covered tile; no object remains"
+        title={canBakeMosaic()
+          ? `${coverCounts().covered} of ${coverCounts().total} tiles lie fully under the picture; the outlined ones are what Apply bakes`
+          : "Select a wall picture first"}
       >
-        Apply
+        Apply{#if canBakeMosaic()}&nbsp;({coverCounts().covered}/{coverCounts().total}){/if}
       </button>
       <!-- The way back out of that bake. A baked background hides the portrait
            completely — background() never reads the file while one is set — so

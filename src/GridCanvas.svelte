@@ -12,6 +12,7 @@
     assignedTiles,
     clearAll,
     clearTiles,
+    refreshCoverPreview,
     selectLayer,
     swapTilePlaces,
     wall,
@@ -135,12 +136,22 @@
     if (canvas && deps && version !== built) void rebuild(deps);
   });
 
+  /* Which tiles a selected wall picture would actually be baked into. Keyed on
+     the pick and on structural change; a drag recomputes it itself, since a
+     move does not bump the version. */
+  $effect(() => {
+    app.selected;
+    app.version;
+    void refreshCoverPreview();
+  });
+
   /* The tile highlight is painted in the after:render hook, and Fabric only
    * renders when something asks it to — so a selection change has to. */
   $effect(() => {
     app.selectedTiles.join();
     app.selected;
     app.hoverFolder;
+    app.coverPreview.join();
     canvas?.requestRenderAll();
   });
 

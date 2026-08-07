@@ -114,6 +114,9 @@ export const app = $state({
   /** What each tile hashed to on this open, so answering the question does not
    *  mean reading 90 MB a second time. */
   hashes: {} as Record<string, string>,
+  /** The tiles a selected wall picture would be baked into — outlined on the
+   *  wall so the gaps are visible before Apply rather than after. */
+  coverPreview: [] as string[],
   /** Which Layout is open for editing, "" when looking at the wall instead.
    *  View state only, not persisted — a Layout's own content is. */
   openLayoutId: "",
@@ -152,12 +155,47 @@ export function clearAll() {
   app.hoverFolder = "";
 }
 
-/** The tiles outlined on the wall: whichever cosmetic folder the pointer is
- *  over in the sidebar. Nothing else outlines — a mark on every cell says
- *  nothing while drowning out the plain tile guides. */
+/** The tiles outlined on the wall.
+ *
+ *  Two things want the same mark, never at once: the drawer the pointer is
+ *  over in the sidebar, and — when a wall picture is selected — the tiles that
+ *  picture would actually land on. The second is the answer to a question the
+ *  app used to leave unanswered until after the fact; see coverPreview. */
 export function assignedTiles(): string[] {
-  if (!app.hoverFolder) return [];
-  return openProject()?.folders.find((f) => f.id === app.hoverFolder)?.tiles ?? [];
+  if (app.hoverFolder) {
+    return openProject()?.folders.find((f) => f.id === app.hoverFolder)?.tiles ?? [];
+  }
+  return app.coverPreview;
+}
+
+/** Which tiles a selected wall picture would be baked into.
+ *
+ *  Baking skips any tile the picture does not cover *completely*: a tile's base
+ *  is always a full-bleed crop, so there is no way to store half of one and
+ *  guessing at the rest would be worse than leaving it. That rule is right and
+ *  it was also invisible — the app only spoke up when nothing at all was
+ *  covered, so "21 of 44" looked like a wall with a row missing for no reason.
+ *
+ *  It bites easily: a new picture starts at scale 1, which means "as wide as
+ *  the grid", and a wall of forty-four tiles is seven rows tall — so a 16:9
+ *  photo at scale 1 reaches only the middle three rows. Recomputed after every
+ *  drag, so the outline moves with the picture instead of reporting afterwards. */
+export async function refreshCoverPreview() {
+  const layer = selectedMosaic();
+  const p = openProject();
+  if (!layer || !p || !app.dir) {
+    if (app.coverPreview.length) app.coverPreview = [];
+    return;
+  }
+  try {
+    const bmp = await loadAsset(app.dir, layer.asset);
+    const crops = mosaicBakeCrops(layer, { w: bmp.width, h: bmp.height }, p.order.length);
+    app.coverPreview = [...crops.keys()].map((i) => p.order[i]);
+  } catch {
+    // An unreadable picture is the render path's problem to report, not this
+    // one's; an outline that quietly says "nothing" is the honest fallback.
+    app.coverPreview = [];
+  }
 }
 
 /* --- Projects. One wall each; the FaceTexture folder holds several accounts'
@@ -702,6 +740,10 @@ export async function applyTransform(
     layer.rotation = patch.rotation;
     resize(layer, patch);
   }, scaled(patch));
+  /* After the write, not before: the outline answers "where would this land"
+   * and a plain drag does not bump `version`, so nothing else would recompute
+   * it. Cheap — the picture is already decoded and cached. */
+  void refreshCoverPreview();
 }
 
 /** Did this gesture actually scale something?
@@ -722,6 +764,13 @@ function selectedMosaic(): ImageLayer | undefined {
 }
 
 export const canBakeMosaic = () => !!selectedMosaic();
+
+/** How many tiles the selected wall picture reaches, out of the wall — the
+ *  number on the Apply button, so the gap is a fact before it is a surprise. */
+export const coverCounts = () => ({
+  covered: app.coverPreview.length,
+  total: openProject()?.order.length ?? 0,
+});
 
 /** How many tiles are showing a baked mosaic instead of their own portrait —
  *  the number on the button, so it says what it is about to touch. */
