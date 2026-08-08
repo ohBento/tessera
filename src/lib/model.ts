@@ -745,7 +745,12 @@ export function refreshStamps(m: Manifest, layoutId: string, asset: string): num
   let n = 0;
   for (const h of stampHolders(m)) {
     for (const l of h.layers) {
-      if (l.kind === "image" && l.layoutId === layoutId) {
+      /* `!l.live` for the reason stampInto states: a live copy is a per-tile
+         picture or a cutter that travelled, and pointing it at the flattened
+         sheet would replace what the tile chose. syncLiveLayers happened to
+         repair it straight afterwards, which made the count wrong ("36 stamp(s)
+         updated" for twelve) and the correctness a matter of call order. */
+      if (l.kind === "image" && l.layoutId === layoutId && !l.live) {
         l.asset = asset;
         n++;
       }
@@ -855,16 +860,26 @@ export function nameInStack(layer: Layer, layers: Layer[]) {
  *  A stencil stops drawing itself the moment it is one: it is the hole, not
  *  something in the picture. Asked once per render, and once by the list so a
  *  shape that has vanished from the canvas can say why. */
-export const stencilIds = (layers: Layer[]): Set<string> =>
-  new Set(
-    [...walkLayers(layers)]
+export const stencilIds = (layers: Layer[]): Set<string> => {
+  const all = [...walkLayers(layers)];
+  const by = (id: string) => all.find((l) => l.id === id);
+  return new Set(
+    all
       // A switched-off layer is not cutting anything, so the shape it names is
       // an ordinary shape again — otherwise it would sit there invisible with
       // nothing on screen to say why.
       .filter((l) => !l.hidden)
+      /* And a named cutter that the renderer refuses is not cutting either.
+       * This used to be the one place that made a layer invisible without
+       * knowing the rule, so a cutter whose consumer had just been switched to
+       * per-tile paid the price — gone from the Layout — without doing the
+       * work: on the tile nothing named it and it drew in full. Editor and wall
+       * showed two different pictures. */
+      .filter((l) => cutApplies(l, l.maskId ? by(l.maskId) : undefined))
       .map((l) => l.maskId)
       .filter((id): id is string => !!id),
   );
+};
 
 /** What a layer may be cut to: anything else in this Layout that draws.
  *
@@ -883,10 +898,26 @@ export const stencilIds = (layers: Layer[]): Set<string> =>
  *
  *  Two layers masking each other is left possible — both become stencils,
  *  nothing draws, and one click puts it back. */
-export const maskChoices = (layers: Layer[], layerId: string): Layer[] =>
-  [...walkLayers(layers)].filter(
-    (l) => l.kind !== "group" && l.id !== layerId && !l.perTile,
-  );
+/** Whether `cutter` actually cuts `l` — the single answer four places need.
+ *
+ *  A cutter that is editable in the grid says something different on every
+ *  tile, so what it cuts has to be resolved per tile as well. That is exactly
+ *  what a per-tile layer is: both travel to the tile, and the cut is computed
+ *  there against this tile's own words. A stamped layer cannot use one — the
+ *  stamp is a single picture shared by every wall tile, and there is no shared
+ *  answer to "which letters".
+ *
+ *  Written once and asked by the dropdown, the renderer, the stencil rule and
+ *  the copy that travels to the tile, because a rule that four places state in
+ *  their own words is a rule that will disagree with itself — and it did: the
+ *  stencil rule was the one that had never heard of `perTile`. */
+export const cutApplies = (l: Layer, cutter: Layer | undefined): boolean =>
+  !!cutter && cutter.kind !== "group" && cutter.id !== l.id && (!cutter.perTile || !!l.perTile);
+
+export const maskChoices = (layers: Layer[], layerId: string): Layer[] => {
+  const self = findLayer(layers, layerId);
+  return self ? [...walkLayers(layers)].filter((l) => cutApplies(self, l)) : [];
+};
 
 export const layerLabel = (l: Layer) => {
   if (l.name) return l.name;
@@ -972,9 +1003,52 @@ export function bakeable(layout: Layout): Layout {
  *  displacement; there is no group on the tile, so the displacement is folded
  *  in on the way over — the same fold removeLayerFrom does when a group is
  *  dissolved. */
+/** The layers a live copy needs beside it to look the way it did in the Layout.
+ *
+ *  Only one so far: the shape it is cut by. A per-tile layer leaves the Layout
+ *  and the thing that cuts it does not, so on the tile its `maskId` used to
+ *  resolve to nothing and the picture came back whole — which is why the two
+ *  settings locked each other out. Sending the cutter along is what unlocks
+ *  them.
+ *
+ *  Nested cutters get the same fold as the layer itself: there are no groups on
+ *  a tile, so the displacement has to be baked into the position on the way
+ *  over or the cut lands somewhere else entirely.
+ *
+ *  A cutter that is itself editable in the grid needs no copy from here: it is
+ *  already on its way over as a live layer of its own, wording and all. What it
+ *  may not do is cut something that stays behind in the stamp — cutApplies is
+ *  where that is decided, for this and for every other reader. */
+function cuttersFor(live: LiveLayer[], layout: Layout): Layer[] {
+  const out: Layer[] = [];
+  const travelling = new Set(live.map((l) => l.id));
+  for (const l of live) {
+    if (!l.maskId) continue;
+    const cutter = findLayer(layout.layers, l.maskId);
+    if (!cutApplies(l, cutter) || !cutter) continue;
+    /* A cutter that is per-tile in its own right is already on its way over as
+     * a live layer — the loop below copies it, wording and all. Copying it
+     * here as well would just write the same id twice. */
+    if (travelling.has(cutter.id) || out.some((x) => x.id === cutter.id)) continue;
+    const shift = nestingShift(layout.layers, cutter.id) ?? { dx: 0, dy: 0 };
+    out.push({ ...clone(cutter), x: cutter.x + shift.dx, y: cutter.y + shift.dy });
+  }
+  return out;
+}
+
 export function syncLiveLayers(into: { layers: Layer[] }, layout: Layout): number {
   const live = perTileLayers(layout);
-  const wanted = new Set(live.map((l) => l.id));
+  const cutters = cuttersFor(live, layout);
+  // Both kept, so the withdrawal pass below leaves the cutters standing for as
+  // long as something on the tile is still cut by them.
+  const wanted = new Set([...live, ...cutters].map((l) => l.id));
+
+  for (const cutter of cutters) {
+    const copy: Layer = { ...cutter, layoutId: layout.id, perTile: undefined, live: true };
+    const at = into.layers.findIndex((l) => l.id === cutter.id);
+    if (at >= 0) into.layers[at] = copy;
+    else into.layers.push(copy);
+  }
 
   for (const src of live) {
     const shift = nestingShift(layout.layers, src.id) ?? { dx: 0, dy: 0 };

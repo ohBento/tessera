@@ -10,6 +10,7 @@ import * as fabric from "fabric";
 import { TILE_H, TILE_W } from "./bmp";
 import {
   cropSpan,
+  cutApplies,
   findLayer,
   groupShift,
   isGradient,
@@ -696,6 +697,99 @@ function makeInteractive(obj: fabric.Object, l: Layer, allowRotate = true) {
   obj.setControlsVisibility({ ml: sides, mr: sides, mt: sides, mb: sides, mtr: allowRotate });
 }
 
+/** Draws one object into an offscreen tile-sized canvas and hands back the
+ *  element. */
+async function toTileCanvas(obj: fabric.Object): Promise<HTMLCanvasElement> {
+  const off = new fabric.StaticCanvas(undefined, {
+    width: TILE_W,
+    height: TILE_H,
+    // Off, or the element comes back at twice the size on a HiDPI screen and
+    // the two canvases stop lining up pixel for pixel.
+    enableRetinaScaling: false,
+  });
+  off.add(obj);
+  off.renderAll();
+  const el = off.getElement();
+  /* Copied out before disposing: Fabric clears the element it owns, and the
+   * caller needs the pixels, not the canvas. */
+  const keep = document.createElement("canvas");
+  keep.width = TILE_W;
+  keep.height = TILE_H;
+  keep.getContext("2d")!.drawImage(el, 0, 0);
+  await off.dispose();
+  return keep;
+}
+
+/** A tile layer cut to the shape of another one, as pixels.
+ *
+ *  Baked rather than clipped, and that is not a preference: `buildGrid` gives
+ *  every tile object a `clipPath` of its own cell, Fabric allows exactly one,
+ *  and nesting them was tried here before — it rendered the tile blended with
+ *  the background instead of clipped. `frameImage` solved the same problem the
+ *  same way for borders and rounded corners.
+ *
+ *  Tile-local coordinates on the way in, so the composite is one tile square
+ *  and the caller places the result in its cell afterwards.
+ *
+ *  ponytail: two offscreen canvases per masked layer per tile, so a wall of
+ *  forty-four costs eighty-eight small renders on every rebuild. Only masked
+ *  per-tile layers pay it, which is a deliberate and rare arrangement. Cache by
+ *  cutter + picture if a real wall ever feels slow. */
+async function cutToShape(
+  l: Layer,
+  obj: fabric.Object,
+  cutter: Layer,
+  deps: SceneDeps,
+  tileId: string,
+  texts: Record<string, string>,
+  swaps: Record<string, string>,
+): Promise<fabric.FabricImage | undefined> {
+  /* The cutter's own per-tile picture, where the tile chose one. It is the
+   * same layer either way — it just happens to be cutting rather than drawing,
+   * and it used to keep the Layout's picture in that role while honouring the
+   * tile's in the other. "" is a real answer: this tile deliberately shows
+   * none, so there is nothing to cut with and the layer draws whole, exactly
+   * as it does when the cutter cannot be resolved at all. */
+  const stencilLayer =
+    cutter.kind === "image" ? { ...cutter, asset: layerAsset(swaps, cutter) } : cutter;
+  if (stencilLayer.kind === "image" && !stencilLayer.asset) return undefined;
+
+  const shape = await layerObject(
+    silhouette(stencilLayer),
+    deps,
+    { w: TILE_W, h: TILE_H, x: 0, y: 0 },
+    tileId,
+    texts,
+  );
+  if (!shape) return undefined;
+
+  const [drawn, stencil] = [await toTileCanvas(obj), await toTileCanvas(shape)];
+  const ctx = drawn.getContext("2d")!;
+  /* Keep the layer where the shape has pixels — or everywhere it has none,
+   * which is what inverting a mask means: a hole punched through rather than a
+   * piece cut out. Fabric spells the same pair `inverted` on a clipPath. */
+  ctx.globalCompositeOperation = l.maskInvert ? "destination-out" : "destination-in";
+  ctx.drawImage(stencil, 0, 0);
+  return new fabric.FabricImage(drawn, { originX: "left", originY: "top" });
+}
+
+/** A cutter reduced to its shape.
+ *
+ *  A mask is a form, not a paint. Fabric enforces that in its own clipPath by
+ *  overriding fill, dropping the stroke and ignoring opacity and shadow; this
+ *  path rasterises the layer for real and would otherwise let all four change
+ *  the cut — a half-transparent fill cutting softly, an outline widening the
+ *  hole by 70% on a caption, a shadow fraying its edge. Measured, all of it, as
+ *  a difference between what the Layout editor showed and what the wall wrote.
+ *  The editor is the only preview there is, so it wins. */
+const silhouette = (l: Layer): Layer => {
+  const bare = { ...l, opacity: 1, shadow: 0, rotation: l.rotation };
+  if (bare.kind === "shape") return { ...bare, fill: "#000000", borderWidth: 0 };
+  if (bare.kind === "text") return { ...bare, color: "#000000", strokeWidth: 0 };
+  if (bare.kind === "image") return { ...bare, borderWidth: 0 };
+  return bare;
+};
+
 /** Fills `canvas` with the whole wall. Backgrounds are inert; layers are
  *  interactive when `interactive` is set (the editor) and not when it is not
  *  (export, previews, golden tests). */
@@ -742,8 +836,14 @@ export async function buildGrid(
     const box = { w: TILE_W, h: TILE_H, x: at.x, y: at.y };
     const texts = m.tiles[id]?.text ?? {};
     const swaps = m.tiles[id]?.swap ?? {};
-    for (const raw of resolveLayers(m, id)) {
-      if (raw.hidden || raw.space === "grid") continue;
+    /* A tile can carry a cutter now: a per-tile layer that is masked brings the
+     * shape along, because the Layout it came from is not there to look it up
+     * in. Same rule as in a Layout — a shape that is cutting something has
+     * stopped being a picture and does not draw itself. */
+    const own = resolveLayers(m, id);
+    const stencils = stencilIds(own);
+    for (const raw of own) {
+      if (raw.hidden || raw.space === "grid" || stencils.has(raw.id)) continue;
       /* This tile's own picture, where it has one. Resolved before the object
        * is built rather than inside imageObject, so the swap map stays a wall
        * concern: a Layout has no tiles and nothing to swap. "" is a real
@@ -756,8 +856,25 @@ export async function buildGrid(
       // Groups are a wall-side concept only in Layouts; on a tile they would
       // need the same flattening layoutObjects does, and nothing creates one
       // here yet.
-      const obj = await layerObject(l, deps, box, id, texts);
+      /* Cut before placed. The shape sits in tile coordinates, so the layer is
+       * built at the tile's own origin, composited against it, and the finished
+       * picture is moved into the cell — after which the cell clip below
+       * applies to it like to anything else.
+       *
+       * A cutter that is hidden stops cutting, exactly as in a Layout: the eye
+       * has to mean the same thing everywhere, and something that is not there
+       * cannot be why half a picture is missing. */
+      const cutter = l.maskId ? own.find((x) => x.id === l.maskId) : undefined;
+      const cut = cutApplies(l, cutter) && !cutter!.hidden ? cutter : undefined;
+      const local = cut ? { ...box, x: 0, y: 0 } : box;
+      const drawn = await layerObject(l, deps, local, id, texts);
+      if (!drawn) continue;
+      const obj = cut ? await cutToShape(l, drawn, cut, deps, id, texts, swaps) : drawn;
       if (!obj) continue;
+      if (cut) {
+        obj.left = at.x;
+        obj.top = at.y;
+      }
       /* Held inside its own cell. The wall is one continuous surface but the
        * game's grid is not — it puts a gap between every portrait — so
        * anything hanging over an edge is content the player will never see
@@ -846,13 +963,10 @@ async function maskFor(l: Layer, deps: SceneDeps, m: Masking): Promise<fabric.Ob
    * A switched-off layer stops cutting. The eye has to mean the same thing
    * everywhere: something that is not there cannot be why half a picture is
    * missing, and nothing else on screen would have explained it. */
-  if (!cutter || cutter.kind === "group" || cutter.hidden) return undefined;
-  /* Nothing that is editable in the grid. It is stripped out of the stamp, so
-   * the editor would clip with a layer the written picture never sees — and
-   * its content differs on every tile anyway, which is the opposite of what a
-   * stencil is for. Refused here as well as left out of the dropdown, so a
-   * manifest that already names one behaves the same in both places. */
-  if (cutter.perTile) return undefined;
+  /* One rule, one function — see cutApplies. Asked here as well as by the
+   * dropdown, so a manifest that already names a cutter the list would not
+   * offer behaves the same in both places. */
+  if (!cutter || cutter.hidden || !cutApplies(l, cutter)) return undefined;
   const shift = nestingShift(m.root, cutter.id) ?? { dx: 0, dy: 0 };
   const placed = { ...cutter, x: cutter.x + shift.dx, y: cutter.y + shift.dy } as Layer;
   const obj = await layerObject(placed, deps, { w: TILE_W, h: TILE_H, x: 0, y: 0 }, "", {});

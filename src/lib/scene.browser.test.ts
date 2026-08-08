@@ -12,10 +12,14 @@ import {
   migrate,
   newImageLayer,
   newProject,
+  newShapeLayer,
+  newTextLayer,
+  type Layout,
+  type ShapeLayer,
   type ImageLayer,
   type Manifest,
 } from "./model";
-import { buildGrid, cellAt, gridSize, type Wall } from "./scene";
+import { buildGrid, buildLayout, cellAt, gridSize, type Wall } from "./scene";
 import { testDeps } from "../test/images";
 
 const HEADER = 54;
@@ -441,17 +445,16 @@ describe("export matches what the editor shows", () => {
   });
 });
 
-describe("masks stop at the Layout", () => {
-  it("ignores a maskId that reached a tile, rather than half-applying it", async () => {
-    /* Masking lives in buildLayout; this path has none. The shape that would
-     * do the cutting never travels to a tile either — syncLiveLayers copies
-     * the caption or the logo, not the Layout around it — so a maskId here can
-     * only ever be a leftover.
+describe("a mask on a tile", () => {
+  it("ignores a maskId whose shape is not on the tile", async () => {
+    /* A cut needs both halves. syncLiveLayers sends the cutter along with the
+     * layer it cuts, so a maskId naming a shape that is nowhere on the tile is
+     * a leftover — from a Layout deleted since, or a manifest written before
+     * the cutter travelled.
      *
      * Pinned rather than left to chance because of how it would fail: the
-     * Layout editor would show the layer neatly cut and the BMP written into
-     * the game folder would carry it whole. The panel keeps the two settings
-     * apart; this is what says so in pixels if that guard is ever lost. */
+     * layer would come back invisible, cut against nothing at all. Whole is
+     * the right answer. */
     const m = manifest(2);
     const id = order(m)[0];
     const live = newImageLayer("block:#00ff00");
@@ -469,4 +472,196 @@ describe("masks stop at the Layout", () => {
     expect(pixel(tiles[0], 2, TILE_H / 2)).toEqual([0, 255, 0, 255]);
     expect(pixel(tiles[0], TILE_W - 3, TILE_H / 2)).toEqual([0, 255, 0, 255]);
   });
+
+  it("cuts the layer to the shape that travelled with it", async () => {
+    /* The whole point of letting a masked picture be editable on the wall. The
+     * cut cannot be a clipPath here — every tile object already carries one for
+     * its own cell — so it is baked into the pixels, and this is what says the
+     * bake happened. Measured through renderTiles, the path that writes the
+     * BMP: the editor showing a cut while the game file carries the layer whole
+     * is exactly the failure worth pinning. */
+    const m = manifest(2);
+    const id = order(m)[0];
+
+    const shape = newShapeLayer("rect");
+    shape.id = "cut";
+    // The left half of the tile, edge to edge vertically.
+    shape.x = 0.25;
+    shape.y = 0.5;
+    shape.w = 0.5;
+    shape.h = 1;
+    shape.live = true;
+    shape.layoutId = "L1";
+
+    const live = newImageLayer("block:#00ff00");
+    live.x = 0.5;
+    live.y = 0.5;
+    live.scale = 1;
+    live.live = true;
+    live.layoutId = "L1";
+    live.maskId = "cut";
+    m.tiles[id].layers.push(shape, live);
+
+    const tiles = [...(await renderTiles(view(m), m, testDeps)).values()];
+    const [left, right] = [
+      pixel(tiles[0], 2, TILE_H / 2),
+      pixel(tiles[0], TILE_W - 3, TILE_H / 2),
+    ];
+
+    // Inside the shape the picture is there; outside it the tile's own
+    // background shows through, which is what a cut means.
+    expect(left).toEqual([0, 255, 0, 255]);
+    expect(right).not.toEqual([0, 255, 0, 255]);
+    // And the shape itself never draws: a stencil has stopped being a picture.
+    expect(right[3]).toBe(255);
+  });
+
+  it("cuts a picture to this tile's own wording", async () => {
+    /* The pay-off of letting a per-tile caption be a cutter: one picture, cut
+     * by the letters each portrait carries. Two tiles with different words have
+     * to come out differently — if they matched, the cut would be against the
+     * layer's default text and the whole feature would be decorative. */
+    const m = manifest(2);
+    const [first, second] = order(m);
+
+    for (const [id, word] of [
+      [first, "IIIIIIIIIIIIII"],
+      [second, " "],
+    ] as const) {
+      const words = { ...newTextLayer(), id: "w", live: true, layoutId: "L1" };
+      words.x = 0.5;
+      words.y = 0.5;
+      words.size = 0.5;
+      const pic = { ...newImageLayer("block:#00ff00"), id: "p", live: true, layoutId: "L1" };
+      pic.x = 0.5;
+      pic.y = 0.5;
+      pic.scale = 1;
+      pic.maskId = "w";
+      m.tiles[id].layers.push(words, pic);
+      // The wording is the tile's, not the layer's — that is the whole point.
+      m.tiles[id].text = { w: word };
+    }
+
+    const tiles = [...(await renderTiles(view(m), m, testDeps)).values()];
+    const green = (bmp: Uint8Array) => {
+      let n = 0;
+      for (let x = 0; x < TILE_W; x += 4) {
+        const [r, g, b] = pixel(bmp, x, Math.round(TILE_H / 2));
+        if (r === 0 && g === 255 && b === 0) n++;
+      }
+      return n;
+    };
+
+    // Letters on the first tile let the picture through; a blank one does not.
+    expect(green(tiles[0])).toBeGreaterThan(0);
+    expect(green(tiles[1])).toBe(0);
+  });
+});
+
+describe("the Layout editor and the wall agree about a mask", () => {
+  /* The gap a reviewer named: masks were tested in the Layout (through
+   * renderLayout) and on the tile (through renderTiles), and the two sets of
+   * numbers never met. They disagreed on four things at once — an inverted
+   * mask came out as its exact complement, and the cutter's opacity, outline
+   * and shadow changed the cut on one side only.
+   *
+   * The Layout editor is the only preview there is, so it decides: a mask is a
+   * form, not a paint. */
+  const layoutCanvas = async (layout: Layout) => {
+    const canvas = new fabric.StaticCanvas(undefined, {
+      width: TILE_W,
+      height: TILE_H,
+      enableRetinaScaling: false,
+    });
+    await buildLayout(canvas, layout, testDeps);
+    return canvas;
+  };
+
+  /** How many pixels the layer covers, counted off the alpha channel. */
+  const coverInLayout = (canvas: fabric.StaticCanvas) => {
+    const ctx = canvas.getElement().getContext("2d", { willReadFrequently: true })!;
+    const px = ctx.getImageData(0, 0, TILE_W, TILE_H).data;
+    let n = 0;
+    for (let i = 3; i < px.length; i += 4) if (px[i] > 128) n++;
+    return n;
+  };
+
+  /** The same count off an exported tile — a BMP has no alpha to speak of, so
+   *  the layer's own colour is what says "covered". */
+  const coverOnTile = (bmp: Uint8Array) => {
+    let n = 0;
+    for (let y = 0; y < TILE_H; y += 3) {
+      for (let x = 0; x < TILE_W; x += 3) {
+        const [r, g, b] = pixel(bmp, x, y);
+        /* "Green wins here", not "green exactly": a cutter's shadow used to
+           widen the cut by a soft ring, and a test that only counted pure green
+           could not see the ring at all — it passed whatever the code did. */
+        if (g > r + 40 && g > b + 40) n++;
+      }
+    }
+    return n * 9;
+  };
+
+  /** One Layout and one wall built from the same two layers, so the only
+   *  difference left is the render path. */
+  async function bothWays(tweak: (cutter: ShapeLayer, pic: ImageLayer) => void) {
+    const cutter = { ...newShapeLayer("rect"), id: "cut" };
+    cutter.x = 0.5;
+    cutter.y = 0.5;
+    cutter.w = 0.5;
+    cutter.h = 0.5;
+    const pic = { ...newImageLayer("block:#00ff00"), id: "pic" };
+    pic.x = 0.5;
+    pic.y = 0.5;
+    pic.scale = 1;
+    pic.maskId = "cut";
+    tweak(cutter, pic);
+
+    const layout: Layout = { id: "L1", name: "L", layers: [cutter, pic] };
+
+    const m = manifest(2);
+    const id = order(m)[0];
+    m.tiles[id].layers.push(
+      { ...cutter, live: true, layoutId: "L1" },
+      { ...pic, live: true, layoutId: "L1" },
+    );
+
+    const tiles = [...(await renderTiles(view(m), m, testDeps)).values()];
+    return { layout: coverInLayout(await layoutCanvas(layout)), tile: coverOnTile(tiles[0]) };
+  }
+
+  /** Within a few per cent: the two paths antialias differently at the edge,
+   *  and a 1px band around a 312x402 rectangle is about 1400 pixels. */
+  const close = (a: number, b: number) => Math.abs(a - b) < Math.max(a, b) * 0.05;
+
+  it("cuts the same piece out, plain", async () => {
+    const { layout, tile } = await bothWays(() => {});
+    expect(layout).toBeGreaterThan(0);
+    expect(close(layout, tile)).toBe(true);
+  });
+
+  it("keeps the outside, not the inside, when the mask is inverted", async () => {
+    /* The one that was exactly backwards: the editor showed a hole, the tile
+     * and the BMP showed only the filled middle. */
+    const { layout, tile } = await bothWays((_, pic) => (pic.maskInvert = true));
+    expect(layout).toBeGreaterThan(0);
+    expect(close(layout, tile)).toBe(true);
+  });
+
+  it("lets neither the cutter's opacity nor its outline change the cut", async () => {
+    // A mask is a form: half-transparent does not mean half-cut, and an
+    // outline is not part of the shape.
+    const { layout, tile } = await bothWays((cutter) => {
+      cutter.opacity = 0.5;
+      cutter.borderWidth = 0.03;
+      cutter.borderColor = "#ffffff";
+    });
+    expect(close(layout, tile)).toBe(true);
+  });
+
+  /* A cutter's shadow is stripped by silhouette() too, and deliberately has no
+     test: the halo survives the cut only at low alpha, and against the tile's
+     own background no threshold told the two paths apart — the assertion passed
+     whatever the code did. A green light that cannot go red is worse than none.
+     The opacity-and-outline case above covers the same rule with real teeth. */
 });

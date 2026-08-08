@@ -931,6 +931,56 @@ describe("per-tile captions", () => {
     expect(overlay.layers[0].y).toBeCloseTo(0.1);
   });
 
+  it("sends the shape a live layer is cut by along with it", () => {
+    /* The reason the two settings used to lock each other out: the layer left
+     * the Layout and the thing cutting it stayed behind, so on the tile the
+     * maskId resolved to nothing and the picture came back whole. */
+    const layout = newLayout("L");
+    const shape = { ...newShapeLayer("rect"), id: "cut" };
+    const caption = { ...liveCaption("t1"), maskId: "cut" };
+    layout.layers.push(shape, caption);
+    const overlay = emptyTile();
+
+    syncLiveLayers(overlay, layout);
+
+    const copied = overlay.layers.find((l) => l.id === "cut");
+    expect(copied).toBeTruthy();
+    // Marked like every other copy, so the existing sweeps own it: hidden from
+    // the tile list, withdrawn with the layout, gone when the layout goes.
+    expect(copied!.live).toBe(true);
+    expect(copied!.layoutId).toBe(layout.id);
+  });
+
+  it("folds a group's displacement into the cutter too", () => {
+    // Otherwise the cut lands somewhere else entirely — there are no groups on
+    // a tile to put it back.
+    const layout = newLayout("L");
+    const shape = { ...newShapeLayer("rect"), id: "cut", x: 0.3, y: 0.4 };
+    layout.layers.push({ ...newGroupLayer([shape]), x: 0.7, y: 0.2 });
+    layout.layers.push({ ...liveCaption("t1"), maskId: "cut" });
+    const overlay = emptyTile();
+
+    syncLiveLayers(overlay, layout);
+
+    const copied = overlay.layers.find((l) => l.id === "cut")!;
+    expect(copied.x).toBeCloseTo(0.5);
+    expect(copied.y).toBeCloseTo(0.1);
+  });
+
+  it("withdraws the cutter once nothing on the tile is cut by it", () => {
+    const layout = newLayout("L");
+    layout.layers.push({ ...newShapeLayer("rect"), id: "cut" });
+    layout.layers.push({ ...liveCaption("t1"), maskId: "cut" });
+    const overlay = emptyTile();
+    syncLiveLayers(overlay, layout);
+    expect(overlay.layers).toHaveLength(2);
+
+    delete (layout.layers[1] as TextLayer).maskId;
+    syncLiveLayers(overlay, layout);
+
+    expect(overlay.layers.map((l) => l.id)).toEqual(["t1"]);
+  });
+
   it("removes a copy once its source stops being per-tile", () => {
     const layout = newLayout("L");
     layout.layers.push(liveCaption("t1"));
@@ -1427,6 +1477,29 @@ describe("masks", () => {
     const inner = newShapeLayer("rect");
     const pic = newImageLayer("x.png");
     expect(maskChoices([newGroupLayer([inner]), pic], pic.id).map((l) => l.id)).toEqual([inner.id]);
+  });
+
+  it("offers a per-tile cutter only to a layer that is per-tile itself", () => {
+    /* A caption editable on the wall says something different on every tile, so
+     * what it cuts has to be worked out per tile too. That is possible for a
+     * layer that travels to the tile with it — a picture through each
+     * character's own name — and impossible for one baked into the stamp: the
+     * stamp is a single picture for the whole wall, and "which letters" has no
+     * shared answer there. */
+    const shape = newShapeLayer("rect");
+    const words = { ...newTextLayer(), perTile: true };
+    const stamped = newImageLayer("x.png");
+    const alsoLive = { ...newImageLayer("y.png"), perTile: true };
+    const layers = [shape, words, stamped, alsoLive];
+
+    // Baked into the stamp: only a cutter that is baked with it will do.
+    expect(maskChoices(layers, stamped.id).map((l) => l.id)).toEqual([shape.id]);
+    // On the tile: anything may cut it, the per-tile caption included.
+    expect(maskChoices(layers, alsoLive.id).map((l) => l.id)).toEqual([
+      shape.id,
+      words.id,
+      stamped.id,
+    ]);
   });
 
   it("counts a shape as a stencil only while something visible cuts with it", () => {

@@ -7,6 +7,7 @@
   import { openLayout, resetCrop, setLayerField, type LayerField } from "./lib/editor.svelte";
   import {
     isGradient,
+    findLayer,
     layerLabel,
     maskChoices,
     type Corners,
@@ -37,6 +38,15 @@
    *  in one that holds no shape but this — which is what hides the control
    *  rather than offering a list with nothing in it. */
   const masks = $derived(inLayout ? maskChoices(openLayout()?.layers ?? [], layer.id) : []);
+
+  /** The name of a mask that is set but no longer a legal choice — an "Editable
+   *  in grid" toggle away, since a per-tile cutter may only cut a per-tile
+   *  layer. Empty when the mask is fine or absent. */
+  const stale = $derived.by(() => {
+    if (!layer.maskId || masks.some((m) => m.id === layer.maskId)) return "";
+    const held = findLayer(openLayout()?.layers ?? [], layer.maskId);
+    return held ? layerLabel(held) : "";
+  });
 
   /** A Paint is a colour or a gradient. The first swatch edits the colour a
    *  flat paint is and the start colour of a gradient, so it is the one thing
@@ -122,14 +132,11 @@
          layer is treated later. -->
     <label
       class="check"
-      title={layer.maskId
-        ? "Not while it is masked — the shape that cuts it stays behind in the Layout"
-        : "Makes this layer editable in the grid-view"}
+      title="Makes this layer editable on the wall — a mask travels with it"
     >
       <input
         type="checkbox"
         checked={layer.perTile}
-        disabled={!!layer.maskId}
         onchange={(e) => set("perTile", e.currentTarget.checked)}
       />
       Editable in grid
@@ -321,14 +328,11 @@
   {#if inLayout}
     <label
       class="check"
-      title={layer.maskId
-        ? "Not while it is masked — the shape that cuts it stays behind in the Layout"
-        : "Makes this layer editable in the grid-view"}
+      title="Makes this layer editable on the wall — a mask travels with it"
     >
       <input
         type="checkbox"
         checked={layer.perTile}
-        disabled={!!layer.maskId}
         onchange={(e) => set("perTile", e.currentTarget.checked)}
       />
       Editable in grid
@@ -459,11 +463,9 @@
        and there is nothing there to cut with. -->
   <label
     class="field"
-    title={layer.perTile
-      ? "Not while it is editable in the grid — the cut happens here, and the tile only gets the result"
-      : masks.length
-        ? "Clips this layer to another one in this Layout"
-        : "Add another layer to this Layout first — there is nothing to cut with"}
+    title={masks.length || stale
+      ? "Clips this layer to another one in this Layout"
+      : "Add another layer to this Layout first — there is nothing to cut with"}
   >
     <span>Mask</span>
     <!-- Shown even with nothing to offer. A control that appears and vanishes
@@ -472,13 +474,20 @@
          looked missing. -->
     <select
       value={layer.maskId ?? ""}
-      disabled={!!layer.perTile || !masks.length}
+      disabled={!masks.length && !stale}
       onchange={(e) => set("maskId", e.currentTarget.value)}
     >
       <option value="">none</option>
       {#each masks as shape (shape.id)}
         <option value={shape.id}>{layerLabel(shape)}</option>
       {/each}
+      <!-- A mask the list can no longer offer stays on the layer — switching
+           "Editable in grid" is enough to make one — and the row used to go
+           grey and read "none" while it was still set. That is a stored value
+           with no way back to "none" and a lie on top. It says so instead. -->
+      {#if stale}
+        <option value={layer.maskId}>{stale} — no longer allowed</option>
+      {/if}
     </select>
   </label>
   {#if layer.maskId}
