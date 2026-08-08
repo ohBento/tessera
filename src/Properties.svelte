@@ -605,7 +605,7 @@
     font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: #8b979f;
+    color: #8f88a8;
   }
   .field {
     display: flex;
@@ -616,7 +616,7 @@
   .field > span:first-child {
     flex: none;
     width: 62px;
-    color: #8b979f;
+    color: #8f88a8;
     font-size: 11px;
   }
   .row {
@@ -637,7 +637,7 @@
     justify-items: center;
   }
   .cap {
-    color: #8b979f;
+    color: #8f88a8;
     font-size: 10px;
     letter-spacing: 0.04em;
   }
@@ -660,7 +660,7 @@
     padding: 4px;
     border: 1px solid #3a444c;
     border-radius: 3px;
-    background: #0d1114;
+    background: #0e0b16;
     color: inherit;
   }
   /* The margin is the browser's own, and only range inputs carry it: it left
@@ -669,6 +669,7 @@
   input[type="range"] {
     padding: 0;
     margin: 0;
+    accent-color: #a685ff;
   }
   /* Every slider's typed twin. Named for what it holds rather than for one
      unit — pixels, per cent, degrees and plain counts all sit in it. */
@@ -683,7 +684,7 @@
     align-items: center;
     gap: 6px;
     margin-bottom: 6px;
-    color: #8b979f;
+    color: #8f88a8;
     font-size: 11px;
   }
   .check input {
@@ -691,7 +692,7 @@
     width: 13px;
     height: 13px;
     padding: 0;
-    accent-color: #4d8fbd;
+    accent-color: #8f6bff;
   }
   /* Swatch and control heights match the toolbar's 32px, so a properties row
      and a tool button are the same target. */
@@ -713,24 +714,24 @@
     width: 32px;
     height: 32px;
     padding: 0;
-    background: linear-gradient(90deg, #cdd6dc, #10161a);
+    background: linear-gradient(90deg, #8f6bff, #ff5fa8);
   }
   button.ramp.on {
-    border-color: #78dcff;
+    border-color: #a685ff;
   }
   button {
     font: inherit;
     padding: 2px 8px;
     border: 1px solid #3a444c;
     border-radius: 3px;
-    background: #1b2228;
+    background: #1d1832;
     color: inherit;
     cursor: pointer;
   }
   button.on {
-    border-color: #78dcff;
-    background: #223039;
-    color: #cdeeff;
+    border-color: #a685ff;
+    background: #2a2244;
+    color: #e3dbff;
   }
   .row button {
     display: inline-flex;
@@ -750,6 +751,6 @@
   }
   .empty {
     margin: 0;
-    color: #6c777e;
+    color: #6f688a;
   }
 </style>

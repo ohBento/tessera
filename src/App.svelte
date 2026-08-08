@@ -932,6 +932,7 @@
 
     {#if editing}
       <button
+        class="primary"
         onclick={() => saveLayout(editing.id)}
         disabled={!canSaveLayout(editing.id) || !!app.busy}
         title={layoutUsage(editing.id)
@@ -1002,6 +1003,7 @@
         Restore portraits{#if bakedCount()}&nbsp;({bakedCount()}){/if}
       </button>
       <button
+        class="primary"
         onclick={saveToGame}
         disabled={!canSaveToGame() || !!app.busy || home}
         title={canSaveToGame()
@@ -1589,8 +1591,8 @@
 <style>
   :global(body) {
     margin: 0;
-    background: #0d1114;
-    color: #cfd6dc;
+    background: #0e0b16;
+    color: #d9d4e8;
     font: 13px/1.4 ui-sans-serif, system-ui, sans-serif;
   }
   /* Nothing styled focus, so keyboard users got the browser's own ring: amber,
@@ -1599,7 +1601,7 @@
      be seen in a list of 32px rows. `:focus-visible`, so a mouse click does
      not leave a ring behind on every button it touches. */
   :global(:focus-visible) {
-    outline: 2px solid #78dcff;
+    outline: 2px solid #a685ff;
     outline-offset: 1px;
   }
   main {
@@ -1621,7 +1623,7 @@
   /* While a shelved tile is being carried, so the wall reads as a target
      rather than as scenery the drag happens to be over. */
   .stage.dropping {
-    outline: 2px dashed #78dcff;
+    outline: 2px dashed #a685ff;
     outline-offset: -4px;
   }
   .home {
@@ -1646,20 +1648,20 @@
     text-align: left;
   }
   .card:hover {
-    border-color: #78dcff;
+    border-color: #a685ff;
   }
   /* The inbox is where a newly created character turns up, so it leads and
      says so — the projects are arrangements, this one is a to-do. */
   .card.inbox {
-    border-color: #3f5a68;
-    background: #162026;
+    border-color: #4a3a78;
+    background: #17122b;
   }
   .cardname {
     font-size: 14px;
-    color: #cdeeff;
+    color: #e3dbff;
   }
   .cardsub {
-    color: #8b979f;
+    color: #8f88a8;
     font-size: 11px;
   }
   .strip {
@@ -1671,10 +1673,10 @@
   .thumb {
     flex: none;
     border-radius: 2px;
-    background: #0d1114;
+    background: #0e0b16;
   }
   .more {
-    color: #6c777e;
+    color: #6f688a;
     font-size: 11px;
   }
   .shelfrow {
@@ -1701,8 +1703,8 @@
     margin-left: 6px;
     padding: 1px 6px;
     border-radius: 8px;
-    background: #2b4a5a;
-    color: #cdeeff;
+    background: #3a2b5e;
+    color: #e3dbff;
     font-size: 10px;
   }
   /* Hidden rather than unrendered: the list is short enough that keeping it in
@@ -1722,14 +1724,14 @@
     align-items: center;
     gap: 6px;
     padding: 6px 8px;
-    border-bottom: 1px solid #232b31;
+    border-bottom: 1px solid #241e3a;
   }
   button {
     font: inherit;
     padding: 4px 10px;
     border: 1px solid #3a444c;
     border-radius: 3px;
-    background: #1b2228;
+    background: #1d1832;
     color: inherit;
     cursor: pointer;
   }
@@ -1737,16 +1739,28 @@
     opacity: 0.45;
     cursor: default;
   }
+  /* The one act per document that pushes work outward — Update stamps on a
+     Layout, Write to game on the wall — wears the ramp the app is named after
+     now. Everything else stays a quiet raised button, which is what keeps
+     this one legible as "the" action rather than "an" action. */
+  .primary {
+    border-color: transparent;
+    background: linear-gradient(90deg, #8f6bff, #ff5fa8);
+    /* Dark ink, not the mock-up's white: white measures 3.3:1 against the
+       ramp's midpoint and this is the label that must always be readable. */
+    color: #140f1e;
+    font-weight: 600;
+  }
   .status {
     margin-left: auto;
-    color: #8b979f;
+    color: #8f88a8;
   }
   .docs {
     display: flex;
     gap: 2px;
     margin-right: 6px;
     padding-right: 8px;
-    border-right: 1px solid #232b31;
+    border-right: 1px solid #241e3a;
   }
   .tools {
     flex: none;
@@ -1755,7 +1769,7 @@
     gap: 3px;
     align-content: start;
     padding: 8px;
-    border-right: 1px solid #232b31;
+    border-right: 1px solid #241e3a;
     overflow-y: auto;
   }
   .tools button {
@@ -1765,7 +1779,7 @@
     height: 32px;
     padding: 0;
     font: 15px/1 ui-sans-serif, system-ui, sans-serif;
-    color: #cfd6dc;
+    color: #d9d4e8;
   }
   .tools button:disabled {
     opacity: 0.35;
@@ -1775,15 +1789,15 @@
     height: 6px;
   }
   .docs button.active {
-    border-color: #78dcff;
-    background: #223039;
-    color: #cdeeff;
+    border-color: #a685ff;
+    background: #2a2244;
+    color: #e3dbff;
   }
   .link {
     padding: 0 4px;
     border-color: transparent;
     background: none;
-    color: #78dcff;
+    color: #a685ff;
     text-decoration: underline;
   }
   aside {
@@ -1792,7 +1806,7 @@
     flex: none;
     overflow-y: auto;
     padding: 8px;
-    border-left: 1px solid #232b31;
+    border-left: 1px solid #241e3a;
   }
   /* The browser's own scrollbar is a bright slab in a dark app. Chromium draws
      this one, and Chromium is the only engine this ships on. */
@@ -1809,12 +1823,12 @@
   .stage ::-webkit-scrollbar-thumb {
     border: 2px solid transparent;
     border-radius: 6px;
-    background: #313c44;
+    background: #322a4c;
     background-clip: content-box;
   }
   aside::-webkit-scrollbar-thumb:hover,
   .stage ::-webkit-scrollbar-thumb:hover {
-    background: #47555f;
+    background: #453a66;
     background-clip: content-box;
   }
   .totop {
@@ -1829,12 +1843,12 @@
     padding: 0;
     border: 1px solid #3a444c;
     border-radius: 13px;
-    background: #1b2228;
-    color: #8b979f;
+    background: #1d1832;
+    color: #8f88a8;
     cursor: pointer;
   }
   .totop:hover {
-    color: #d6dde2;
+    color: #e2dded;
   }
   h2 {
     margin: 0 0 6px;
@@ -1842,14 +1856,14 @@
     font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: #8b979f;
+    color: #8f88a8;
   }
   h2.spaced {
     margin-top: 18px;
   }
   .empty {
     margin: 0;
-    color: #6c777e;
+    color: #6f688a;
   }
   ul {
     margin: 0;
@@ -1870,27 +1884,27 @@
      not depend on telling two dark greys apart. */
   li.selected,
   .grouphead.selected {
-    background: #2a3b46;
-    box-shadow: inset 3px 0 0 #78dcff;
+    background: #2b2347;
+    box-shadow: inset 3px 0 0 #a685ff;
   }
   /* Rows are clickable and said nothing at all under the pointer. `:has` picks
      the innermost hovered row: layer rows nest, and without it a hover on a
      child lit its parent up as well. */
   li:hover:not(.selected):not(:has(li:hover)) {
-    background: #202a31;
+    background: #211b38;
   }
   /* A line where the row would land, and a frame when it would land inside —
      an insertion point has to be visible before the mouse is released or the
      drop is a guess. box-shadow rather than a border, so nothing shifts by a
      pixel as the marker moves from row to row. */
   li.drop-before {
-    box-shadow: inset 0 2px 0 #78dcff;
+    box-shadow: inset 0 2px 0 #a685ff;
   }
   li.drop-after {
-    box-shadow: inset 0 -2px 0 #78dcff;
+    box-shadow: inset 0 -2px 0 #a685ff;
   }
   li.drop-into {
-    box-shadow: inset 0 0 0 2px #78dcff;
+    box-shadow: inset 0 0 0 2px #a685ff;
   }
   li[draggable="true"] {
     cursor: grab;
@@ -1924,11 +1938,11 @@
     background: none;
   }
   .dimmed {
-    color: #6c777e;
+    color: #6f688a;
   }
   .usage {
     display: block;
-    color: #6c777e;
+    color: #6f688a;
     font-size: 11px;
   }
   .wide {
@@ -1944,17 +1958,17 @@
      layer is a state worth spotting from across the list, not a shape to
      squint at. */
   .eye.on {
-    color: #78dcff;
+    color: #a685ff;
   }
   .group {
     margin-bottom: 6px;
-    border-bottom: 1px solid #1a2126;
+    border-bottom: 1px solid #1b1630;
   }
   /* On the head, not the whole group. Tile rows are groups nested inside the
      section's group, so a hover on one row also hovered its ancestor and the
      entire block lit up — which read as "everything is marked". */
   .grouphead:hover:not(.selected) {
-    background: #202a31;
+    background: #211b38;
   }
   .grouphead {
     display: flex;
@@ -1974,14 +1988,14 @@
   .grouphead .name {
     display: block;
     height: auto;
-    color: #78dcff;
+    color: #a685ff;
   }
   .twisty {
     min-width: 22px;
     padding: 0;
     border-color: transparent;
     background: none;
-    color: #8b979f;
+    color: #8f88a8;
   }
   /* Thumbnails on the app's chequerboard rather than on flat colour: a class
      logo is usually transparent, and on a dark panel a dark logo is a dark
@@ -2000,9 +2014,9 @@
     height: 40px;
     padding: 2px;
     background:
-      linear-gradient(45deg, #20272d 25%, transparent 25%) 0 0 / 10px 10px,
-      linear-gradient(-45deg, #20272d 25%, transparent 25%) 0 5px / 10px 10px,
-      #171d22;
+      linear-gradient(45deg, #221c36 25%, transparent 25%) 0 0 / 10px 10px,
+      linear-gradient(-45deg, #221c36 25%, transparent 25%) 0 5px / 10px 10px,
+      #16112a;
   }
   .swatch img {
     max-width: 100%;
@@ -2010,11 +2024,11 @@
     object-fit: contain;
   }
   .swatch.on {
-    border-color: #78dcff;
-    box-shadow: inset 0 0 0 1px #78dcff;
+    border-color: #a685ff;
+    box-shadow: inset 0 0 0 1px #a685ff;
   }
   .swatch.none {
-    color: #8b979f;
+    color: #8f88a8;
   }
   /* The gallery's label and the wording field's label name the same kind of
      thing — a layer on this tile — so they are set the same and start on the
@@ -2022,7 +2036,7 @@
      left, which read as a heading over the row rather than a label in it. */
   .sub {
     margin: 4px 0 2px 18px;
-    color: #8b979f;
+    color: #8f88a8;
     font-size: 11px;
   }
   .indent {
@@ -2036,8 +2050,8 @@
     padding: 0 6px;
     border: 1px solid #3a444c;
     border-radius: 3px;
-    background: #1b2228;
-    color: #8b979f;
+    background: #1d1832;
+    color: #8f88a8;
   }
   .rename {
     flex: 1;
@@ -2048,9 +2062,9 @@
     height: 32px;
     font: inherit;
     padding: 0 6px;
-    border: 1px solid #78dcff;
+    border: 1px solid #a685ff;
     border-radius: 3px;
-    background: #0d1114;
+    background: #0e0b16;
     color: inherit;
   }
   /* The header's copy has to match the tab it stands in for, not the sidebar
@@ -2077,7 +2091,7 @@
     flex: none;
     width: 56px;
     overflow: hidden;
-    color: #8b979f;
+    color: #8f88a8;
     font-size: 11px;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -2089,7 +2103,7 @@
     padding: 2px 4px;
     border: 1px solid #3a444c;
     border-radius: 3px;
-    background: #0d1114;
+    background: #0e0b16;
     color: inherit;
   }
 </style>

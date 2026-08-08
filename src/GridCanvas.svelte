@@ -211,7 +211,7 @@
 
   onMount(() => {
     canvas = new fabric.Canvas(el, {
-      backgroundColor: "#161c21",
+      backgroundColor: "#17171a",
       preserveObjectStacking: true,
       // A model with a single `scale` per image cannot store a stretch, so
       // corner handles must never produce one.
@@ -410,9 +410,9 @@
           ctx.strokeStyle = "rgba(255, 196, 92, 1)";
           ctx.lineWidth = 3;
         } else if (picked.has(id)) {
-          ctx.fillStyle = "rgba(120, 220, 255, 0.22)";
+          ctx.fillStyle = "rgba(166, 133, 255, 0.22)";
           ctx.fillRect(x, y, w, h);
-          ctx.strokeStyle = "rgba(140, 225, 255, 0.95)";
+          ctx.strokeStyle = "rgba(203, 184, 255, 0.95)";
           ctx.lineWidth = 2;
         } else {
           ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
@@ -456,8 +456,8 @@
        * selects objects and this one selects tiles — different things that
        * merely look alike. */
       if (band) {
-        ctx.fillStyle = "rgba(120, 220, 255, 0.10)";
-        ctx.strokeStyle = "rgba(140, 225, 255, 0.9)";
+        ctx.fillStyle = "rgba(166, 133, 255, 0.10)";
+        ctx.strokeStyle = "rgba(203, 184, 255, 0.9)";
         ctx.lineWidth = 1;
         const bx = Math.round(band.x * vt[0] + vt[4]) + 0.5;
         const by = Math.round(band.y * vt[3] + vt[5]) + 0.5;
@@ -608,7 +608,7 @@
     padding: 4px 8px;
     border-radius: 4px;
     background: rgb(0 0 0 / 0.6);
-    color: #cfd6dc;
+    color: #d9d4e8;
     font: 12px/1.4 ui-sans-serif, system-ui, sans-serif;
     pointer-events: auto;
   }
@@ -617,7 +617,7 @@
     padding: 2px 8px;
     border: 1px solid #3a444c;
     border-radius: 3px;
-    background: #1b2228;
+    background: #1d1832;
     color: inherit;
     cursor: pointer;
   }

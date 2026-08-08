@@ -560,6 +560,13 @@ function makeInteractive(obj: fabric.Object, l: Layer, allowRotate = true) {
   obj.selectable = !locked;
   obj.evented = !locked;
   obj.hasControls = !locked;
+  /* Fabric's stock blue frame, recoloured to the app's accent. Here and not
+   * per canvas, because this is the one door every interactive object walks
+   * through — the trap this function's comment below already names. */
+  obj.borderColor = "#cbb8ff";
+  obj.cornerColor = "#0e0b16";
+  obj.cornerStrokeColor = "#cbb8ff";
+  obj.transparentCorners = false;
   const sides = sideHandles(l);
   if (l.kind === "image") obj.controls = { ...obj.controls, ...cropControls() };
   obj.setControlsVisibility({ ml: sides, mr: sides, mt: sides, mb: sides, mtr: allowRotate });

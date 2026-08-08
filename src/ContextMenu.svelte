@@ -109,10 +109,10 @@
     padding: 3px;
     border: 1px solid #3a444c;
     border-radius: 4px;
-    background: #1b2228;
+    background: #1d1832;
     box-shadow: 0 6px 20px rgb(0 0 0 / 0.5);
     font: 13px/1.4 ui-sans-serif, system-ui, sans-serif;
-    color: #cfd6dc;
+    color: #d9d4e8;
   }
   button {
     display: block;
@@ -127,7 +127,7 @@
     cursor: pointer;
   }
   button:hover:not(:disabled) {
-    background: #223039;
+    background: #2a2244;
   }
   button:disabled {
     opacity: 0.4;
@@ -136,6 +136,6 @@
   hr {
     margin: 3px 6px;
     border: 0;
-    border-top: 1px solid #2a333a;
+    border-top: 1px solid #262045;
   }
 </style>

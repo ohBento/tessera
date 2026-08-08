@@ -294,7 +294,11 @@
 
   onMount(() => {
     canvas = new fabric.Canvas(el, {
-      backgroundColor: "#161c21",
+      backgroundColor: "#17171a",
+      /* The rubber band, in the same violet the picked state uses — Fabric's
+       * own default is a blue from nobody's palette. */
+      selectionColor: "rgba(166, 133, 255, 0.12)",
+      selectionBorderColor: "#cbb8ff",
       preserveObjectStacking: true,
       /* Free by default, Shift constrains — the convention everywhere else,
        * and the common case should not need a key held down. Only shapes can
@@ -553,7 +557,7 @@
        * it stays one pixel wide at any zoom and never reaches the export. */
       const picked = new Set(app.layoutSelection);
       if (picked.size > 1) {
-        ctx.strokeStyle = "rgba(120, 220, 255, 0.9)";
+        ctx.strokeStyle = "rgba(166, 133, 255, 0.9)";
         ctx.setLineDash([4, 3]);
         for (const obj of canvas!.getObjects()) {
           if (!picked.has((obj as { layerId?: string }).layerId ?? "")) continue;
@@ -723,7 +727,7 @@
     padding: 4px 8px;
     border-radius: 4px;
     background: rgb(0 0 0 / 0.6);
-    color: #cfd6dc;
+    color: #d9d4e8;
     font: 12px/1.4 ui-sans-serif, system-ui, sans-serif;
   }
   .hud button {
@@ -731,7 +735,7 @@
     padding: 2px 8px;
     border: 1px solid #3a444c;
     border-radius: 3px;
-    background: #1b2228;
+    background: #1d1832;
     color: inherit;
     cursor: pointer;
   }
