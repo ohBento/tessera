@@ -20,6 +20,41 @@
 
   let el: HTMLDivElement | undefined = $state();
 
+  /* The keyboard half of `role="menu"`. The roles were here from the start and
+   * nothing honoured them: focus stayed wherever the right-click happened, so
+   * a screen reader announced a menu that could not be entered and the arrow
+   * keys did nothing. Either the roles go or this does. */
+  const entries = () => [...(el?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [])];
+
+  /** Where focus was when the menu opened, so closing hands it back instead of
+   *  dropping it on the document body. */
+  let cameFrom: HTMLElement | null = null;
+
+  $effect(() => {
+    if (!el) return;
+    cameFrom = document.activeElement as HTMLElement | null;
+    entries()[0]?.focus();
+    return () => cameFrom?.focus?.();
+  });
+
+  /** Moves along the enabled items, wrapping at either end. Separators and
+   *  disabled entries are simply not in the list. */
+  function step(by: number) {
+    const list = entries();
+    if (!list.length) return;
+    const at = list.indexOf(document.activeElement as HTMLButtonElement);
+    list[(at + by + list.length) % list.length].focus();
+  }
+
+  function navigate(e: KeyboardEvent) {
+    if (e.key === "ArrowDown") step(1);
+    else if (e.key === "ArrowUp") step(-1);
+    else if (e.key === "Home") entries()[0]?.focus();
+    else if (e.key === "End") entries().at(-1)?.focus();
+    else return;
+    e.preventDefault();
+  }
+
   /* Flipped rather than clamped when it would hang off the edge: a menu shoved
    * back inside covers the thing that was right-clicked. */
   const placed = $derived.by(() => {
@@ -53,6 +88,7 @@
   style:top="{placed.top}px"
   role="menu"
   tabindex="-1"
+  onkeydown={navigate}
 >
   {#each items as item, i (i)}
     {#if "separator" in item}

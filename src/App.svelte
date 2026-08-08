@@ -550,6 +550,7 @@
     {#each rows as layer (layer.id)}
       <li
         class:selected={app.layoutSelection.includes(layer.id)}
+        aria-current={app.layoutSelection.includes(layer.id) ? "true" : undefined}
         class:drop-before={dropOn?.id === layer.id && dropOn.where === "before"}
         class:drop-after={dropOn?.id === layer.id && dropOn.where === "after"}
         class:drop-into={dropOn?.id === layer.id && dropOn.where === "into"}
@@ -578,6 +579,7 @@
         </button>
         <button
           class="eye"
+          class:on={layer.locked}
           title={layer.locked ? "Unlock" : "Lock"}
           onclick={() => toggleLayerLocked(layer.id)}
         >
@@ -646,24 +648,27 @@
 {/snippet}
 
 {#snippet lockIcon(locked: boolean)}
-  <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
-    <rect
-      x="3"
-      y="6.2"
-      width="8"
-      height="6"
-      rx="1"
-      fill="none"
-      stroke="currentColor"
-      stroke-width="1.2"
-    />
-    <!-- The shackle swings open to the right when it is unlocked, which is the
-         whole difference a glance has to catch. -->
+  <!-- Three differences at once, because one was not enough to read at a
+       glance: the shackle closes, the body fills, and the button takes the
+       accent colour. The old icon changed only by whether a 1.6px leg reached
+       the body, which at 14px is a hairline nobody can see. -->
+  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
     <path
-      d={locked ? "M5 6.2V4.6a2 2 0 0 1 4 0v1.6" : "M5 6.2V4.6a2 2 0 0 1 4 0"}
+      d={locked ? "M5.4 7.4V5.4a2.6 2.6 0 0 1 5.2 0v2" : "M5.4 7.4V5a2.6 2.6 0 0 1 5.2 0v0.6"}
       fill="none"
       stroke="currentColor"
-      stroke-width="1.2"
+      stroke-width="1.5"
+      stroke-linecap="round"
+    />
+    <rect
+      x="2.75"
+      y="7.4"
+      width="10.5"
+      height="6.6"
+      rx="1.4"
+      fill={locked ? "currentColor" : "none"}
+      stroke="currentColor"
+      stroke-width="1.5"
     />
   </svg>
 {/snippet}
@@ -676,6 +681,7 @@
     {#each rows as layer (layer.id)}
       <li
         class:selected={app.selected === layer.id}
+        aria-current={app.selected === layer.id ? "true" : undefined}
         class:drop-before={dropOn?.id === layer.id && dropOn.where === "before"}
         class:drop-after={dropOn?.id === layer.id && dropOn.where === "after"}
         draggable="true"
@@ -736,7 +742,11 @@
     onmouseenter={() => (app.hoverTile = id)}
     onmouseleave={() => app.hoverTile === id && (app.hoverTile = "")}
   >
-    <div class="grouphead" class:selected={app.selectedTiles.includes(id)}>
+    <div
+      class="grouphead"
+      class:selected={app.selectedTiles.includes(id)}
+      aria-current={app.selectedTiles.includes(id) ? "true" : undefined}
+    >
       <button class="twisty" onclick={() => toggleTileRow(id)}>
         {open.has(id) ? "▾" : "▸"}
       </button>
@@ -1197,7 +1207,10 @@
           <h2>Wall</h2>
           <ul>
             {#each wallLayers as layer (layer.id)}
-              <li class:selected={app.selected === layer.id}>
+              <li
+                class:selected={app.selected === layer.id}
+                aria-current={app.selected === layer.id ? "true" : undefined}
+              >
                 <button
                   class="eye"
                   title={layer.hidden ? "Show" : "Hide"}
@@ -1225,7 +1238,7 @@
           Projects
         </h2>
         <ul class:collapsed={!open.has("projects")}>
-          <li class:selected={!app.openProjectId}>
+          <li class:selected={!app.openProjectId} aria-current={!app.openProjectId ? "true" : undefined}>
             <button class="name" onclick={() => enter("")}>
               Unsorted
               <span class="usage">
@@ -1234,7 +1247,10 @@
             </button>
           </li>
           {#each projects() as project (project.id)}
-            <li class:selected={app.openProjectId === project.id}>
+            <li
+              class:selected={app.openProjectId === project.id}
+              aria-current={app.openProjectId === project.id ? "true" : undefined}
+            >
               {#if renaming === project.id}
                 <!-- svelte-ignore a11y_autofocus -->
                 <input
@@ -1577,6 +1593,15 @@
     color: #cfd6dc;
     font: 13px/1.4 ui-sans-serif, system-ui, sans-serif;
   }
+  /* Nothing styled focus, so keyboard users got the browser's own ring: amber,
+     hard against the element, on a dark surface accented in cyan. This is the
+     app's accent with an offset, so it reads as part of the interface and can
+     be seen in a list of 32px rows. `:focus-visible`, so a mouse click does
+     not leave a ring behind on every button it touches. */
+  :global(:focus-visible) {
+    outline: 2px solid #78dcff;
+    outline-offset: 1px;
+  }
   main {
     display: flex;
     flex-direction: column;
@@ -1838,8 +1863,21 @@
     padding: 2px;
     border-radius: 3px;
   }
-  li.selected {
-    background: #223039;
+  /* A bar as well as a tint. The tint alone was 1.4:1 against the panel — the
+     faintest signal a list can give, and it was the only one, so a picked row
+     and its neighbours read the same at a glance. The bar is what survives
+     being glanced at, and it is a shape rather than a shade, so the row does
+     not depend on telling two dark greys apart. */
+  li.selected,
+  .grouphead.selected {
+    background: #2a3b46;
+    box-shadow: inset 3px 0 0 #78dcff;
+  }
+  /* Rows are clickable and said nothing at all under the pointer. `:has` picks
+     the innermost hovered row: layer rows nest, and without it a hover on a
+     child lit its parent up as well. */
+  li:hover:not(.selected):not(:has(li:hover)) {
+    background: #202a31;
   }
   /* A line where the row would land, and a frame when it would land inside —
      an insertion point has to be visible before the mouse is released or the
@@ -1902,6 +1940,12 @@
     border-color: transparent;
     background: none;
   }
+  /* The accent the rest of the app uses for "this is switched on". A locked
+     layer is a state worth spotting from across the list, not a shape to
+     squint at. */
+  .eye.on {
+    color: #78dcff;
+  }
   .group {
     margin-bottom: 6px;
     border-bottom: 1px solid #1a2126;
@@ -1909,11 +1953,8 @@
   /* On the head, not the whole group. Tile rows are groups nested inside the
      section's group, so a hover on one row also hovered its ancestor and the
      entire block lit up — which read as "everything is marked". */
-  .grouphead:hover {
-    background: #141b21;
-  }
-  .grouphead.selected {
-    background: #223039;
+  .grouphead:hover:not(.selected) {
+    background: #202a31;
   }
   .grouphead {
     display: flex;
