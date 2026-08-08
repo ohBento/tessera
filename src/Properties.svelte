@@ -38,8 +38,9 @@
    *  rather than offering a list with nothing in it. */
   const masks = $derived(inLayout ? maskChoices(openLayout()?.layers ?? [], layer.id) : []);
 
-  /** A Paint is a colour or a gradient; the picker only edits flat colours, so
-   *  a gradient shows its start colour and editing it drops back to flat. */
+  /** A Paint is a colour or a gradient. The first swatch edits the colour a
+   *  flat paint is and the start colour of a gradient, so it is the one thing
+   *  both forms have. */
   const flat = (p: Paint) => (isGradient(p) ? p.from : p);
 
   const num = (e: Event) => Number((e.currentTarget as HTMLInputElement).value);
@@ -159,10 +160,7 @@
       </button>
     {/each}
   </div>
-  <label class="field">
-    <span>Color</span>
-    <input type="color" value={flat(layer.color)} oninput={(e) => set("color", e.currentTarget.value)} />
-  </label>
+  {@render paint("Color", "color", layer.color)}
   <label class="field">
     <span>Outline</span>
     <input
@@ -226,10 +224,7 @@
          other side, and 624 here would read a square as oblong. -->
     {@render amount("h", layer.h * TILE_H, (n) => n / TILE_H, 1)}
   </label>
-  <label class="field">
-    <span>Fill</span>
-    <input type="color" value={flat(layer.fill)} oninput={(e) => set("fill", e.currentTarget.value)} />
-  </label>
+  {@render paint("Fill", "fill", layer.fill)}
   <label class="field">
     <span>Border</span>
     <input
@@ -457,7 +452,9 @@
 {#snippet amount(
   key: LayerField,
   shown: number,
-  store: (n: number) => number,
+  /* Not `=> number`: a gradient's angle and reach are typed twins too, and what
+     they store is the whole rebuilt Paint rather than the number in the box. */
+  store: (n: number) => unknown,
   min: number,
   max?: number,
 )}
@@ -478,6 +475,96 @@
       set(key, store(held));
     }}
   />
+{/snippet}
+
+<!-- A colour, or the fade between two.
+
+     Both fields that carry a Paint are edited here, so a gradient works the
+     same way on a caption as on a shape. The switch is a third swatch showing
+     what it would make; pressing it back keeps the start colour, so a gradient
+     tried and rejected does not also lose the colour it grew out of.
+
+     Two stops, by the model's design (see model.ts): a stop list needs a drag
+     rail of its own, and the second colour is where nearly all of the use is. -->
+{#snippet paint(label: string, key: "color" | "fill", p: Paint)}
+  <label class="field">
+    <span>{label}</span>
+    <input
+      type="color"
+      value={flat(p)}
+      oninput={(e) =>
+        set(key, isGradient(p) ? { ...p, from: e.currentTarget.value } : e.currentTarget.value)}
+    />
+    {#if isGradient(p)}
+      <input
+        type="color"
+        value={p.to}
+        oninput={(e) => set(key, { ...p, to: e.currentTarget.value })}
+      />
+    {/if}
+    <!-- Inside the label, and safe there: a label hands its click on to its
+         first control only when the click did not land on an interactive
+         descendant, which a button is. -->
+    <button
+      class="ramp"
+      class:on={isGradient(p)}
+      title={isGradient(p) ? "Back to one colour" : "Fade into a second colour"}
+      onclick={() => set(key, isGradient(p) ? p.from : { from: flat(p), to: "#000000", angle: 0 })}
+      aria-label={isGradient(p) ? "Back to one colour" : "Fade into a second colour"}
+    ></button>
+  </label>
+  {#if isGradient(p)}
+    <label class="check" title="Out from the centre instead of across in one direction">
+      <input
+        type="checkbox"
+        checked={p.radial}
+        onchange={(e) => set(key, { ...p, radial: e.currentTarget.checked })}
+      />
+      Radial
+    </label>
+    {#if p.radial}
+      <label class="field">
+        <span>Reach</span>
+        <!-- A multiplier on the reach the renderer picks by itself, which is
+             half the box's long side — so 100% is that, and the number is a
+             per cent because the thing has no length of its own. -->
+        <input
+          type="range"
+          min="0.2"
+          max="3"
+          step="0.02"
+          value={p.radius ?? 1}
+          oninput={(e) => set(key, { ...p, radius: num(e) })}
+        />
+        {@render amount(key, (p.radius ?? 1) * 100, (n) => ({ ...p, radius: n / 100 }), 20, 300)}
+      </label>
+    {:else}
+      <label class="field">
+        <span>Angle</span>
+        <input
+          type="range"
+          min="0"
+          max="360"
+          step="any"
+          value={turn(p.angle)}
+          oninput={(e) => set(key, { ...p, angle: num(e) })}
+        />
+        <!-- Not the shared snippet, for the same reason rotation is not: a turn
+             wraps where the others clamp. -->
+        <input
+          class="num"
+          type="number"
+          step="1"
+          value={Math.round(turn(p.angle))}
+          onchange={(e) => {
+            const deg = turn(num(e));
+            e.currentTarget.value = String(Math.round(deg));
+            set(key, { ...p, angle: deg });
+          }}
+        />
+      </label>
+    {/if}
+  {/if}
 {/snippet}
 
 <!-- One switch of the 2x2 block. Takes the shape as a parameter because the
@@ -616,6 +703,20 @@
   }
   textarea {
     resize: vertical;
+  }
+  /* The gradient switch, sized and shaped like the swatches it sits beside
+     because it is one: it shows the fade it would turn the paint into.
+     `button.ramp` rather than `.ramp` so it outweighs the shared `button.on`
+     background — pressed, this one keeps its ramp and only its edge lights. */
+  button.ramp {
+    flex: none;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    background: linear-gradient(90deg, #cdd6dc, #10161a);
+  }
+  button.ramp.on {
+    border-color: #78dcff;
   }
   button {
     font: inherit;

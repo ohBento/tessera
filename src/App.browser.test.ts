@@ -56,8 +56,10 @@ import {
   emptyManifest,
   findLayer,
   groupShift,
+  isGradient,
   layerLabel,
   type ImageLayer,
+  type ShapeLayer,
   type TextLayer,
 } from "./lib/model";
 import { textWidth } from "./lib/scene";
@@ -488,6 +490,40 @@ describe("the Layout editor", () => {
     for (const side of ["ml", "mr", "mt", "mb"] as const) {
       expect(obj.isControlVisible(side)).toBe(true);
     }
+  });
+
+  it("turns a fill into a gradient from the panel, and the canvas paints it", async () => {
+    /* Gradients were in the model and in scene.ts from the start and no
+     * control ever made one — the swatch read a gradient's start colour and
+     * wrote a flat colour back, so the feature was unreachable from the app.
+     * Driven through the real button for that reason: a test that called
+     * setLayerField would have passed against the panel that had no button. */
+    await newLayoutDoc("Verlauf");
+    await addLayoutShape("rect");
+    const shape = openLayout()!.layers[0] as ShapeLayer;
+    // Read now, not after the click: mutate edits the layer in place, so the
+    // same object would hand back the gradient and the check would compare the
+    // colour against itself.
+    const was = shape.fill;
+    setLayoutSelection([shape.id]);
+
+    const ramp = 'button.ramp[aria-label*="Fade"]';
+    await until(() => !!document.querySelector(ramp));
+    document.querySelector<HTMLButtonElement>(ramp)!.click();
+
+    await until(() => isGradient((findLayer(openLayout()!.layers, shape.id) as ShapeLayer).fill));
+    const fill = (findLayer(openLayout()!.layers, shape.id) as ShapeLayer).fill;
+    // The colour it had is where the ramp starts: pressing this must not throw
+    // the picked colour away.
+    expect(isGradient(fill) && fill.from).toBe(was);
+
+    const live = () => (window as { tesseraLayout?: fabric.Canvas }).tesseraLayout as fabric.Canvas;
+    await until(() => {
+      const obj = live()
+        ?.getObjects()
+        .find((o) => (o as { layerId?: string }).layerId === shape.id);
+      return typeof obj?.fill === "object";
+    });
   });
 
   it("numbers a new layer rather than naming it after the file", async () => {
