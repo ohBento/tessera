@@ -1,6 +1,6 @@
 {
   "name": "tessera",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Portrait editor for Black Desert Online",
   "type": "module",
   "license": "AGPL-3.0-only",
