@@ -212,6 +212,24 @@
   </label>
   {@render shadowField()}
 {:else if layer.kind === "shape"}
+  {#if inLayout}
+    <!-- On shapes too, although a shape has no per-tile content of its own:
+         what varies is the thing cutting it. A gradient block cut by each
+         character's class icon needs the block to travel with the icon — the
+         rule says a per-tile cutter may only cut a per-tile layer, and until
+         the checkbox existed here a shape could never say yes to it. -->
+    <label
+      class="check"
+      title="Makes this layer travel to the tiles — so a per-tile mask can cut it"
+    >
+      <input
+        type="checkbox"
+        checked={layer.perTile}
+        onchange={(e) => set("perTile", e.currentTarget.checked)}
+      />
+      Editable in grid
+    </label>
+  {/if}
   <!-- Width and height are the one size the canvas handles cannot give you
        exactly, and a shape is the only kind that keeps them apart. -->
   <label class="field">

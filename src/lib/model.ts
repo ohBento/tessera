@@ -959,8 +959,15 @@ export const layerAsset = (swaps: Record<string, string>, layer: ImageLayer) =>
 /** A layer a Layout keeps live on the tiles instead of baking into its stamp.
  *  Text carries its own wording per tile, an image its own picture — the same
  *  bargain either way: the Layout owns how it looks, the tile owns what it
- *  says or shows. */
-export type LiveLayer = TextLayer | ImageLayer;
+ *  says or shows.
+ *
+ *  A shape is in the club for a quieter reason: it has no per-tile content of
+ *  its own, but the thing that cuts it can — a gradient block cut by each
+ *  character's own class icon. The rule says a per-tile cutter may only cut a
+ *  per-tile layer, and without this a shape could never satisfy it: the
+ *  checkbox did not exist for shapes, so the combination was simply
+ *  unreachable and the mask fell off as "no longer allowed". */
+export type LiveLayer = TextLayer | ImageLayer | ShapeLayer;
 
 /** Is this layer on a tile a Layout's live copy, rather than its stamp?
  *
@@ -976,9 +983,7 @@ export type LiveLayer = TextLayer | ImageLayer;
 export const isLiveCopy = (l: Layer) => !!l.layoutId && (!!l.live || l.kind === "text");
 
 const perTileLayers = (layout: Layout): LiveLayer[] =>
-  [...walkLayers(layout.layers)].filter(
-    (l): l is LiveLayer => (l.kind === "text" || l.kind === "image") && !!l.perTile,
-  );
+  [...walkLayers(layout.layers)].filter((l): l is LiveLayer => l.kind !== "group" && !!l.perTile);
 
 /** The Layout as it goes into the stamp: everything except the live captions.
  *
@@ -987,7 +992,7 @@ const perTileLayers = (layout: Layout): LiveLayer[] =>
 export function bakeable(layout: Layout): Layout {
   const keep = (layers: Layer[]): Layer[] =>
     layers
-      .filter((l) => !((l.kind === "text" || l.kind === "image") && l.perTile))
+      .filter((l) => !(l.kind !== "group" && l.perTile))
       .map((l) => (l.kind === "group" ? { ...l, children: keep(l.children) } : l));
   return { ...layout, layers: keep(layout.layers) };
 }

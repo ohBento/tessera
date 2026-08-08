@@ -931,6 +931,27 @@ describe("per-tile captions", () => {
     expect(overlay.layers[0].y).toBeCloseTo(0.1);
   });
 
+  it("lets a shape be per-tile, so a per-tile cutter may cut it", () => {
+    /* A shape has no wording and no picture of its own to vary — what varies is
+     * the thing cutting it. A gradient block cut by each character's class icon
+     * needs the block to travel with the icon: the rule says a per-tile cutter
+     * only cuts a per-tile layer, and shapes had no way to say yes to it. The
+     * checkbox did not exist, so the mask just fell off as "no longer allowed". */
+    const layout = newLayout("L");
+    const icon = { ...newImageLayer("icon.svg"), id: "icon", perTile: true };
+    const block = { ...newShapeLayer("rect"), id: "block", perTile: true, maskId: "icon" };
+    layout.layers.push(icon, block);
+
+    // The dropdown offers the per-tile icon to the per-tile shape.
+    expect(maskChoices(layout.layers, "block").map((l) => l.id)).toEqual(["icon"]);
+    // The stamp carries neither; both travel.
+    expect(bakeable(layout).layers).toEqual([]);
+    const overlay = emptyTile();
+    syncLiveLayers(overlay, layout);
+    expect(overlay.layers.map((l) => l.id).sort()).toEqual(["block", "icon"]);
+    expect(overlay.layers.every((l) => l.live)).toBe(true);
+  });
+
   it("sends the shape a live layer is cut by along with it", () => {
     /* The reason the two settings used to lock each other out: the layer left
      * the Layout and the thing cutting it stayed behind, so on the tile the
