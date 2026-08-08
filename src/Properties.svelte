@@ -4,7 +4,7 @@
      repeated here. A caption whose words cannot be typed is useless, which is
      why this exists at all rather than waiting for the full panel system. */
   import { TILE_W } from "./lib/bmp";
-  import { openLayout, setLayerField, type LayerField } from "./lib/editor.svelte";
+  import { openLayout, resetCrop, setLayerField, type LayerField } from "./lib/editor.svelte";
   import {
     CORNER_KEYS,
     isGradient,
@@ -346,6 +346,17 @@
         </svg>
       </button>
     {/each}
+    <!-- The way back out of a trim. Dragging the handles outwards does it too,
+         edge by edge; this is the one press that gives the whole picture back. -->
+    <button
+      disabled={!layer.crop}
+      title={layer.crop
+        ? "Show the whole picture again"
+        : "Nothing is cropped — drag the side handles to trim this picture"}
+      onclick={() => void resetCrop(layer.id)}
+    >
+      Reset crop
+    </button>
   </div>
 {:else}
   <p class="empty">A group has no properties of its own.</p>

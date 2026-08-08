@@ -721,3 +721,62 @@ describe("a mask that varies per tile is no mask at all", () => {
     expect(maskChoices(layout.layers, pic.id).map((l) => l.id)).toEqual([]);
   });
 });
+
+describe("cropping a picture", () => {
+  /* A trim moves the window the picture is seen through; it does not squash
+   * what is behind it. The `disc:` source makes both halves of that checkable
+   * at once: a red circle of radius 0.3 on transparency, so the picture's left
+   * fifth is empty and its middle column runs straight through the centre.
+   *
+   * Cropping the left half away therefore has one unmistakable signature —
+   * red arrives at the layer's own left edge, where there was nothing before —
+   * and the circle's top and bottom stay where the source puts them, which is
+   * what says the pixels were not stretched to fill the narrower box. */
+  async function discAt(crop: { l: number; r: number; t: number; b: number } | undefined, scale: number) {
+    const layout = newLayout("Zuschnitt");
+    const l = newImageLayer("disc:#ff0000");
+    l.x = 0.5;
+    l.y = 0.5;
+    l.scale = scale;
+    if (crop) l.crop = crop;
+    layout.layers.push(l);
+    const shot = await decode(await renderLayout(layout, testDeps));
+    return (x: number, y: number) => {
+      const o = (y * shot.width + x) * 4;
+      return [shot.data[o], shot.data[o + 1], shot.data[o + 2], shot.data[o + 3]];
+    };
+  }
+
+  /** Half the source cropped away, so the layer is 0.2 tiles wide and, the
+   *  source being square, twice that tall. */
+  const LEFT = Math.round(0.5 * TILE_W - 0.1 * TILE_W);
+  const MIDDLE = Math.round(0.5 * TILE_H);
+
+  it("shows the part the crop leaves, not the part it cut", async () => {
+    const cut = await discAt({ l: 0.5, r: 0, t: 0, b: 0 }, 0.2);
+    // The cut runs down the circle's centre, so its flat side is the edge now.
+    expect(cut(LEFT + 3, MIDDLE)).toEqual([255, 0, 0, 255]);
+  });
+
+  it("leaves that same spot empty when nothing is cropped", async () => {
+    /* The mutation guard for the test above: at the width the crop produced,
+     * an untrimmed picture has only its transparent margin there. */
+    const whole = await discAt(undefined, 0.2);
+    expect(whole(LEFT + 3, MIDDLE)[3]).toBe(0);
+  });
+
+  it("does not stretch what is left to fill the narrower box", async () => {
+    const cut = await discAt({ l: 0.5, r: 0, t: 0, b: 0 }, 0.2);
+    /* Half the width and all of the height means the box is twice as tall as
+     * it is wide, and the circle keeps its share of it: were the picture
+     * stretched to fill instead, red would reach both of these. */
+    const top = Math.round(0.5 * TILE_H - 0.2 * TILE_W);
+    const bottom = Math.round(0.5 * TILE_H + 0.2 * TILE_W);
+    expect(cut(LEFT + 3, top)[3]).toBe(0);
+    expect(cut(LEFT + 3, bottom)[3]).toBe(0);
+    /* And red where only a box that kept the full height reaches: 60px below
+     * the middle is still inside the circle, and well outside the square the
+     * picture would occupy if the crop had shrunk it in both directions. */
+    expect(cut(LEFT + 3, MIDDLE + 60)).toEqual([255, 0, 0, 255]);
+  });
+});

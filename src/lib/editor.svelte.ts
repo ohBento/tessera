@@ -51,6 +51,8 @@ import {
   tilesUsingLayout,
   unplaceTile,
   type ImageLayer,
+  uncrop,
+  type Inset,
   type Layer,
   type Layout,
   type Manifest,
@@ -1097,6 +1099,14 @@ export async function setLayerField(id: string, key: LayerField, value: unknown)
   );
 }
 
+/** Gives a trimmed picture back whole — see `uncrop`, which is where the sums
+ *  live, because "reset" has to put the scale back as well as the crop. */
+export async function resetCrop(id: string) {
+  const layer = anyLayer(id);
+  if (layer?.kind !== "image" || !layer.crop) return;
+  await mutate(() => uncrop(layer), true);
+}
+
 /** Writes a finished drag/scale/rotate back into a Layout's own layer. A plain
  *  move skips the rebuild — nothing inside one Layout is ever shared with
  *  itself, so there is no second instance left showing a stale position — but
@@ -1141,11 +1151,23 @@ export const endGesture = () => endRun(history);
 /** What the canvas reports back after a transform: absolute sizes for layers
  *  whose size is measured off the object, raw factors for those whose size is
  *  written onto it. */
-type Transform = { scale: number; scaleH: number; fx: number; fy: number };
+type Transform = {
+  scale: number;
+  scaleH: number;
+  fx: number;
+  fy: number;
+  /** Only a picture has one, and only once its side handles were used. */
+  crop?: Inset;
+};
 
 function resize(layer: Layer, patch: Transform) {
   if (layer.kind === "image") {
     layer.scale = patch.scale;
+    /* `scale` measures what the crop leaves, so the two travel together: a
+     * side handle changes both, and storing one without the other would put
+     * the picture back at the wrong size on the next rebuild. */
+    if (patch.crop) layer.crop = patch.crop;
+    else delete layer.crop;
   } else if (layer.kind === "shape") {
     /* Multiplied by what Fabric actually scaled, not set from the object's
      * measured width. A shape is built at exactly w×h with scaleX 1, so a

@@ -9,6 +9,7 @@ import * as fabric from "fabric";
 
 import { TILE_H, TILE_W } from "./bmp";
 import {
+  cropSpan,
   findLayer,
   groupShift,
   isGradient,
@@ -22,6 +23,7 @@ import {
   type Layout,
   type Manifest,
   type Corners,
+  type Inset,
   type Paint,
   type ShapeLayer,
   type TextLayer,
@@ -85,12 +87,32 @@ export type SceneDeps = {
   asset: (name: string) => Promise<string>;
 };
 
+/** Trims a picture to the part its layer shows.
+ *
+ *  Fabric's own cropX/cropY with width/height, which is a window onto the
+ *  source rather than a resize of it — the pixels inside keep the size they
+ *  had, which is the whole point of cropping instead of scaling. Everything
+ *  downstream then measures the layer by what is left: scaleToWidth divides by
+ *  the cropped width, so `scale` is the width of the visible part. */
+export function applyCrop(img: fabric.FabricImage, crop: Inset | undefined) {
+  if (!crop) return;
+  const src = img.getOriginalSize();
+  const span = cropSpan(crop);
+  img.cropX = crop.l * src.width;
+  img.cropY = crop.t * src.height;
+  // A degenerate trim would divide by zero in scaleToWidth; one pixel of
+  // picture is the least a layer can honestly be.
+  img.width = Math.max(1, span.w * src.width);
+  img.height = Math.max(1, span.h * src.height);
+}
+
 async function imageObject(
   l: Layer & { kind: "image" },
   deps: SceneDeps,
   box: { w: number; h: number; x: number; y: number },
 ): Promise<fabric.Object> {
   const img = await fabric.FabricImage.fromURL(await deps.asset(l.asset));
+  applyCrop(img, l.crop);
   img.scaleToWidth(l.scale * box.w);
   img.set({
     originX: "center",
@@ -362,6 +384,102 @@ async function background(
  *  better not to offer the handle than to offer one that lies. */
 export const freeScale = (l: Layer) => l.kind === "shape";
 
+/** Which layers have side handles at all, whatever those handles then do: a
+ *  shape stretches by them, a picture crops by them, a caption has neither.
+ *
+ *  Spelled once because it has two callers that must not drift — the scene
+ *  puts the handles on the object, and LayoutCanvas re-applies the rule every
+ *  time the selection changes. When they disagreed, the second silently undid
+ *  the first and pictures shipped with no handle to crop by. */
+export const sideHandles = (l: Layer) => freeScale(l) || l.kind === "image";
+
+/* --- Cropping a picture by its side handles.
+ *
+ * A picture's side handles trim it; only its corners scale it. The two are
+ * genuinely different actions — one changes how much of the source shows, the
+ * other how big those pixels are drawn — and Fabric's own scaling cannot
+ * express the first, because a clip is not a scale.
+ *
+ * Own controls rather than converting a scale afterwards. `uniformScaling` is
+ * on for pictures so their corners stay proportional, and it forces a side
+ * handle onto both axes as well; turning it off to free the sides frees the
+ * corners with it, and re-imposing proportion inside object:scaling is exactly
+ * the correction LayoutCanvas tried once and threw out. A control with its own
+ * action sidesteps the setting entirely. --- */
+
+type CropSide = "l" | "r" | "t" | "b";
+
+/** The edge each drag has to leave standing: pulling the left in must not
+ *  shift the right. */
+const CROP_ANCHOR = {
+  l: { ox: "right", oy: "center" },
+  r: { ox: "left", oy: "center" },
+  t: { ox: "center", oy: "bottom" },
+  b: { ox: "center", oy: "top" },
+} as const;
+
+/** Moves one edge of the window a picture shows itself through.
+ *
+ *  Source pixels throughout: the pointer's distance from the anchored edge is
+ *  divided by the layer's own scale, so the picture inside the frame never
+ *  changes size — the frame is the only thing that moves. Pulling outwards
+ *  gives back what was trimmed and stops at the picture's own edge; there is
+ *  no blank margin to drag into. */
+export function trimTo(img: fabric.FabricImage, side: CropSide, x: number, y: number): boolean {
+  const across = side === "l" || side === "r";
+  const { ox, oy } = CROP_ANCHOR[side];
+  const anchor = img.translateToOriginPoint(img.getRelativeCenterPoint(), ox, oy);
+  /* Undo the layer's own rotation first, so the drag is measured along the
+   * picture's edge rather than the screen's. */
+  const p = new fabric.Point(x, y).rotate(-fabric.util.degreesToRadians(img.angle ?? 0), anchor);
+  const scale = (across ? img.scaleX : img.scaleY) || 1;
+  const asked = Math.abs(across ? p.x - anchor.x : p.y - anchor.y) / scale;
+
+  const src = img.getOriginalSize();
+  const total = across ? src.width : src.height;
+  const from = (across ? img.cropX : img.cropY) ?? 0;
+  const shown = (across ? img.width : img.height) ?? 0;
+  const most = side === "l" || side === "t" ? from + shown : total - from;
+  const next = Math.min(Math.max(Math.round(asked), 1), most);
+  if (next === shown) return false;
+
+  // The far edge of the window in source pixels, which is what stays put.
+  const end = from + shown;
+  if (across) {
+    img.cropX = side === "l" ? end - next : from;
+    img.width = next;
+  } else {
+    img.cropY = side === "t" ? end - next : from;
+    img.height = next;
+  }
+  /* Width and height grow about the centre, so half the change lands on the
+   * side nobody is dragging. Putting the anchor back where it was is what
+   * makes the opposite edge hold still. */
+  img.setPositionByOrigin(anchor, ox, oy);
+  img.setCoords();
+  return true;
+}
+
+const cropControl = (side: CropSide, x: number, y: number) =>
+  new fabric.Control({
+    x,
+    y,
+    actionName: "crop",
+    cursorStyle: side === "l" || side === "r" ? "ew-resize" : "ns-resize",
+    actionHandler: (_e, transform, px, py) =>
+      trimTo(transform.target as fabric.FabricImage, side, px, py),
+  });
+
+/** Side handles that trim rather than scale. Built per object: a Control
+ *  carries no state, but assigning to `obj.controls` must not reach the
+ *  prototype and give every layer in the app a crop handle. */
+const cropControls = () => ({
+  ml: cropControl("l", -0.5, 0),
+  mr: cropControl("r", 0.5, 0),
+  mt: cropControl("t", 0, -0.5),
+  mb: cropControl("b", 0, 0.5),
+});
+
 /** Which edges each handle has hold of. */
 const HANDLE_EDGES: Record<string, Edge[]> = {
   tl: ["left", "top"],
@@ -442,7 +560,8 @@ function makeInteractive(obj: fabric.Object, l: Layer, allowRotate = true) {
   obj.selectable = !locked;
   obj.evented = !locked;
   obj.hasControls = !locked;
-  const sides = freeScale(l);
+  const sides = sideHandles(l);
+  if (l.kind === "image") obj.controls = { ...obj.controls, ...cropControls() };
   obj.setControlsVisibility({ ml: sides, mr: sides, mt: sides, mb: sides, mtr: allowRotate });
 }
 
@@ -729,6 +848,27 @@ export function readBack(obj: Tagged, tileCount: number, index: number) {
  *  so a dragged group of layers would otherwise write back positions near the
  *  origin. The matrix is absolute either way, which makes this one code path
  *  instead of one per case. */
+/** The trim a picture is currently showing through, or nothing at all.
+ *
+ *  Undefined rather than four zeroes for an untrimmed picture, so a layer that
+ *  was never cropped stores no crop — and every layer that is not a picture
+ *  answers the same way. */
+function cropOff(obj: fabric.Object): Inset | undefined {
+  const img = obj as fabric.FabricImage;
+  if (typeof img.getOriginalSize !== "function") return undefined;
+  const src = img.getOriginalSize();
+  if (!src.width || !src.height) return undefined;
+  const from = { l: (img.cropX ?? 0) / src.width, t: (img.cropY ?? 0) / src.height };
+  const crop = {
+    ...from,
+    r: 1 - from.l - (img.width ?? 0) / src.width,
+    b: 1 - from.t - (img.height ?? 0) / src.height,
+  };
+  // Rounding noise from the source-pixel round trip, not a trim.
+  const trimmed = Object.values(crop).some((v) => v > 0.0005);
+  return trimmed ? crop : undefined;
+}
+
 export function readBackLayout(obj: fabric.Object) {
   const { translateX, translateY, scaleX, scaleY, angle } = fabric.util.qrDecompose(
     obj.calcTransformMatrix(),
@@ -758,6 +898,8 @@ export function readBackLayout(obj: fabric.Object) {
      * than the box it is inscribed in. */
     fx,
     fy,
+    /** What the side handles trimmed off the picture, if anything. */
+    crop: cropOff(obj),
     rotation: (((angle - turn) % 360) + 360) % 360,
   };
 }

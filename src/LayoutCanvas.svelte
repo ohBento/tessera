@@ -28,7 +28,7 @@
   } from "./lib/geometry";
 
   import { findLayer, walkLayers } from "./lib/model";
-  import { buildLayout, freeScale, readBackLayout, snapScale } from "./lib/scene";
+  import { buildLayout, freeScale, readBackLayout, sideHandles, snapScale } from "./lib/scene";
 
   let host: HTMLDivElement;
   let el: HTMLCanvasElement;
@@ -145,8 +145,13 @@
      * whatever it is set to — so a sideways stretch of a mixed selection made
      * the pictures and captions in it taller as well, and a rotated caption
      * came back at a different angle, because a non-uniform scale composed
-     * with a rotation is a skew that the decomposition has to throw away. */
-    if (!free) {
+     * with a rotation is a skew that the decomposition has to throw away.
+     *
+     * A single picture is the exception: its side handles are its own, and
+     * they crop rather than scale. A multi-selection is not — the handles
+     * there belong to the ActiveSelection, which knows nothing about
+     * cropping — which is why this asks about the one picked layer. */
+    if (!only || !sideHandles(only)) {
       canvas
         .getActiveObject()
         ?.setControlsVisibility({ ml: false, mr: false, mt: false, mb: false });
@@ -327,6 +332,12 @@
      *  eat a later, legitimate transform. */
     let cancelled = false;
 
+    /* Cropping fires no object:* event of its own — it is our own control
+     * action, not one of Fabric's — so the Esc window has to be opened here or
+     * a trim would be the one gesture that cannot be taken back. */
+    canvas.on("before:transform", (opt) => {
+      if ((opt.transform as { action?: string } | undefined)?.action === "crop") transforming = true;
+    });
     canvas.on("mouse:down", (opt) => {
       if (!(opt.e instanceof MouseEvent)) return;
       if (opt.e.button === 1 || spaceHeld) {

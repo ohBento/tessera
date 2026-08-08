@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import { TILE_H, TILE_W } from "./bmp";
 import { newImageLayer, newLayout, newShapeLayer, newTextLayer, type Layer } from "./model";
-import { buildLayout, readBackLayout } from "./scene";
+import { buildLayout, readBackLayout, trimTo } from "./scene";
 import { testDeps } from "../test/images";
 
 /** A Layout with two blocks at known spots, built onto a real interactive
@@ -49,25 +49,39 @@ describe("free scaling", () => {
     return { canvas, layer: layout.layers[0], obj: canvas.getObjects()[0] };
   }
 
-  it("offers side handles on a shape and withholds them elsewhere", async () => {
+  it("gives each kind the side handle it can honour, and no other", async () => {
+    // A shape keeps width and height apart, so its sides stretch it.
     const shape = await one(() => newShapeLayer("rect"));
     try {
       expect(shape.obj.isControlVisible("ml")).toBe(true);
       expect(shape.obj.isControlVisible("mt")).toBe(true);
+      expect(shape.obj.controls.ml.actionName).toBe("scale");
     } finally {
       await shape.canvas.dispose();
     }
 
-    for (const make of [() => newImageLayer("block:#ff00ff"), () => newTextLayer()]) {
-      const other = await one(make);
-      try {
-        // A stretch has nowhere to be stored on these, so the handle that
-        // would produce one is not there to be grabbed.
-        expect(other.obj.isControlVisible("ml")).toBe(false);
-        expect(other.obj.isControlVisible("mt")).toBe(false);
-      } finally {
-        await other.canvas.dispose();
-      }
+    /* A picture has one scale, so a stretch has nowhere to live — its sides
+     * crop it instead, which is a different action and stored in its own
+     * field. Asserting the action and not just the handle, because a side
+     * control that scaled a picture would look identical here and would spring
+     * back on the next rebuild. */
+    const picture = await one(() => newImageLayer("block:#ff00ff"));
+    try {
+      expect(picture.obj.isControlVisible("ml")).toBe(true);
+      expect(picture.obj.isControlVisible("mt")).toBe(true);
+      expect(picture.obj.controls.ml.actionName).toBe("crop");
+      expect(picture.obj.controls.mb.actionName).toBe("crop");
+    } finally {
+      await picture.canvas.dispose();
+    }
+
+    // A caption is measured off its own words; there is no size to drag at all.
+    const text = await one(() => newTextLayer());
+    try {
+      expect(text.obj.isControlVisible("ml")).toBe(false);
+      expect(text.obj.isControlVisible("mt")).toBe(false);
+    } finally {
+      await text.canvas.dispose();
     }
   });
 
@@ -265,6 +279,211 @@ describe("what a mask cuts away stops being clickable", () => {
     const { canvas, over } = await maskedOverBlock();
     try {
       expect(layerAt(canvas, 0.8 * TILE_W, 0.5 * TILE_H)).toBe(over.id);
+    } finally {
+      await canvas.dispose();
+    }
+  });
+});
+
+describe("side handles trim a picture instead of scaling it", () => {
+  /* One picture, 200px square at source, drawn half a tile wide — so one
+   * source pixel is 1.56 on screen, and every number below is that factor
+   * applied to a distance the pointer travelled. */
+  async function picture() {
+    const el = document.createElement("canvas");
+    document.body.append(el);
+    const canvas = new fabric.Canvas(el, { width: TILE_W, height: TILE_H });
+
+    const layout = newLayout("T");
+    const l = newImageLayer("block:#ff00ff");
+    l.x = 0.5;
+    l.y = 0.5;
+    l.scale = 0.5;
+    layout.layers.push(l);
+    await buildLayout(canvas, layout, testDeps, true);
+    return { canvas, img: canvas.getObjects()[0] as fabric.FabricImage };
+  }
+
+  /** Where the picture's edges are on the canvas right now. */
+  const edges = (img: fabric.FabricImage) => {
+    const r = img.getBoundingRect();
+    return { left: r.left, right: r.left + r.width, top: r.top, bottom: r.top + r.height };
+  };
+
+  it("moves the dragged edge and leaves the opposite one standing", async () => {
+    const { canvas, img } = await picture();
+    try {
+      const before = edges(img);
+      const scale = img.scaleX;
+      // Pull the left edge in to x = 300, about a third of the way across.
+      trimTo(img, "l", 300, 0.5 * TILE_H);
+
+      const after = edges(img);
+      expect(near(after.right, before.right, 0.5)).toBe(true);
+      expect(near(after.left, 300, 1)).toBe(true);
+      // The picture inside the frame is untouched: same source pixels, same
+      // size on screen. Only the window over them narrowed.
+      expect(img.scaleX).toBe(scale);
+      expect(img.cropX + img.width).toBe(200);
+    } finally {
+      await canvas.dispose();
+    }
+  });
+
+  it("gives back what was trimmed and stops at the picture's own edge", async () => {
+    const { canvas, img } = await picture();
+    try {
+      const before = edges(img);
+      trimTo(img, "l", 300, 0.5 * TILE_H);
+      // Now drag far past where the picture ever reached.
+      trimTo(img, "l", -2000, 0.5 * TILE_H);
+
+      expect(img.cropX).toBe(0);
+      expect(img.width).toBe(200);
+      /* Back to exactly the picture it started as — no blank margin was
+       * dragged in, and the anchored edge never moved through any of it. */
+      expect(near(edges(img).left, before.left, 0.5)).toBe(true);
+      expect(near(edges(img).right, before.right, 0.5)).toBe(true);
+    } finally {
+      await canvas.dispose();
+    }
+  });
+
+  it("trims the far side without touching where the picture starts", async () => {
+    const { canvas, img } = await picture();
+    try {
+      const before = edges(img);
+      trimTo(img, "r", 380, 0.5 * TILE_H);
+
+      expect(img.cropX).toBe(0);
+      expect(near(edges(img).left, before.left, 0.5)).toBe(true);
+      expect(near(edges(img).right, 380, 1)).toBe(true);
+    } finally {
+      await canvas.dispose();
+    }
+  });
+
+  it("trims top and bottom without narrowing the picture", async () => {
+    const { canvas, img } = await picture();
+    try {
+      const before = edges(img);
+      trimTo(img, "t", 0.5 * TILE_W, 300);
+
+      const after = edges(img);
+      expect(near(after.bottom, before.bottom, 0.5)).toBe(true);
+      expect(near(after.top, 300, 1)).toBe(true);
+      expect(near(after.left, before.left, 0.5)).toBe(true);
+      expect(near(after.right, before.right, 0.5)).toBe(true);
+      expect(img.cropY + img.height).toBe(200);
+    } finally {
+      await canvas.dispose();
+    }
+  });
+});
+
+describe("a trim survives the trip back into the model", () => {
+  /* The coupling worth pinning: `scale` measures what the crop leaves, so the
+   * two have to be read back together. Storing one without the other puts the
+   * picture back at the wrong size on the next rebuild, and nothing about the
+   * canvas would look wrong until then. */
+  async function built(crop?: { l: number; r: number; t: number; b: number }) {
+    const el = document.createElement("canvas");
+    document.body.append(el);
+    const canvas = new fabric.Canvas(el, { width: TILE_W, height: TILE_H });
+    const layout = newLayout("T");
+    const l = newImageLayer("block:#ff00ff");
+    l.x = 0.5;
+    l.y = 0.5;
+    l.scale = 0.5;
+    if (crop) l.crop = crop;
+    layout.layers.push(l);
+    await buildLayout(canvas, layout, testDeps, true);
+    return { canvas, img: canvas.getObjects()[0] as fabric.FabricImage };
+  }
+
+  it("reports the trim and the width of what is left", async () => {
+    const { canvas, img } = await built();
+    try {
+      trimTo(img, "l", 300, 0.5 * TILE_H);
+      const back = readBackLayout(img);
+
+      expect(back.crop?.l).toBeCloseTo(img.cropX / 200, 5);
+      expect(back.crop?.r).toBeCloseTo(0, 5);
+      expect(back.scale).toBeCloseTo((img.width * img.scaleX) / TILE_W, 5);
+    } finally {
+      await canvas.dispose();
+    }
+  });
+
+  it("comes back off the canvas as the crop it was built from", async () => {
+    const crop = { l: 0.25, r: 0.1, t: 0.05, b: 0.15 };
+    const { canvas, img } = await built(crop);
+    try {
+      const back = readBackLayout(img);
+      expect(back.crop?.l).toBeCloseTo(crop.l, 4);
+      expect(back.crop?.r).toBeCloseTo(crop.r, 4);
+      expect(back.crop?.t).toBeCloseTo(crop.t, 4);
+      expect(back.crop?.b).toBeCloseTo(crop.b, 4);
+      // Built at 0.5 and merely read back: a round trip must not resize it.
+      expect(back.scale).toBeCloseTo(0.5, 4);
+    } finally {
+      await canvas.dispose();
+    }
+  });
+
+  it("reports nothing at all for a picture nobody trimmed", async () => {
+    const { canvas, img } = await built();
+    try {
+      expect(readBackLayout(img).crop).toBeUndefined();
+    } finally {
+      await canvas.dispose();
+    }
+  });
+});
+
+describe("the crop handle is wired to the mouse", () => {
+  /* Everything above calls trimTo directly. This one goes through Fabric:
+   * press the handle, move, release. It is the half that unit-level tests
+   * cannot see — a control assigned to the wrong property, or an action Fabric
+   * never dispatches, would leave all of them green and the handle dead. */
+  it("trims the picture when its left handle is dragged", async () => {
+    const el = document.createElement("canvas");
+    document.body.append(el);
+    const canvas = new fabric.Canvas(el, { width: TILE_W, height: TILE_H });
+    try {
+      const layout = newLayout("T");
+      const l = newImageLayer("block:#ff00ff");
+      l.x = 0.5;
+      l.y = 0.5;
+      l.scale = 0.5;
+      layout.layers.push(l);
+      await buildLayout(canvas, layout, testDeps, true);
+
+      const img = canvas.getObjects()[0] as fabric.FabricImage;
+      canvas.setActiveObject(img);
+      canvas.renderAll();
+
+      const r = canvas.upperCanvasEl.getBoundingClientRect();
+      const at = (x: number, y: number, type: string, on: EventTarget) =>
+        on.dispatchEvent(
+          new MouseEvent(type, {
+            clientX: r.left + x,
+            clientY: r.top + y,
+            bubbles: true,
+            button: 0,
+          }),
+        );
+
+      // The left handle sits on the left edge at half height.
+      const edge = img.getBoundingRect();
+      at(edge.left, 0.5 * TILE_H, "mousedown", canvas.upperCanvasEl);
+      at(edge.left + 90, 0.5 * TILE_H, "mousemove", document);
+      at(edge.left + 90, 0.5 * TILE_H, "mouseup", document);
+
+      expect(img.cropX).toBeGreaterThan(0);
+      expect(img.width).toBeLessThan(200);
+      // Trimmed, not squashed: the picture behind the frame is the same size.
+      expect(img.scaleX).toBeCloseTo(img.scaleY, 6);
     } finally {
       await canvas.dispose();
     }

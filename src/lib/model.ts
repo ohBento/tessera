@@ -88,13 +88,43 @@ type Common = {
   live?: boolean;
 };
 
+/** How much of a picture is trimmed off each side, as fractions of the source.
+ *  All four at 0 is the whole picture, which is what absence means. */
+export type Inset = { l: number; r: number; t: number; b: number };
+
+export const NO_CROP: Inset = { l: 0, r: 0, t: 0, b: 0 };
+
+export const cropOf = (l: ImageLayer): Inset => l.crop ?? NO_CROP;
+
+/** What is left of a picture after the trim, as fractions of the source. */
+export const cropSpan = (c: Inset) => ({ w: 1 - c.l - c.r, h: 1 - c.t - c.b });
+
+/** Gives a trimmed picture back whole, at the size its pixels already had.
+ *
+ *  `scale` measures the visible part, so the trim has to be divided back out
+ *  of it. Dropping the crop on its own would redraw the whole picture in the
+ *  space the visible part occupied — the trim would read as having shrunk the
+ *  picture rather than cropped it. */
+export function uncrop(l: ImageLayer) {
+  if (!l.crop) return;
+  l.scale /= cropSpan(l.crop).w || 1;
+  delete l.crop;
+}
+
 export type ImageLayer = Common & {
   kind: "image";
   asset: string;
+  /** The width the layer occupies on the tile, as a fraction of tile width —
+   *  of what the crop leaves, not of the whole picture. Trimming a side
+   *  therefore narrows the layer without resizing the pixels inside it, which
+   *  is the entire difference between cropping and scaling. */
   scale: number;
   /* Optional so manifests saved before flipping existed still load unchanged. */
   flipX?: boolean;
   flipY?: boolean;
+  /* Likewise absent on everything written before cropping existed, and absent
+   * means the whole picture. */
+  crop?: Inset;
 };
 
 export type ShapeKind = "rect" | "ellipse" | "polygon";
@@ -722,6 +752,9 @@ export function resetTransform(layer: Layer) {
     layer.scale = DEFAULT_IMAGE_SCALE;
     layer.flipX = false;
     layer.flipY = false;
+    // A trim is part of the layer's size, so "reset the size" has to undo it
+    // too — otherwise the picture comes back at default scale still cut up.
+    delete layer.crop;
   } else if (layer.kind === "shape") {
     layer.w = DEFAULT_SHAPE_SIZE;
     layer.h = DEFAULT_SHAPE_SIZE;

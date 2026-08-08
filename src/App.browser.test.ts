@@ -463,6 +463,33 @@ describe("the Layout editor", () => {
     return openLayout()!.layers.map((l) => l.id);
   }
 
+  it("keeps a picture's side handles once it is selected", async () => {
+    /* The handles are put on the object when the scene is built, and the
+     * selection rules run again every time the picked layer changes — so a
+     * rule that hides them there quietly undoes the build, and nothing below
+     * this component can see it happen. That is exactly how cropping first
+     * shipped with no handle to crop by: every test around it built a canvas
+     * directly, and not one of them ever selected anything. */
+    queuePick(await magentaSquare("zuschnitt"));
+    await newLayoutDoc("Griffe");
+    await addLayoutImage();
+    const id = openLayout()!.layers[0].id;
+
+    const live = () =>
+      (window as { tesseraLayout?: fabric.Canvas }).tesseraLayout as fabric.Canvas;
+    await until(
+      () => !!live()?.getObjects().some((o) => (o as { layerId?: string }).layerId === id),
+    );
+
+    setLayoutSelection([id]);
+    await until(() => !!live().getActiveObject());
+
+    const obj = live().getActiveObject()!;
+    for (const side of ["ml", "mr", "mt", "mb"] as const) {
+      expect(obj.isControlVisible(side)).toBe(true);
+    }
+  });
+
   it("numbers a new layer rather than naming it after the file", async () => {
     /* The file name was misleading the moment a Layout was involved — the same
      * picture is a frame in one and a class logo in another — and the asset it

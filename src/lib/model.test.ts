@@ -27,6 +27,7 @@ import {
   nestingShift,
   newGroupLayer,
   newImageLayer,
+  uncrop,
   layoutFingerprint,
   layoutNeedsRestamp,
   newLayout,
@@ -1393,5 +1394,31 @@ describe("masks", () => {
      * it would sit there invisible with nothing on screen to say why. */
     pic.hidden = true;
     expect([...stencilIds([shape, pic])]).toEqual([]);
+  });
+});
+
+describe("uncrop", () => {
+  it("gives the whole picture back at the size its pixels already had", () => {
+    const l = newImageLayer("logo.png");
+    l.scale = 0.3;
+    // Half the width and a fifth of the height cut away.
+    l.crop = { l: 0.3, r: 0.2, t: 0.1, b: 0.1 };
+
+    uncrop(l);
+
+    expect(l.crop).toBeUndefined();
+    /* The visible half was drawn 0.3 tiles wide, so the whole picture is
+     * 0.3 / 0.5. Leaving scale alone instead would redraw all of it in the
+     * space half of it occupied, which reads as the crop having shrunk the
+     * picture — the one thing cropping must never do. */
+    expect(l.scale).toBeCloseTo(0.6, 6);
+  });
+
+  it("leaves a picture that was never cropped exactly as it is", () => {
+    const l = newImageLayer("logo.png");
+    l.scale = 0.3;
+    uncrop(l);
+    expect(l.scale).toBe(0.3);
+    expect(l.crop).toBeUndefined();
   });
 });
