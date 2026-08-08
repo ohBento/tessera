@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   alignBoxes,
+  cellIndexAt,
   cellsIn,
   distributeBoxes,
   GAP_X,
@@ -61,6 +62,45 @@ describe("snapBox", () => {
   it("never pulls further than the threshold", () => {
     const s = snapBox(box(9, 300), sheet, 8);
     expect(s.dx).toBe(0);
+  });
+});
+
+describe("cellIndexAt", () => {
+  /* The bug this pins: the hit test divided by the tile size while the grid is
+     laid out by tile *plus* gap, so each column's hit box drifted a gap further
+     right than the portrait drawn there. Clicking near a tile's right or bottom
+     edge selected its neighbour instead — a fifth of a tile wide by the last
+     column. Every corner of every slot, which is the only way to catch a drift
+     that starts at zero and grows. */
+  it("names the slot its own corners belong to, in every cell", () => {
+    const count = 21;
+    for (let i = 0; i < count; i++) {
+      const at = cellAt(i);
+      expect(cellIndexAt(at.x, at.y, count)).toBe(i);
+      expect(cellIndexAt(at.x + W - 1, at.y, count)).toBe(i);
+      expect(cellIndexAt(at.x, at.y + H - 1, count)).toBe(i);
+      expect(cellIndexAt(at.x + W - 1, at.y + H - 1, count)).toBe(i);
+    }
+  });
+
+  it("finds nothing in the gaps the game hides", () => {
+    const at = cellAt(1);
+    expect(cellIndexAt(at.x - 1, at.y, 21)).toBe(-1);
+    expect(cellIndexAt(at.x, at.y - 1, 21)).toBe(-1);
+  });
+
+  it("finds nothing past the wall or before it", () => {
+    // Past the last column, below the last row, and left of the first.
+    expect(cellIndexAt(cellAt(6).x + W + GAP_X, 0, 21)).toBe(-1);
+    expect(cellIndexAt(0, cellAt(21).y, 21)).toBe(-1);
+    expect(cellIndexAt(-1, 0, 21)).toBe(-1);
+  });
+
+  it("stops at the tiles that exist, not at the row width", () => {
+    // Slot 9 is drawn nowhere when only nine portraits are on the wall.
+    const at = cellAt(9);
+    expect(cellIndexAt(at.x, at.y, 9)).toBe(-1);
+    expect(cellIndexAt(at.x, at.y, 12)).toBe(9);
   });
 });
 

@@ -35,6 +35,7 @@
     deleteLayer,
     deleteLayoutDoc,
     deleteLayoutLayer,
+  deleteLayoutLayers,
     deleteProject,
     dropLayoutLayer,
     dropTileLayer,
@@ -47,6 +48,7 @@
     freeCount,
     groupLayoutLayers,
     inbox,
+    keepAllCharacters,
     keepCharacter,
     layoutGroups,
     looseIds,
@@ -69,6 +71,7 @@
     redoEdit,
     redoable,
     releaseTilesToInbox,
+    replaceAllCharacters,
     replaceCharacter,
     renameLayer,
     renameLayout,
@@ -84,6 +87,8 @@
     saveToGame,
     selectLayer,
     selectLayoutLayer,
+    strippableCount,
+    stripSelectedTiles,
     setTileText,
     pickTileImage,
     setTileAsset,
@@ -108,6 +113,7 @@
     undoable,
   } from "./lib/editor.svelte";
   import { isTyping } from "./lib/geometry";
+  import { savePending } from "./lib/project";
   import { findLayer, isLiveCopy, layerLabel, layoutNeedsRestamp, type Layer } from "./lib/model";
 
   const editing = $derived(openLayout());
@@ -302,6 +308,14 @@
     return { parentId, beforeId: where === "before" ? (rows[at - 1]?.id ?? null) : id };
   }
 
+  /** Autofocus drops the caret at the end of the suggested name, so the first
+   *  thing typed was appended to it — "+ Snapshot" opens its field on
+   *  "Snapshot 1" and a user typing a name got "Snapshot 1Before changes",
+   *  which then stayed as the snapshot's name. Selecting on focus makes typing
+   *  replace, the way a rename field behaves everywhere else. */
+  const selectAll = (e: FocusEvent & { currentTarget: HTMLInputElement }) =>
+    e.currentTarget.select();
+
   /* Enter and Escape both blur; Escape puts the old text back first, and the
      rename actions already ignore an unchanged name — so cancelling needs no
      flag of its own. */
@@ -328,22 +342,22 @@
     }
   }
 
-  /** Deleting a Layout leaves its stamps behind as pictures nothing owns —
-   *  they keep rendering, but the row falls back to the asset hash and there
-   *  is no way back except undo. Worth the same warning a group gets. */
+  /** Deleting a Layout takes its stamps and live captions off every tile with
+   *  it — a layout and its layers on the wall do not survive each other. One
+   *  undo step brings the lot back, but it is still a wall-wide change, which
+   *  is worth saying out loud first. */
   async function removeLayout(id: string, name: string) {
     const used = layoutUsage(id);
-    if (
-      used &&
-      !(await confirmed(
-        // Both units again: the pictures left behind are counted per stamp,
-        // but what the deletion is visible on is tiles.
+    /* Asked either way. An unstamped Layout is not a cheap thing — it is a
+       design somebody built and has not put on a wall yet — and it was one
+       click from gone while a stamped one got a dialog. */
+    const message = used
+      ? // Both units again: the deletion is counted per stamp, but what it is
+        // visible on is tiles.
         `"${name}" is stamped ${used} time(s), on ${layoutTiles(id)} tile(s). ` +
-          `The stamps stay behind as nameless pictures.`,
-        "Delete layout?",
-      ))
-    )
-      return;
+        `Deleting it removes those stamps from the tiles too.`
+      : `Delete the layout "${name}"? It is not on any tile yet.`;
+    if (!(await confirmed(message, "Delete layout?"))) return;
     await deleteLayoutDoc(id);
   }
 
@@ -366,23 +380,126 @@
     await restoreProject();
   }
 
-  /** Deleting a project hands its tiles back to the inbox with every layer
-   *  still on them — artwork belongs to the portrait, not to the wall it was
-   *  arranged on. What is actually lost is the arrangement, which is the one
-   *  thing worth asking about. */
+  /** The button that reaches out of the app and overwrites the game's own
+   *  files. It asked nothing, while "Reset in game" beside it — fully
+   *  reversible by pressing this one — asked every time. The question belongs
+   *  on the side that leaves the folder changed. */
+  async function writeToGame() {
+    const p = openProject();
+    if (!p) return;
+    if (
+      !(await confirmed(
+        `Write ${p.order.length} tile(s) of "${p.name}" over the game's portrait files? ` +
+          `The originals are kept, and "Reset in game" puts them back.`,
+        "Write to game?",
+      ))
+    )
+      return;
+    await saveToGame();
+  }
+
+  /** The whole list answered at once, and the one answer with a step Ctrl+Z
+   *  cannot take back: a new character means the game's original for that slot
+   *  is a stranger's face, so the vault copy is deleted. After this there is no
+   *  "Reset in game" for those tiles, and the question does not come round
+   *  again — the entry leaves the list either way. */
+  async function allNewCharacters() {
+    const n = app.changedTiles.length;
+    if (
+      !(await confirmed(
+        `Treat all ${n} portrait(s) as new characters? Their layers and wording go, ` +
+          `they return to Unsorted, and the vaulted originals are deleted — ` +
+          `"Reset in game" cannot bring those back.`,
+        "All new characters?",
+      ))
+    )
+      return;
+    await replaceAllCharacters();
+  }
+
+  /** Undressing a wall is the bluntest thing on this menu: layers, hand-typed
+   *  wording and per-tile pictures, on as many tiles as are picked. Deleting one
+   *  Layout asks first; taking everything off forty-four portraits did not.
+   *  Ctrl+Z holds it for the session, which is why one question is enough. */
+  async function clearLayers() {
+    const n = strippableCount();
+    if (
+      !(await confirmed(
+        `Take everything off ${n} tile(s)? Layers, the wording typed on them and ` +
+          `the pictures chosen per tile all go. Ctrl+Z brings them back.`,
+        n > 1 ? "Clear all layers?" : "Clear the layers?",
+      ))
+    )
+      return;
+    await stripSelectedTiles();
+  }
+
+  /** Restoring replaces more than the arrangement, and the tooltip said only
+   *  what it does *not* touch. A project snapshot puts back the whole project
+   *  record — its name, its drawers, its wall picture — so a rename and a
+   *  folder made after the snapshot were gone with one unasked click. Ctrl+Z
+   *  does take it back, which is why one question is enough. */
+  async function putBack(snap: { name: string; projectId: string }) {
+    const what = snap.projectId
+      ? `this wall's name, arrangement, folders, wall picture and the layers on its tiles`
+      : `every project, layout and tile in the document`;
+    if (
+      !(await confirmed(
+        `Put "${snap.name}" back? That replaces ${what} with the state it had when ` +
+          `the snapshot was taken. Ctrl+Z undoes it; the game folder is not touched.`,
+        "Restore snapshot?",
+      ))
+    )
+      return;
+    await restoreSnapshot(snap);
+  }
+
+  /** A snapshot is the only thing in this sidebar that Ctrl+Z cannot bring
+   *  back, and its × sits beside the ↺ that restores it. Worth one question. */
+  async function dropSnapshot(snap: { name: string; projectId: string }) {
+    if (
+      !(await confirmed(
+        `Delete the snapshot "${snap.name}"? There is no undo for this one.`,
+        "Delete snapshot?",
+      ))
+    )
+      return;
+    await removeSnapshot(snap);
+  }
+
+  /** Two questions, on purpose. The first is the safety net on the delete
+   *  itself; the second decides what the tiles take with them to Unsorted —
+   *  keep their artwork, or arrive bare. Native ask() only knows yes/no, so the
+   *  three-way choice is two dialogs in a row. */
   async function removeProject(id: string, name: string) {
     const p = projects().find((x) => x.id === id);
-    const placed = p?.order.length ?? 0;
+    if (!p) return;
+    const owned = p.order.length + p.shelf.length;
     if (
-      placed &&
       !(await confirmed(
-        `"${name}" holds ${placed} tile(s). They go back to Unsorted and keep their layouts; ` +
-          `the arrangement is what you lose.`,
+        `Delete "${name}"? Its ${owned} tile(s) go back to Unsorted; ` +
+          `the arrangement is what you lose` +
+          /* The tiles survive, the project record does not — and its drawers
+             and its wall-wide picture live in that record. The dialog counted
+             only the tiles, so both went unmentioned. */
+          (p.folders.length ? `, along with ${p.folders.length} folder(s)` : "") +
+          (p.gridLayers.length ? ` and the picture across the wall` : "") +
+          `.`,
         "Delete project?",
       ))
     )
       return;
-    await deleteProject(id);
+    const dressed = [...p.order, ...p.shelf].filter(
+      (t) => app.manifest.tiles[t]?.layers.length,
+    ).length;
+    const strip =
+      !!dressed &&
+      (await confirmed(
+        `Also remove all layers from its ${dressed} tile(s)? ` +
+          `"No" keeps the artwork on them.`,
+        "Remove layers too?",
+      ));
+    await deleteProject(id, strip);
   }
 
   /** A holder's rows as the list draws them: topmost first, and without the
@@ -437,7 +554,14 @@
       y: e.clientY,
       items: [
         {
-          label: picked > 1 ? `New project from ${freeCount()} tiles` : "New project from selection",
+          /* "free", not "picked": only tiles no project has claimed can start
+             one, and the count said "New project from 0 tiles" with three
+             portraits highlighted — true, and no help at all. Same name as the
+             header button and the sidebar one, because it is the same action. */
+          label:
+            picked > 1
+              ? `Project from ${freeCount()} free tile(s)`
+              : "Project from selection",
           run: () => void newProjectFrom(""),
           disabled: !freeCount(),
         },
@@ -445,7 +569,10 @@
         // Moving carries the tile's layers with it: artwork belongs to the
         // portrait, not to the wall it happens to be arranged on.
         ...elsewhere.map((p) => ({
-          label: `Move to "${p.name}"`,
+          // Onto the shelf, not onto the grid: the target wall has an
+          // arrangement and nothing here knows where in it the tile belongs.
+          // The label used to leave that to be discovered.
+          label: `Move to "${p.name}" shelf`,
           run: () => void moveTilesToProject(p.id),
         })),
         /* Assigning used to be one dropdown per row — forty-four visits to
@@ -461,15 +588,36 @@
               })),
             ]
           : []),
+        /* The inverse of the Assign items above, and blunter than they are:
+           one item for the whole selection rather than one per layout, because
+           a wall given the wrong design is undressed all at once or not at
+           all. Counts what it would actually take, so a selection with nothing
+           on it says so instead of offering a no-op. */
+        { separator: true } as Item,
+        {
+          // Plain when it takes one tile, and when it can take none: "on 0
+          // tiles" is a sentence no disabled item should have to say.
+          label:
+            strippableCount() > 1
+              ? `Clear all layers on ${strippableCount()} tiles`
+              : "Clear all layers",
+          run: () => void clearLayers(),
+          disabled: !strippableCount(),
+        },
         ...(app.openProjectId
           ? [
               { separator: true } as Item,
-              ...folders().map((f) => ({
-                label: picked === 1 ? `Put in "${f.name}"` : `Put ${picked} in "${f.name}"`,
-                run: () => void fileSelectionInto(f.id),
-              })),
+              /* Only the drawers that would actually take something. One
+                 already holding every picked tile offered "Put 3 in 'Done'"
+                 with the three already in Done. */
+              ...folders()
+                .filter((f) => app.selectedTiles.some((id) => !f.tiles.includes(id)))
+                .map((f) => ({
+                  label: picked === 1 ? `Put in "${f.name}"` : `Put ${picked} in "${f.name}"`,
+                  run: () => void fileSelectionInto(f.id),
+                })),
               {
-                label: picked === 1 ? "Put in a new group" : `Put ${picked} in a new group`,
+                label: picked === 1 ? "Put in a new folder" : `Put ${picked} in a new folder`,
                 run: () => void newFolderHere(""),
               },
               { separator: true } as Item,
@@ -508,13 +656,24 @@
         })),
         { separator: true },
         {
-          label: picked.length > 1 ? `Duplicate ${picked.length} layers` : "Duplicate",
+          label: picked.length > 1 ? `Duplicate ${picked.length} layers (Ctrl+D)` : "Duplicate (Ctrl+D)",
           run: () => void duplicateLayoutLayers(),
         },
+        /* Rename stays on the clicked row on purpose: there is one field to
+           type into, and renaming three layers to the same thing is not a
+           thing anyone wants. Delete does not — see below. */
         { label: "Rename", run: () => (renaming = layerId) },
         {
-          label: findLayer(editing?.layers ?? [], layerId)?.kind === "group" ? "Ungroup" : "Delete",
-          run: () => void deleteLayoutLayer(layerId),
+          /* The two items above act on the whole selection; this one used to
+             take the clicked row alone and say nothing about it, so "Delete"
+             under "Duplicate 2 layers" removed one of the two. */
+          label:
+            picked.length > 1
+              ? `Delete ${picked.length} layers`
+              : findLayer(editing?.layers ?? [], layerId)?.kind === "group"
+                ? "Ungroup"
+                : "Delete",
+          run: () => void deleteLayoutLayers(picked),
         },
       ],
     };
@@ -528,7 +687,16 @@
      coalesce edits without a clock: a slider dragged in one go stays one step,
      and picking the same slider up again is a second one. Canvas gestures have
      no `change` event and call endGesture themselves. -->
-<svelte:window onkeydown={shortcut} onchange={endGesture} />
+<!-- The one moment a close costs work: saves are queued, so an edit made in
+     the last instant may still be on its way to disk. The browser decides what
+     the dialog says; all a page can do is ask for one. -->
+<svelte:window
+  onkeydown={shortcut}
+  onchange={endGesture}
+  onbeforeunload={(e) => {
+    if (savePending()) e.preventDefault();
+  }}
+/>
 
 <!-- A few portraits off a wall, so a card is recognisable without being
      opened. Four is enough to tell two accounts apart and cheap enough that the
@@ -590,6 +758,7 @@
           <input
             class="rename"
             autofocus
+            onfocus={selectAll}
             value={layerLabel(layer)}
             onblur={(e) => {
               void renameLayer(layer.id, e.currentTarget.value);
@@ -606,11 +775,15 @@
             ondblclick={() => (renaming = layer.id)}
             title="Ctrl-click picks several, double-click renames"
           >
-            {layer.kind === "group" ? "▾ " : ""}{layerLabel(layer)}
+            <!-- No ▾ here. Everywhere else in this sidebar that glyph is a
+                 twisty you can press; on a group row it was plain text in the
+                 middle of a name button, and groups do not collapse. The
+                 group-name class carries the distinction instead. -->
+            {layerLabel(layer)}
           </button>
         {/if}
         <button
-          title="Duplicate"
+          title="Duplicate (Ctrl+D)"
           onclick={() => {
             selectLayoutLayer(layer.id);
             void duplicateLayoutLayers();
@@ -706,11 +879,19 @@
           {@render eyeIcon(!!layer.hidden)}
         </button>
         <button
+          class="eye"
+          class:on={layer.locked}
+          title={layer.locked ? "Unlock" : "Lock"}
+          onclick={() => toggleLayerLocked(layer.id)}
+        >
+          {@render lockIcon(!!layer.locked)}
+        </button>
+        <button
           class="name"
           class:dimmed={layer.hidden}
           onclick={() => selectLayer(layer.id)}
           ondblclick={() => layer.layoutId && openLayoutDoc(layer.layoutId)}
-          title="Double-click opens the layout"
+          title={layer.layoutId ? "Double-click opens the layout" : "Select this layer"}
         >
 <!-- Marker before the name, not after: the name is what gets
                ellipsised when the row runs out of width, and a dot hidden
@@ -900,9 +1081,34 @@
         disabled={!app.dir}>Home</button
       >
       {#if !home}
-        <button class:active={!editing} onclick={closeLayoutDoc} disabled={!app.dir}>
-          {openProject()?.name ?? "Unsorted"}
-        </button>
+        {@const project = openProject()}
+        {#if project && renaming === `proj:${project.id}`}
+          <!-- svelte-ignore a11y_autofocus -->
+          <input
+            class="rename"
+            autofocus
+            onfocus={selectAll}
+            value={project.name}
+            onblur={(e) => {
+              void renameProject(project.id, e.currentTarget.value);
+              renaming = "";
+            }}
+            onkeydown={(e) => renameKey(e, project.name)}
+          />
+        {:else}
+          <!-- Same gesture as the layout tab beside it: double-click renames,
+               right where the name is read. Unsorted is nobody's project and
+               keeps its name. -->
+          <button
+            class:active={!editing}
+            onclick={closeLayoutDoc}
+            ondblclick={() => project && (renaming = `proj:${project.id}`)}
+            title={project ? "Double-click renames" : undefined}
+            disabled={!app.dir}
+          >
+            {project?.name ?? "Unsorted"}
+          </button>
+        {/if}
       {/if}
       {#if editing}
         {#if renaming === editing.id}
@@ -910,6 +1116,7 @@
           <input
             class="rename"
             autofocus
+            onfocus={selectAll}
             value={editing.name}
             onblur={(e) => {
               void renameLayout(editing.id, e.currentTarget.value);
@@ -928,6 +1135,19 @@
           >
         {/if}
       {/if}
+      <!-- The way to see a folder that changed underneath us. The portraits are
+           read once, at startup, and cached for the session — so a restore, or
+           files copied into the folder by hand, used to need the app closed and
+           opened again before the wall showed what is actually on disk. -->
+      <button
+        class="reload"
+        onclick={() => void openFolder()}
+        disabled={!app.dir || !!app.busy}
+        title="Reads the game folder again — for portraits changed outside Tessera. Layers and arrangement stay; it lands on Home and clears the undo history."
+        aria-label="Reload the folder"
+      >
+        ↻
+      </button>
     </div>
 
     {#if editing}
@@ -950,7 +1170,17 @@
            while Home shows — that is what makes the way back one click — so
            these cannot ask openProject() whether there is a wall; only `home`
            knows. -->
-      <button onclick={() => newProjectFrom("")} disabled={!freeCount() || !!app.busy || home}>
+      <!-- The one disabled button in this row that explained nothing — and the
+           one the empty state points at. -->
+      <button
+        onclick={() => newProjectFrom("")}
+        disabled={!freeCount() || !!app.busy || home}
+        title={home
+          ? "Open Unsorted first, then pick the portraits of one account"
+          : freeCount()
+            ? `Builds a wall from the ${freeCount()} picked tile(s) no project has claimed`
+            : "Pick tiles that no project has claimed yet"}
+      >
         Project from selection
         {#if freeCount()}({freeCount()}){/if}
       </button>
@@ -958,10 +1188,10 @@
         onclick={addGridImage}
         disabled={!canAddGridImage() || !!app.busy || home}
         title={canAddGridImage()
-          ? "A picture spread across this wall"
+          ? "A picture spread across this wall — opens a file picker"
           : "Open a project first — a wall picture belongs to a wall"}
       >
-        Image across the grid
+        Image across the wall…
       </button>
       <!-- The count is the point. Baking skips any tile the picture does not
            cover completely — a tile's base is a full-bleed crop, so half of one
@@ -1004,7 +1234,7 @@
       </button>
       <button
         class="primary"
-        onclick={saveToGame}
+        onclick={writeToGame}
         disabled={!canSaveToGame() || !!app.busy || home}
         title={canSaveToGame()
           ? "Writes this project's placed tiles into the game folder"
@@ -1038,12 +1268,21 @@
       {:else if editing}
         Saved
       {:else if app.selectedTiles.length}
-        {app.selectedTiles.length} selected{#if freeCount() < app.selectedTiles.length}, {freeCount()}
+        <!-- The second half only where it can be anything but zero. Inside a
+             project every picked tile is claimed by definition, so it read
+             ", 0 of them unassigned" on every single selection. -->
+        {app.selectedTiles.length} selected{#if !app.openProjectId && freeCount() < app.selectedTiles.length}, {freeCount()}
           of them unassigned{/if}
         <button class="link" onclick={clearTiles}>clear</button>
+      {:else if app.dir && home}
+        <!-- The overview has cards, not a canvas: naming the wall you are not
+             looking at and advertising drag gestures that do nothing there was
+             the line that made "Home" feel like it had not left the project. -->
+        {projects().length} project(s) &middot; {inbox().length} unassigned
       {:else if app.dir}
-        {openProject()?.name ?? "Unsorted"} &middot; {visibleIds().length} tiles &middot; drag selects,
-        Ctrl adds, Alt+drag swaps
+        {openProject()?.name ?? "Unsorted"} &middot; {visibleIds().length}
+        {visibleIds().length === 1 ? "tile" : "tiles"} &middot; drag selects, Ctrl adds, Alt+drag
+        swaps
       {/if}
     </span>
   </header>
@@ -1063,7 +1302,7 @@
       <span class="gap"></span>
       <!-- Framed mountain and sun, the icon every editor uses for a picture —
            no Unicode glyph reads as one at this size. -->
-      <button title="Insert image" disabled={!editing || !!app.busy} onclick={() => void addLayoutImage()}>
+      <button title="Insert image — opens a file picker" disabled={!editing || !!app.busy} onclick={() => void addLayoutImage()}>
         <svg width="16" height="14" viewBox="0 0 16 14" aria-hidden="true">
           <rect x="1" y="1" width="14" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4" />
           <circle cx="5.4" cy="5" r="1.4" fill="currentColor" />
@@ -1115,13 +1354,49 @@
              character has to be visible the moment it turns up — so the way in
              is a choice of wall rather than a guess at one. -->
         <div class="home">
+          <div class="cards">
+            <button class="card inbox" onclick={() => enter("")}>
+              <span class="cardname">
+                Unsorted
+                <!-- Ids this folder had never shown us before: a first run, or
+                     characters made since the last one. Not a problem to solve
+                     — just something that must not be missed in a list of
+                     forty-four. -->
+                {#if freshHere().length}<span class="badge">{freshHere().length} new</span>{/if}
+              </span>
+              <!-- The same word the sidebar uses for the same number. The card
+                   said "waiting", Projects said "unassigned" and the tile list
+                   said neither — three names for one count on one screen. -->
+              <span class="cardsub">{inbox().length} unassigned</span>
+              {@render thumbs(inbox())}
+            </button>
+            {#each projects() as project (project.id)}
+              <button class="card" onclick={() => enter(project.id)}>
+                <span class="cardname">{project.name}</span>
+                <span class="cardsub">
+                  {project.order.length} placed{#if project.shelf.length}&nbsp;&middot;
+                    {project.shelf.length} shelved{/if}
+                </span>
+                {@render thumbs(project.order)}
+              </button>
+            {/each}
+          </div>
+          {#if !projects().length}
+            <p class="empty">
+              Open Unsorted, pick the portraits of one account, then "Project from selection".
+            </p>
+          {/if}
           {#if app.changedTiles.length}
             <!-- The one question the app cannot answer for itself. BDO keeps a
                  character's numeric id when a slot is deleted and refilled, so
                  "the file changed" means either a restyle or a stranger — and
                  the bytes look the same in both cases. Answering it wrong
                  either throws away a design or leaves someone else wearing it,
-                 so it is asked once, per tile, before anything is touched. -->
+                 so it is asked once, per tile, before anything is touched.
+
+                 Below the walls, not above: the cards are the room's furniture
+                 and every visit leans on them, while this list only exists on
+                 the mornings the game rewrote something. -->
             <div class="alert">
               <p class="alerthead">
                 {app.changedTiles.length} portrait(s) changed in the game since you were last here.
@@ -1130,6 +1405,27 @@
                 Same character with a new look, or a different character in that slot? Nothing is
                 touched until you say.
               </p>
+              <!-- The mass answers, for the day the game regenerates the whole
+                   folder. "All same" deliberately keeps the vault copies: a
+                   wholesale rewrite is not a restyle, and the vault is the one
+                   thing that answer must not eat. A face that truly changed
+                   still has its stricter per-tile button below. -->
+              <div class="row">
+                <button
+                  title="Record every file as the same character — layers and vault copies stay"
+                  disabled={!!app.busy}
+                  onclick={() => void keepAllCharacters()}
+                >
+                  All same characters
+                </button>
+                <button
+                  title="Strip every listed tile and send it back to Unsorted"
+                  disabled={!!app.busy}
+                  onclick={allNewCharacters}
+                >
+                  All new characters
+                </button>
+              </div>
               <ul>
                 {#each app.changedTiles as id (id)}
                   <li>
@@ -1155,38 +1451,6 @@
               </ul>
             </div>
           {/if}
-          <div class="cards">
-            <button class="card inbox" onclick={() => enter("")}>
-              <span class="cardname">
-                Unsorted
-                <!-- Ids this folder had never shown us before: a first run, or
-                     characters made since the last one. Not a problem to solve
-                     — just something that must not be missed in a list of
-                     forty-four. -->
-                {#if freshHere().length}<span class="badge">{freshHere().length} new</span>{/if}
-              </span>
-              <span class="cardsub">
-                {inbox().length}
-                {inbox().length === 1 ? "tile" : "tiles"} waiting
-              </span>
-              {@render thumbs(inbox())}
-            </button>
-            {#each projects() as project (project.id)}
-              <button class="card" onclick={() => enter(project.id)}>
-                <span class="cardname">{project.name}</span>
-                <span class="cardsub">
-                  {project.order.length} placed{#if project.shelf.length}
-                    · {project.shelf.length} shelved{/if}
-                </span>
-                {@render thumbs(project.order)}
-              </button>
-            {/each}
-          </div>
-          {#if !projects().length}
-            <p class="empty">
-              Open Unsorted, pick the portraits of one account, then "Project from selection".
-            </p>
-          {/if}
         </div>
       {:else}
         <GridCanvas bind:this={grid} />
@@ -1200,7 +1464,7 @@
           <p class="empty">No layers.</p>
         {/if}
         {@render layerRows(layoutLayers, false, null)}
-        <p class="empty">Right-click a layer to group, move, or rename.</p>
+        <p class="empty">Right-click a layer to group, duplicate, rename or delete.</p>
         {#if selectedLayoutLayer}
           <Properties layer={selectedLayoutLayer} inLayout />
         {/if}
@@ -1219,6 +1483,14 @@
                   onclick={() => toggleLayerHidden(layer.id)}
                 >
                   {@render eyeIcon(!!layer.hidden)}
+                </button>
+                <button
+                  class="eye"
+                  class:on={layer.locked}
+                  title={layer.locked ? "Unlock" : "Lock"}
+                  onclick={() => toggleLayerLocked(layer.id)}
+                >
+                  {@render lockIcon(!!layer.locked)}
                 </button>
                 <button class="name" class:dimmed={layer.hidden} onclick={() => selectLayer(layer.id)}>
                   {layerLabel(layer)}
@@ -1258,6 +1530,7 @@
                 <input
                   class="rename"
                   autofocus
+                  onfocus={selectAll}
                   value={project.name}
                   onblur={(e) => {
                     void renameProject(project.id, e.currentTarget.value);
@@ -1274,8 +1547,8 @@
                 >
                   {project.name}
                   <span class="usage">
-                    {project.order.length} placed{#if project.shelf.length}
-                      · {project.shelf.length} shelved{/if}
+                    {project.order.length} placed{#if project.shelf.length}&nbsp;&middot;
+                      {project.shelf.length} shelved{/if}
                   </span>
                 </button>
               {/if}
@@ -1291,7 +1564,7 @@
           disabled={!freeCount() || !!app.busy}
           title="Builds a wall from the picked tiles that no project has claimed"
         >
-          + New project{#if freeCount()}&nbsp;({freeCount()}){/if}
+          + Project from selection{#if freeCount()}&nbsp;({freeCount()}){/if}
         </button>
 
         <!-- One library across every project: a design fits characters from
@@ -1315,6 +1588,7 @@
                 <input
                   class="rename"
                   autofocus
+                  onfocus={selectAll}
                   value={layout.name}
                   onblur={(e) => {
                     void renameLayout(layout.id, e.currentTarget.value);
@@ -1329,10 +1603,13 @@
                      document, unmount this row, and the second click would
                      land on nothing, which is exactly how layouts were
                      unrenamable for a while. -->
+                <!-- `inert-name`, because it is the one name button in this
+                     sidebar a single click does nothing with, and it looked
+                     exactly like the ones that respond. -->
                 <button
-                  class="name"
+                  class="name inert-name"
                   ondblclick={() => (renaming = layout.id)}
-                  title="Double-click to rename"
+                  title="Double-click to rename — the pencil opens it"
                 >
                   {layout.name}
                   <!-- Both numbers, because they answer different questions:
@@ -1347,7 +1624,7 @@
                 </button>
               {/if}
               <button title="Edit layout" onclick={() => openLayoutDoc(layout.id)}>✎</button>
-              <button title="Duplicate" onclick={() => duplicateLayoutDoc(layout.id)}>⧉</button>
+              <button title="Duplicate (Ctrl+D)" onclick={() => duplicateLayoutDoc(layout.id)}>⧉</button>
               <button title="Delete" onclick={() => removeLayout(layout.id, layout.name)}>×</button
               >
             </li>
@@ -1361,10 +1638,15 @@
           + New layout
         </button>
 
-        <!-- The document put aside under a name, so a wall can be tried out and
-             walked back from. Twenty kilobytes each — the assets and the vault
-             copies a snapshot names are never deleted, so restoring one finds
-             them all still there. -->
+        <!-- A wall put aside under a name, so it can be tried out and walked
+             back from. Twenty kilobytes each — the assets and the vault copies
+             a snapshot names are never deleted, so restoring one finds them all
+             still there.
+
+             The list belongs to the wall in front of you: another account's
+             rollback points are not an offer worth showing here, and taking one
+             by mistake would rearrange a wall you are not looking at. On the
+             overview it is the document-wide ones instead. -->
         <h2 class="spaced">
           <button class="twisty inline" onclick={() => toggleOpen("snapshots")}>
             {open.has("snapshots") ? "▾" : "▸"}
@@ -1373,38 +1655,47 @@
         </h2>
         {#if open.has("snapshots")}
           {#if !snapshots().length}
-            <p class="empty">None yet.</p>
+            <p class="empty">
+              {app.openProjectId ? "None for this project yet." : "None yet."}
+            </p>
           {/if}
           <ul>
-            {#each snapshots() as name (name)}
+            {#each snapshots() as snap (snap.name)}
               <li>
-                {#if renaming === `snap:${name}`}
+                {#if renaming === `snap:${snap.name}`}
                   <!-- svelte-ignore a11y_autofocus -->
                   <input
                     class="rename"
                     autofocus
-                    value={name}
+                    onfocus={selectAll}
+                    value={snap.name}
                     onblur={(e) => {
-                      void renameSnapshot(name, e.currentTarget.value);
+                      void renameSnapshot(snap, e.currentTarget.value);
                       renaming = "";
                     }}
-                    onkeydown={(e) => renameKey(e, name)}
+                    onkeydown={(e) => renameKey(e, snap.name)}
                   />
                 {:else}
                   <button
                     class="name"
                     title="Double-click to rename"
-                    ondblclick={() => (renaming = `snap:${name}`)}>{name}</button
+                    ondblclick={() => (renaming = `snap:${snap.name}`)}>{snap.name}</button
                   >
                 {/if}
                 <!-- The document only. What sits in the game folder is a
                      separate decision, and "Write to game" is where it is made. -->
                 <button
-                  title="Put this back as the document — the game folder is not touched"
+                  title={snap.projectId
+                    ? "Put this wall back as it was — other projects and the game folder are not touched"
+                    : "Put the whole document back — the game folder is not touched"}
                   disabled={!!app.busy}
-                  onclick={() => void restoreSnapshot(name)}>↺</button
+                  onclick={() => void putBack(snap)}>↺</button
                 >
-                <button title="Delete" onclick={() => void removeSnapshot(name)}>×</button>
+                <!-- Asks, unlike the other × in this sidebar. A snapshot is the
+                     one thing here with no undo behind it and no second copy,
+                     and this button sits two pixels from the one that restores
+                     it — the pair most likely to be hit by mistake. -->
+                <button title="Delete" onclick={() => void dropSnapshot(snap)}>×</button>
               </li>
             {/each}
           </ul>
@@ -1417,7 +1708,10 @@
               renaming = `snap:${name}`;
             }}
           >
-            + Snapshot
+            <!-- Named for its reach. On the Unsorted wall there is no project
+                 to scope to, so the same button in the same place takes the
+                 whole document — which is a different promise. -->
+            + Snapshot{app.openProjectId ? "" : " (whole document)"}
           </button>
         {/if}
 
@@ -1452,8 +1746,11 @@
           <p class="empty">Drag onto the wall to choose the slot.</p>
         {/if}
 
-        <!-- Groups: drawers for finished portraits, so a wall of forty-four
-             rows stays scannable. Purely cosmetic — a group renders nothing,
+        <!-- Folders: drawers for finished portraits, so a wall of forty-four
+             rows stays scannable. Named for what the model has always called
+             them: "Group" was taken twice over — a drawer of tiles here and a
+             real stack of layers in the Layout — and the two behave nothing
+             alike. Purely cosmetic — a folder renders nothing,
              owns nothing, and dissolving one leaves every tile exactly where
              it was. Its own section rather than a preamble to Tiles, because
              it is a list that grows and wants a twisty like the rest. -->
@@ -1461,7 +1758,7 @@
           <button class="twisty inline" onclick={() => toggleOpen("groups")}>
             {open.has("groups") ? "▾" : "▸"}
           </button>
-          Groups{#if folders().length}&nbsp;({folders().length}){/if}
+          Folders{#if folders().length}&nbsp;({folders().length}){/if}
         </h2>
         {#if open.has("groups")}
           {#if !folders().length}
@@ -1483,6 +1780,7 @@
                 <input
                   class="rename"
                   autofocus
+                  onfocus={selectAll}
                   value={folder.name}
                   onblur={(e) => {
                     void renameFolder(folder.id, e.currentTarget.value);
@@ -1498,7 +1796,7 @@
                   title="Double-click to rename · hover outlines its tiles"
                 >
                   {folder.name}
-                  <span class="usage">{folder.tiles.length} tiles</span>
+                  <span class="usage">{folder.tiles.length} tile(s)</span>
                 </button>
               {/if}
               <button
@@ -1532,7 +1830,7 @@
               disabled={!!app.busy}
               title="A drawer for finished tiles, so the list stays short"
             >
-              + New group{#if app.selectedTiles.length}&nbsp;({app.selectedTiles.length}){/if}
+              + New folder{#if app.selectedTiles.length}&nbsp;({app.selectedTiles.length}){/if}
             </button>
           {/if}
         {/if}
@@ -1545,7 +1843,7 @@
             </button>
             <button class="name" onclick={() => toggleOpen("tiles")}>
               {app.openProjectId ? "On this wall" : "Unsorted"}
-              <span class="usage">{looseIds().length} · assign one at a time</span>
+              <span class="usage">{looseIds().length} · right-click the wall to assign several</span>
             </button>
           </div>
 
@@ -1699,6 +1997,12 @@
   .alert ul {
     margin-top: 8px;
   }
+  /* The two mass answers, shoulder to shoulder above the per-tile list. */
+  .alert .row {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+  }
   .badge {
     margin-left: 6px;
     padding: 1px 6px;
@@ -1751,6 +2055,22 @@
     color: #140f1e;
     font-weight: 600;
   }
+  /* And it gives the ramp back when it cannot be pressed. Faded to 0.45 the
+     gradient was still the loudest thing on the screen, so on Home the eye
+     went straight to "Write to game" — the one button there that does
+     nothing. A disabled action should read as an action that is not available,
+     not as the one to reach for. */
+  .primary:disabled {
+    border-color: #3a444c;
+    background: #1d1832;
+    color: inherit;
+    font-weight: inherit;
+  }
+  /* No hand cursor on a name that only answers a double-click: the pointer is
+     the promise, and here there is nothing behind a single press. */
+  .inert-name {
+    cursor: default;
+  }
   .status {
     margin-left: auto;
     color: #8f88a8;
@@ -1781,12 +2101,23 @@
     font: 15px/1 ui-sans-serif, system-ui, sans-serif;
     color: #d9d4e8;
   }
+  /* Same fade as every other disabled control — three different values across
+     two files made "unavailable" look like three different states. */
   .tools button:disabled {
-    opacity: 0.35;
+    opacity: 0.45;
   }
   .tools .gap {
     grid-column: 1 / -1;
     height: 6px;
+  }
+  /* A glyph, not a word: it sits inside the document group but is not a
+     document, and the tabs beside it are the ones that should carry the reading
+     weight. Same height as those tabs so the row keeps one baseline. */
+  .reload {
+    margin-left: 4px;
+    padding: 4px 8px;
+    font: 14px/1 ui-sans-serif, system-ui, sans-serif;
+    color: #8f88a8;
   }
   .docs button.active {
     border-color: #a685ff;

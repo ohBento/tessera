@@ -35,15 +35,21 @@ import {
   inbox,
   layouts,
   moveLayersIntoGroup,
+  moveTilesToProject,
   deleteProject,
   newProjectFrom,
   openProjectView,
   projects,
+  renameSnapshot,
   restoreSnapshot,
+  deleteLayoutDoc,
+  deleteLayoutLayers,
+  stripSelectedTiles,
   saveToGame,
   snapshots,
   takeSnapshot,
   tileLayers,
+  unplace,
   renameLayer,
   setLayoutSelection,
   tileCaptions,
@@ -265,16 +271,312 @@ describe("the wall", () => {
     await newProjectFrom("Konto");
     expect(projects()).toHaveLength(1);
 
+    const projectId = projects()[0].id;
     await takeSnapshot("Mit Projekt");
-    expect(snapshots()).toContain("Mit Projekt");
+    expect(snapshots().map((s) => s.name)).toContain("Mit Projekt");
 
     // Walk away from that state.
-    await deleteProject(projects()[0].id);
+    await deleteProject(projectId);
     expect(projects()).toHaveLength(0);
 
-    await restoreSnapshot("Mit Projekt");
+    /* Still listed with its wall gone: a snapshot naming a deleted project
+     * falls back to the overview, which is the one place it can be reached from
+     * — and reaching it is how the wall comes back. */
+    expect(snapshots().map((s) => s.name)).toContain("Mit Projekt");
+
+    await restoreSnapshot({ name: "Mit Projekt", projectId });
     expect(projects()).toHaveLength(1);
     expect(projects()[0].order).toEqual([a, b, c]);
+  });
+
+  it("puts one wall back without touching the wall beside it", async () => {
+    /* The whole point of scoping a snapshot to a project: rolling one account's
+     * arrangement back must not rearrange the account next to it. */
+    const [a, b, c, d] = app.folderIds;
+    app.selectedTiles = [a, b];
+    await newProjectFrom("Erstes");
+    const first = projects()[0].id;
+
+    app.selectedTiles = [c, d];
+    await newProjectFrom("Zweites");
+    const second = projects().find((p) => p.id !== first)!.id;
+
+    openProjectView(first);
+    await takeSnapshot("Erstes wie es war");
+
+    // Both walls change after the snapshot was taken.
+    await unplace(b);
+    openProjectView(second);
+    await unplace(d);
+
+    openProjectView(first);
+    await restoreSnapshot({ name: "Erstes wie es war", projectId: first });
+
+    const back = projects().find((p) => p.id === first)!;
+    const untouched = projects().find((p) => p.id === second)!;
+    expect(back.order).toEqual([a, b]);
+    // The other wall keeps the change made to it, rather than being rolled
+    // back to the state the snapshot happened to record for it.
+    expect(untouched.order).toEqual([c]);
+    expect(untouched.shelf).toEqual([d]);
+  });
+
+  it("takes a tile back from whoever holds it now, and says how many", async () => {
+    const [a, b, c] = app.folderIds;
+    app.selectedTiles = [a, b];
+    await newProjectFrom("Erstes");
+    const first = projects()[0].id;
+
+    openProjectView(first);
+    await takeSnapshot("Beide");
+
+    app.selectedTiles = [c];
+    await newProjectFrom("Zweites");
+    const second = projects().find((p) => p.id !== first)!.id;
+
+    // The tile changes hands after the snapshot was taken.
+    app.selectedTiles = [b];
+    await moveTilesToProject(second);
+    expect(projects().find((p) => p.id === second)!.shelf).toContain(b);
+
+    openProjectView(first);
+    await restoreSnapshot({ name: "Beide", projectId: first });
+
+    expect(projects().find((p) => p.id === first)!.order).toEqual([a, b]);
+    // Ownership is exclusive, so the other wall gives it up — and the message
+    // says so rather than letting a wall change behind the user's back.
+    const other = projects().find((p) => p.id === second)!;
+    expect([...other.order, ...other.shelf]).toEqual([c]);
+    expect(app.error).toContain("1 tile(s) taken back");
+  });
+
+  it("answers the whole changed list at once, each way round", async () => {
+    /* The mass case: the game regenerated the folder wholesale. "All same"
+     * records the files as seen and keeps every layer; "All new" strips the
+     * tiles and sends them back to Unsorted. Driven through the buttons, since
+     * the alert only exists when changedTiles says so. */
+    const [a, b] = app.folderIds;
+    app.selectedTiles = [a, b];
+    await newProjectFrom("Konto");
+    queuePick(await magentaSquare("massen"));
+    await newLayoutDoc("Massentest");
+    await addLayoutImage();
+    await closeLayoutDoc();
+    await assignTileLayout(a, layouts()[0].id);
+    expect(app.manifest.tiles[a].layers.length).toBeGreaterThan(0);
+
+    // Still on the overview — nothing here entered a wall — where the alert lives.
+    app.hashes = { ...app.hashes, [a]: "neu-a", [b]: "neu-b" };
+    app.changedTiles = [a, b];
+    await until(
+      () => ![...document.querySelectorAll("button")].every((x) => x.textContent!.trim() !== "All same characters"),
+    );
+    const byLabel = (t: string) =>
+      [...document.querySelectorAll("button")].find((x) => x.textContent!.trim() === t)!;
+
+    byLabel("All same characters").click();
+    await until(() => app.changedTiles.length === 0);
+    // Layers untouched, ownership untouched: same characters, new bytes.
+    expect(app.manifest.tiles[a].layers.length).toBeGreaterThan(0);
+    expect(projects()).toHaveLength(1);
+
+    app.hashes = { ...app.hashes, [a]: "neu2-a" };
+    app.changedTiles = [a];
+    await until(
+      () => ![...document.querySelectorAll("button")].every((x) => x.textContent!.trim() !== "All new characters"),
+    );
+    /* Answered yes on purpose: this is the button that deletes the vaulted
+       originals, so it asks first now — and a test that let the dialog default
+       to "no" would be testing nothing. */
+    const asked: string[] = [];
+    const real = window.confirm;
+    window.confirm = (m?: string) => {
+      asked.push(m ?? "");
+      return true;
+    };
+    try {
+      byLabel("All new characters").click();
+      await until(() => app.changedTiles.length === 0);
+    } finally {
+      window.confirm = real;
+    }
+    expect(asked[0]).toContain("vaulted originals are deleted");
+    // A stranger inherited the slot: bare, and back on the unsorted pile.
+    expect(app.manifest.tiles[a].layers).toEqual([]);
+    expect(projects()[0].order).toEqual([b]);
+  });
+
+  it("refuses a rename that would land on another snapshot's file", async () => {
+    /* The dedupe compared what was typed while the file was written under a
+     * sanitised name, so "a/b" walked over "a_b" — no dialog, no undo, one
+     * snapshot fewer. Measured on the real folder before the fix. */
+    await takeSnapshot("a_b");
+    await takeSnapshot("zweiter");
+    const before = snapshots().length;
+
+    await renameSnapshot({ name: "zweiter", projectId: "" }, "a/b");
+
+    expect(snapshots()).toHaveLength(before);
+    expect(snapshots().map((s) => s.name)).toContain("a_b");
+    expect(snapshots().map((s) => s.name)).toContain("zweiter");
+    expect(app.error).toContain("already a snapshot");
+  });
+
+  it("never lets the automatic snapshot overwrite the one before it", async () => {
+    /* Named to the minute, so two writes in the same minute were one file —
+     * the second replacing the restore point the first had just made, which is
+     * the single moment it exists for. */
+    const [a] = app.folderIds;
+    app.selectedTiles = [a];
+    await newProjectFrom("Konto");
+    openProjectView(projects()[0].id);
+
+    await saveToGame();
+    await saveToGame();
+
+    const auto = snapshots().filter((s) => s.name.startsWith("Before write"));
+    expect(auto).toHaveLength(2);
+    expect(new Set(auto.map((s) => s.name)).size).toBe(2);
+  });
+
+  it("takes one tile off the wall per click on ↩, and redraws the row", async () => {
+    /* A reviewer clicked ↩ once, saw nothing move, clicked again and found two
+     * tiles on the shelf. This pins the click down: one press, one tile, and a
+     * list that is already showing the new state when the press returns. */
+    const [a, b, c] = app.folderIds;
+    app.selectedTiles = [a, b, c];
+    await newProjectFrom("Konto");
+    const cards = () => [...document.querySelectorAll("button")];
+    await until(() => cards().some((x) => x.textContent!.includes("Konto")));
+    cards()
+      .find((x) => x.textContent!.includes("Konto"))!
+      .click();
+    await until(() => !!document.querySelector("canvas.lower-canvas"));
+
+    // The tile list starts folded away.
+    cards()
+      .find((x) => x.textContent!.includes("On this wall"))!
+      .click();
+    const offWall = () => cards().filter((x) => x.title === "Off the wall, onto the shelf");
+    await until(() => offWall().length === 3);
+
+    offWall()[0].click();
+    await until(() => projects()[0].shelf.length === 1);
+
+    expect(projects()[0].order).toEqual([b, c]);
+    // The row is gone from the list too, not just from the model — an unchanged
+    // list is what invites the second click.
+    await until(() => offWall().length === 2);
+  });
+
+  it("asks before overwriting the game's own files, and takes No for an answer", async () => {
+    /* The only button that reaches out of the app and changes files another
+     * program owns, and it asked nothing — while "Reset in game" beside it,
+     * which this one undoes, asked every time. A "No" has to stop everything,
+     * the safety snapshot included: it exists for the write, and taking one for
+     * a write that never happens buries the real restore points. */
+    const [a] = app.folderIds;
+    app.selectedTiles = [a];
+    await newProjectFrom("Konto");
+    /* Entered through its card, not through openProjectView: which wall the
+     * stage shows is the component's own state, and the toolbar is greyed out
+     * on the overview — a test that set the id from outside would find the
+     * button disabled for a reason that has nothing to do with the write. */
+    const cards = () => [...document.querySelectorAll("button")];
+    await until(() => cards().some((b) => b.textContent!.includes("Konto")));
+    cards()
+      .find((b) => b.textContent!.includes("Konto"))!
+      .click();
+    await until(() => !!document.querySelector("canvas.lower-canvas"));
+
+    const asked: string[] = [];
+    const real = window.confirm;
+    window.confirm = (m?: string) => {
+      asked.push(m ?? "");
+      return false;
+    };
+    try {
+      const write = [...document.querySelectorAll("button")].find(
+        (b) => b.textContent!.trim() === "Write to game",
+      ) as HTMLButtonElement;
+      expect(write.disabled).toBe(false);
+      write.click();
+      await until(() => asked.length > 0);
+      await until(() => !app.busy);
+    } finally {
+      window.confirm = real;
+    }
+    expect(asked[0]).toContain("over the game's portrait files");
+    expect(snapshots().some((s) => s.name.startsWith("Before write"))).toBe(false);
+  });
+
+  it("sweeps stamps of a deleted layout out of a restored snapshot", async () => {
+    /* A project snapshot restores the wall and its tiles but deliberately not
+     * the layout library, so one taken before a layout was deleted put that
+     * layout's stamps back with nothing left to name them — pictures labelled
+     * with a raw id, sitting on the tiles until the next start. The rule is
+     * that a layout and its layers do not survive each other, and it has to
+     * hold on this route too.
+     *
+     * A document-wide snapshot is the case that needs no sweep: it brings the
+     * library back with it, so the stamps have their layout again. */
+    const [a] = app.folderIds;
+    app.selectedTiles = [a];
+    await newProjectFrom("Konto");
+    const projectId = projects()[0].id;
+    openProjectView(projectId);
+
+    queuePick(await magentaSquare("blatt"));
+    await newLayoutDoc("Rahmen");
+    await addLayoutImage();
+    await closeLayoutDoc();
+    await assignTileLayout(a, layouts()[0].id);
+    expect(tileLayers(a).length).toBeGreaterThan(0);
+
+    await takeSnapshot("Mit Layout");
+    await deleteLayoutDoc(layouts()[0].id);
+    expect(tileLayers(a)).toHaveLength(0);
+
+    await restoreSnapshot({ name: "Mit Layout", projectId });
+
+    expect(layouts()).toHaveLength(0);
+    // The stamp does not come back on its own, with no layout left to name it.
+    expect(tileLayers(a)).toHaveLength(0);
+  });
+
+  it("says how many tiles it undressed instead of doing it in silence", async () => {
+    const [a] = app.folderIds;
+    queuePick(await magentaSquare("blatt2"));
+    await newLayoutDoc("Rahmen");
+    await addLayoutImage();
+    await closeLayoutDoc();
+    await assignTileLayout(a, layouts()[0].id);
+
+    app.selectedTiles = [a];
+    await stripSelectedTiles();
+
+    expect(tileLayers(a)).toHaveLength(0);
+    expect(app.error).toContain("1 tile(s)");
+  });
+
+  it("lists only the open wall's snapshots", async () => {
+    const [a, b] = app.folderIds;
+    app.selectedTiles = [a];
+    await newProjectFrom("Erstes");
+    const first = projects()[0].id;
+    openProjectView(first);
+    await takeSnapshot("Nur Erstes");
+
+    app.selectedTiles = [b];
+    await newProjectFrom("Zweites");
+    openProjectView(projects().find((p) => p.id !== first)!.id);
+
+    expect(snapshots().map((s) => s.name)).not.toContain("Nur Erstes");
+    await takeSnapshot("Nur Zweites");
+    expect(snapshots().map((s) => s.name)).toEqual(["Nur Zweites"]);
+
+    openProjectView(first);
+    expect(snapshots().map((s) => s.name)).toEqual(["Nur Erstes"]);
   });
 
   it("drops tiles the folder no longer has when restoring", async () => {
@@ -285,7 +587,7 @@ describe("the wall", () => {
 
     // The folder shrinks under us, as it does when a character is deleted.
     app.folderIds = [a];
-    await restoreSnapshot("Voll");
+    await restoreSnapshot({ name: "Voll", projectId: "" });
     expect(Object.keys(app.manifest.tiles)).toEqual([a]);
   });
 
@@ -298,7 +600,7 @@ describe("the wall", () => {
     const before = snapshots().length;
     await saveToGame();
     expect(snapshots().length).toBe(before + 1);
-    expect(snapshots().some((n) => n.startsWith("Before write"))).toBe(true);
+    expect(snapshots().some((s) => s.name.startsWith("Before write"))).toBe(true);
   });
 
   it("makes a project from the picked tiles and counts only the free ones", async () => {
@@ -350,7 +652,7 @@ describe("the wall", () => {
     /* The tile-section head, not the project row of the same name — both read
      * "Unsorted" now, and only this one carries the count. */
     const section = [...document.querySelectorAll("aside button.name")].find((b) =>
-      b.textContent!.includes("assign one at a time"),
+      b.textContent!.includes("right-click the wall to assign"),
     ) as HTMLButtonElement;
     section.click();
 
@@ -539,6 +841,46 @@ describe("the Layout editor", () => {
     await addLayoutImage();
     await until(() => openLayout()!.layers.length === 3);
     expect(openLayout()!.layers.map((l) => l.name)).toEqual(["img01", "text01", "img02"]);
+  });
+
+  it("imports an SVG at the size its viewBox says, not the browser's 300×150", async () => {
+    /* The whole reason importAsset touches SVG at all. Measured the way the app
+     * measures it: an <img> on the stored bytes, which is what Fabric builds
+     * behind every picture layer. Without the rewrite this reads 300×150 — the
+     * CSS default object size — and the icon lands in the Layout at a scale the
+     * file never asked for. */
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 16"><rect width="64" height="16"/></svg>';
+    queuePick(stashPickedFile("klasse.svg", new TextEncoder().encode(svg)));
+    await newLayoutDoc("Mit Icon");
+    await addLayoutImage();
+    await until(() => (openLayout()?.layers.length ?? 0) === 1);
+
+    const asset = (openLayout()!.layers[0] as ImageLayer).asset;
+    const url = await app.deps!.asset(asset);
+    const size = await new Promise<{ w: number; h: number }>((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
+      img.onerror = reject;
+      img.src = url;
+    });
+
+    expect(size).toEqual({ w: 64, h: 16 });
+  });
+
+  it("deletes every picked layer in one undo step", async () => {
+    /* The menu above it reads "Group 2 layers" and "Duplicate 2 layers" and
+     * acts on the selection; Delete sat underneath them and removed the clicked
+     * row alone, without a word about the other one. */
+    const [a, b] = await twoLayers();
+    setLayoutSelection([a, b]);
+    const steps = history.past.length;
+
+    await deleteLayoutLayers([a, b]);
+
+    expect(openLayout()!.layers).toEqual([]);
+    expect(history.past.length).toBe(steps + 1);
+    await undoEdit();
+    expect(openLayout()!.layers.map((l) => l.id)).toEqual([a, b]);
   });
 
   it("duplicates the picked layers above the originals", async () => {

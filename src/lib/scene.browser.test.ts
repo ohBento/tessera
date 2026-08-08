@@ -6,7 +6,15 @@ import { describe, expect, it } from "vitest";
 
 import { TILE_H, TILE_W } from "./bmp";
 import { renderTiles } from "./export";
-import { emptyManifest, emptyTile, migrate, newImageLayer, newProject, type Manifest } from "./model";
+import {
+  emptyManifest,
+  emptyTile,
+  migrate,
+  newImageLayer,
+  newProject,
+  type ImageLayer,
+  type Manifest,
+} from "./model";
 import { buildGrid, cellAt, gridSize, type Wall } from "./scene";
 import { testDeps } from "../test/images";
 
@@ -75,6 +83,130 @@ describe("locks on the wall", () => {
     } finally {
       await canvas.dispose();
     }
+  });
+});
+
+describe("colour grading", () => {
+  it("desaturates a picture's pixels, not just its metadata", async () => {
+    /* Through the whole chain — filter list, applyFilters, export — because a
+     * filter that is set but never applied looks correct in every property
+     * inspector and renders nothing. Magenta drained of saturation must land
+     * grey: equal channels, and not black, which is what a broken filter
+     * pipeline would produce. */
+    const m = manifest(1);
+    const [id] = order(m);
+    const graded = newImageLayer("block:#ff00ff");
+    graded.saturation = -1;
+    m.tiles[id].layers.push(graded);
+
+    const tiles = await renderTiles(view(m), m, testDeps);
+    const [r, g, b, a] = pixel(tiles.get(id)!, TILE_W / 2, TILE_H / 2);
+    expect(a).toBe(255);
+    expect(Math.abs(r - g)).toBeLessThanOrEqual(2);
+    expect(Math.abs(g - b)).toBeLessThanOrEqual(2);
+    /* The luminance of pure magenta: (0.2126 + 0.0722) * 255 ≈ 73. Pinned as a
+     * band, not just "grey": Fabric's stock Saturation filter also produced
+     * equal channels — at 255, because it pulls towards the pixel's maximum —
+     * and this is the assertion that tells the two apart. */
+    expect(r).toBeGreaterThan(60);
+    expect(r).toBeLessThan(90);
+  });
+
+  it("blurs a picture's pixels, not just its metadata", async () => {
+    /* Measured against the same tile rendered sharp, at the test picture's
+     * disc edge — a hard colour boundary that a working blur must smear. A
+     * solid block would be useless here: gaussian over a constant is the same
+     * constant, which is exactly how a first manual probe fooled itself. */
+    const render = async (blur: number) => {
+      const m = manifest(1);
+      const [id] = order(m);
+      const l = newImageLayer("probe");
+      l.scale = 0.8;
+      l.blur = blur;
+      m.tiles[id].layers.push(l);
+      return (await renderTiles(view(m), m, testDeps)).get(id)!;
+    };
+    const sharp = await render(0);
+    const soft = await render(0.3);
+
+    let differing = 0;
+    for (let x = 0; x < TILE_W; x += 7)
+      for (let y = 0; y < TILE_H; y += 7) {
+        const a = pixel(sharp, x, y);
+        const b = pixel(soft, x, y);
+        if (Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]) > 12) differing++;
+      }
+    // A 0.3 blur on a structured picture has to move a lot of pixels a lot.
+    expect(differing).toBeGreaterThan(100);
+  });
+});
+
+describe("picture frames", () => {
+  /** One magenta block filling most of a tile, with whatever framing is asked
+   *  for, rendered through the real export path. */
+  const framed = async (extra: Partial<ImageLayer>) => {
+    const m = manifest(1);
+    const [id] = order(m);
+    const l = newImageLayer("block:#ff00ff");
+    l.scale = 0.8;
+    Object.assign(l, extra);
+    m.tiles[id].layers.push(l);
+    return (await renderTiles(view(m), m, testDeps)).get(id)!;
+  };
+
+  /** The block's own corner, one pixel inside it on both axes. */
+  const corner = (bytes: Uint8Array) => {
+    const half = (0.8 * TILE_W) / 2;
+    return pixel(bytes, Math.round(TILE_W / 2 - half) + 2, Math.round(TILE_H / 2 - half) + 2);
+  };
+
+  it("cuts the corners off, and only the corners", async () => {
+    const square = await framed({});
+    const round = await framed({ cornerRadius: 0.4 });
+
+    // Square: the block's own colour. Round: cut away, so whatever is behind.
+    expect(corner(square)[0]).toBeGreaterThan(200);
+    expect(corner(square)[2]).toBeGreaterThan(200);
+    expect(corner(round)).not.toEqual(corner(square));
+    // The middle is untouched by the rounding — it cuts corners, not content.
+    expect(pixel(round, TILE_W / 2, TILE_H / 2)).toEqual(pixel(square, TILE_W / 2, TILE_H / 2));
+  });
+
+  it("draws the frame inside the edge, in the colour asked for", async () => {
+    const plain = await framed({});
+    const bordered = await framed({ borderWidth: 0.02, borderColor: "#00ff00" });
+
+    const half = (0.8 * TILE_W) / 2;
+    const justInside = Math.round(TILE_W / 2 - half) + 3;
+    const [r, g, b] = pixel(bordered, justInside, TILE_H / 2);
+    // Green frame where the picture's own magenta was.
+    expect(g).toBeGreaterThan(200);
+    expect(r).toBeLessThan(80);
+    expect(b).toBeLessThan(80);
+    expect(pixel(plain, justInside, TILE_H / 2)[0]).toBeGreaterThan(200);
+    // Inside the frame the picture is untouched, so the layer keeps its size.
+    expect(pixel(bordered, TILE_W / 2, TILE_H / 2)).toEqual(pixel(plain, TILE_W / 2, TILE_H / 2));
+  });
+
+  it("bends the frame round the corners instead of losing them", async () => {
+    /* The trap this pins: Fabric strokes an image as a hard rectangle, so a
+     * rounded picture had its frame's corner pieces fall outside the clip and
+     * vanish — a frame open at all four corners. Measured on the diagonal,
+     * where a rounded frame has pixels and a square one has none. */
+    const round = await framed({ cornerRadius: 0.4, borderWidth: 0.02, borderColor: "#00ff00" });
+
+    const half = (0.8 * TILE_W) / 2;
+    const r = 0.4 * Math.min(0.8 * TILE_W, 0.8 * TILE_W);
+    // Walk the top-left corner's arc at 45°, where the frame must still run.
+    const cx = TILE_W / 2 - half + r;
+    const cy = TILE_H / 2 - half + r;
+    const d = r / Math.SQRT2;
+    let green = 0;
+    for (let off = -4; off <= 4; off++) {
+      const [pr, pg, pb] = pixel(round, Math.round(cx - d) + off, Math.round(cy - d) + off);
+      if (pg > 150 && pr < 120 && pb < 120) green++;
+    }
+    expect(green).toBeGreaterThan(0);
   });
 });
 

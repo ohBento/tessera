@@ -58,15 +58,26 @@ export async function saveTiles(
 ): Promise<number> {
   const tiles = await renderTiles(wall, m, deps);
   const prints = await loadFingerprints(dir);
-  for (const [id, bytes] of tiles) {
-    await vaultOriginal(dir, id);
-    await writeFile(await tilePath(dir, id), bytes);
-    /* Remembered here rather than re-read on the next open: this is the one
-     * place that knows the bytes were ours. Without it every open after a write
-     * would report the whole wall as changed by the game — by the app's own
-     * hand — and the question that matters would be buried in the noise. */
-    prints[id] = { ...prints[id], written: await hashBytes(bytes) };
+  /* In a `finally`, because a write that stops halfway is exactly when this
+   * matters. A locked file or a full disk at tile seven used to leave six
+   * portraits written and not one `written` hash saved: on the next open none
+   * of them matched either hash, so the app reported its own work as "changed
+   * in the game" — and answering that with "new characters" costs the layers
+   * and the vault copies. What was written is recorded, however the loop
+   * ended. */
+  try {
+    for (const [id, bytes] of tiles) {
+      await vaultOriginal(dir, id);
+      await writeFile(await tilePath(dir, id), bytes);
+      /* Remembered here rather than re-read on the next open: this is the one
+       * place that knows the bytes were ours. Without it every open after a
+       * write would report the whole wall as changed by the game — by the app's
+       * own hand — and the question that matters would be buried in the
+       * noise. */
+      prints[id] = { ...prints[id], written: await hashBytes(bytes) };
+    }
+  } finally {
+    await saveFingerprints(dir, prints);
   }
-  await saveFingerprints(dir, prints);
   return tiles.size;
 }

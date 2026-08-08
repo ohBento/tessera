@@ -56,6 +56,24 @@ export const cellAt = (index: number) => ({
   y: Math.floor(index / COLS) * STEP_Y,
 });
 
+/** Which slot a grid-pixel point lands on, or -1 for the gaps between slots and
+ *  anywhere past the last tile. The inverse of cellAt, and it has to be built
+ *  from the same step: dividing by the tile size instead — which is what the
+ *  hit test used to do — leaves out the gap, so every column's hit box sat one
+ *  gap further right than the tile drawn there. The drift accumulates across
+ *  the row, and near the right edge of the last column it named the neighbour
+ *  a fifth of a tile early. Same story down the rows. */
+export function cellIndexAt(x: number, y: number, count: number): number {
+  const col = Math.floor(x / STEP_X);
+  const row = Math.floor(y / STEP_Y);
+  if (col < 0 || col >= COLS || row < 0) return -1;
+  // Landed in the space between portraits, which belongs to no tile — the game
+  // shows nothing there either.
+  if (x - col * STEP_X >= TILE_W || y - row * STEP_Y >= TILE_H) return -1;
+  const index = row * COLS + col;
+  return index < count ? index : -1;
+}
+
 /** The slots a rectangle touches, in grid order — what a rubber band picks.
  *
  *  Overlap, not containment: sweeping a thin band across a row should take the

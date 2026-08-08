@@ -66,6 +66,32 @@
     };
   });
 
+  /* Escape belongs to the innermost open thing. In the bubble phase it did not:
+   * App's own Escape closes the Layout document and listens on the same window,
+   * so one press over a layer's menu shut the menu *and* the document and left
+   * the user back on the wall. Capture phase and stopped, exactly as
+   * LayoutCanvas does it for a cancelled drag — the outer listeners never see
+   * the key while a menu is up. */
+  $effect(() => {
+    const shut = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      e.preventDefault();
+      onclose();
+    };
+    /* The wheel rides along for the mirror-image reason: the wall's canvas
+     * stops every wheel event to drive its own zoom, so a menu opened over the
+     * wall — the place it is opened most — never heard the scroll it is
+     * supposed to close on. Capture runs before the canvas gets the chance. */
+    const scrolled = () => onclose();
+    addEventListener("keydown", shut, true);
+    addEventListener("wheel", scrolled, true);
+    return () => {
+      removeEventListener("keydown", shut, true);
+      removeEventListener("wheel", scrolled, true);
+    };
+  });
+
   function pick(item: Item) {
     if ("separator" in item || item.disabled) return;
     item.run();
@@ -77,8 +103,6 @@
   onpointerdown={(e) => {
     if (el && !el.contains(e.target as Node)) onclose();
   }}
-  onkeydown={(e) => e.key === "Escape" && onclose()}
-  onwheel={onclose}
 />
 
 <div
@@ -130,7 +154,10 @@
     background: #2a2244;
   }
   button:disabled {
-    opacity: 0.4;
+    /* The app's one disabled fade — App.svelte uses 0.45 for every other
+       control, and a menu that greys out differently reads as a different
+       kind of "off". */
+    opacity: 0.45;
     cursor: default;
   }
   hr {

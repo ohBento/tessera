@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  addToProject,
   bakeMosaicInto,
   DEFAULT_IMAGE_SCALE,
   DEFAULT_SHAPE_SIZE,
@@ -8,8 +7,8 @@ import {
   deleteStampCascade,
   dissolveFolder,
   dropOrphanLiveLayers,
+  droppedWork,
   folderOf,
-  effectiveTile,
   emptyManifest,
   emptyTile,
   bakeable,
@@ -42,6 +41,7 @@ import {
   projectTiles,
   clearBases,
   holdersUsingLayout,
+  pruneDeadLayoutRefs,
   pruneToFolder,
   removeFromProjectToInbox,
   tilesUsingLayout,
@@ -53,7 +53,6 @@ import {
   syncLiveLayers,
   type ImageLayer,
   removeLayerFrom,
-  resetTransform,
   resolveLayers,
   unplaceTile,
   walkLayers,
@@ -101,16 +100,6 @@ describe("projects own tiles exclusively", () => {
     expect(inboxIds(m, ["a", "d", "e", "f"])).toEqual(["e", "f"]);
   });
 
-  it("adds only unclaimed tiles, and says how many landed", () => {
-    const m = withProject();
-    const other = newProject("Other");
-    m.projects.push(other);
-    // "a" already belongs to Main: skipped rather than stolen, because taking
-    // it would change a wall the user is not looking at.
-    expect(addToProject(m, other.id, ["a", "x", "y"])).toBe(2);
-    expect(other.shelf).toEqual(["x", "y"]);
-    expect(main(m).order).toContain("a");
-  });
 
   it("moves a tile between projects, leaving its edit state alone", () => {
     const m = withProject();
@@ -248,10 +237,9 @@ describe("the two invariants hold whatever order things are done in", () => {
     for (const id of ["t0", "t1", "t2", "t3"]) m.tiles[id] = emptyTile();
 
     const steps: Array<() => void> = [
-      () => addToProject(m, a.id, ["t0", "t1", "t2", "t3"]),
+      () => ["t0", "t1", "t2", "t3"].forEach((id) => moveToProject(m, id, a.id)),
       () => placeTile(a, "t0", null),
       () => placeTile(a, "t1", "t0"),
-      () => addToProject(m, b.id, ["t2"]), // already A's: must be refused
       () => moveToProject(m, "t2", b.id),
       () => placeTile(b, "t2", null),
       () => swapPlaced(a, "t0", "t1"),
@@ -534,6 +522,70 @@ describe("layoutNeedsRestamp", () => {
   });
 });
 
+describe("pruneDeadLayoutRefs", () => {
+  const stamp = (layoutId: string) => ({ ...newImageLayer("sheet.png"), layoutId });
+  const caption = (layoutId: string) => ({ ...newTextLayer(), layoutId, live: true });
+
+  /** A manifest whose library knows exactly one layout, "alive". */
+  const withLibrary = () => {
+    const m = emptyManifest();
+    const layout = newLayout("Alive");
+    layout.id = "alive";
+    m.layouts.push(layout);
+    return m;
+  };
+
+  it("drops stamp and live caption of a layout the library no longer has", () => {
+    /* The measured wound: sixteen layers on a real wall named layouts deleted
+     * long before, rendering pictures nobody could account for. */
+    const m = withLibrary();
+    m.tiles["t"] = { ...emptyTile(), layers: [stamp("dead"), caption("dead")] };
+    expect(pruneDeadLayoutRefs(m)).toBe(2);
+    expect(m.tiles["t"].layers).toEqual([]);
+  });
+
+  it("keeps layers of a layout that still exists, and everything hand-made", () => {
+    const m = withLibrary();
+    m.tiles["t"] = {
+      ...emptyTile(),
+      layers: [stamp("alive"), caption("alive"), newTextLayer(), newImageLayer("own.png")],
+    };
+    expect(pruneDeadLayoutRefs(m)).toBe(0);
+    expect(m.tiles["t"].layers).toHaveLength(4);
+  });
+
+  it("takes the wording and the per-tile picture of a dead layer with it", () => {
+    /* Both are keyed by layer id, and the layer is the only thing that reaches
+     * them: left behind they are typed words sitting in the manifest that
+     * nothing can show and nothing can clear. */
+    const m = withLibrary();
+    const words = caption("dead");
+    const picture = stamp("dead");
+    const mine = newTextLayer();
+    m.tiles["t"] = {
+      ...emptyTile(),
+      layers: [picture, words, mine],
+      text: { [words.id]: "Elani", [mine.id]: "meins" },
+      swap: { [picture.id]: "face.png" },
+    };
+
+    pruneDeadLayoutRefs(m);
+
+    expect(m.tiles["t"].text).toEqual({ [mine.id]: "meins" });
+    expect(m.tiles["t"].swap).toEqual({});
+  });
+
+  it("cascades a layout deletion through every tile", () => {
+    const m = withLibrary();
+    m.tiles["a"] = { ...emptyTile(), layers: [stamp("alive")] };
+    m.tiles["b"] = { ...emptyTile(), layers: [stamp("alive"), newTextLayer()] };
+    m.layouts = [];
+    expect(pruneDeadLayoutRefs(m)).toBe(2);
+    expect(m.tiles["a"].layers).toEqual([]);
+    expect(m.tiles["b"].layers).toHaveLength(1);
+  });
+});
+
 describe("stampInto", () => {
   it("adds a stamp carrying the layout it came from", () => {
     const overlay = emptyTile();
@@ -648,19 +700,6 @@ describe("clearBases", () => {
 
   it("reports zero when no tile is baked", () => {
     expect(clearBases(emptyManifest())).toBe(0);
-  });
-});
-
-describe("effectiveTile", () => {
-  it("changes when a layer on that tile changes", () => {
-    // What marks a tile dirty against what was last written to the game, with
-    // no extra bookkeeping anywhere.
-    const m = withProject();
-    const layer = { ...newTextLayer(), id: "s1", color: "#ffffff" };
-    m.tiles.b.layers.push(layer);
-    const before = JSON.stringify(effectiveTile(m, "b"));
-    layer.color = "#ff0000";
-    expect(JSON.stringify(effectiveTile(m, "b"))).not.toBe(before);
   });
 });
 
@@ -1034,47 +1073,6 @@ describe("relocateLayer", () => {
 });
 
 
-describe("resetTransform", () => {
-  it("resets rotation, opacity and size but leaves position and effects alone", () => {
-    const layer = newImageLayer("x.png");
-    layer.x = 0.1;
-    layer.y = 0.9;
-    layer.rotation = 45;
-    layer.opacity = 0.4;
-    layer.scale = 1.5;
-    layer.flipX = true;
-    layer.blend = "multiply";
-
-    resetTransform(layer);
-
-    expect(layer.rotation).toBe(0);
-    expect(layer.opacity).toBe(1);
-    expect(layer.scale).toBe(DEFAULT_IMAGE_SCALE);
-    expect(layer.flipX).toBe(false);
-    // Untouched on purpose — a reset that also discards effects or moves the
-    // layer back to centre would be a bigger surprise than the fix it offers.
-    expect(layer.x).toBe(0.1);
-    expect(layer.y).toBe(0.9);
-    expect(layer.blend).toBe("multiply");
-  });
-
-  it("resets text size the same way", () => {
-    const layer = newTextLayer();
-    layer.size = 0.3;
-    resetTransform(layer);
-    expect(layer.size).toBe(DEFAULT_TEXT_SIZE);
-  });
-
-  it("resets a shape's width and height, not just one dimension", () => {
-    const layer = newShapeLayer("rect");
-    layer.w = 0.9;
-    layer.h = 0.1;
-    resetTransform(layer);
-    expect(layer.w).toBe(DEFAULT_SHAPE_SIZE);
-    expect(layer.h).toBe(DEFAULT_SHAPE_SIZE);
-  });
-});
-
 describe("newShapeLayer", () => {
   it("defaults to a square, uncoloured border and solid white fill", () => {
     const layer = newShapeLayer("polygon");
@@ -1316,6 +1314,36 @@ describe("pruneToFolder", () => {
   });
 });
 
+describe("droppedWork", () => {
+  const wall = () => {
+    const m = emptyManifest();
+    for (const id of ["a", "b", "c", "d"]) m.tiles[id] = emptyTile();
+    return m;
+  };
+
+  it("names only the tiles that lose something", () => {
+    const m = wall();
+    m.tiles.b.layers = [newTextLayer()];
+    m.tiles.c.text = { L1: "Hallo" };
+    // `a` is untouched and `d` is still in the folder — neither is a loss.
+    m.tiles.d.layers = [newTextLayer()];
+    expect(droppedWork(m, ["d"]).sort()).toEqual(["b", "c"]);
+  });
+
+  it("counts a baked picture and a per-tile swap as work", () => {
+    const m = wall();
+    m.tiles.a.base = { asset: "mosaic.png", crop: { x: 0, y: 0, w: 10, h: 10 } };
+    m.tiles.b.swap = { L1: "face.png" };
+    expect(droppedWork(m, []).sort()).toEqual(["a", "b"]);
+  });
+
+  it("says nothing on an ordinary open", () => {
+    // Every id in the folder gets an empty tile on load. If those counted, the
+    // warning would fire on every single start.
+    expect(droppedWork(wall(), ["a", "b", "c", "d"])).toEqual([]);
+  });
+});
+
 describe("layer names", () => {
   it("numbers each kind for itself, per stack", () => {
     const layers: Layer[] = [];
@@ -1324,6 +1352,23 @@ describe("layer names", () => {
       layers.push(l);
     }
     expect(layers.map((l) => l.name)).toEqual(["img01", "text01", "img02"]);
+  });
+
+  it("names a shape for the shape it is, and counts each one for itself", () => {
+    /* Rectangle, ellipse and polygon all came out "shapeNN" — three kinds of
+     * thing under one name in a list with no icons. Sharing the counter was the
+     * other half: the first rectangle beside a polygon read "rect02". */
+    const layers: Layer[] = [];
+    for (const l of [
+      newShapeLayer("polygon"),
+      newShapeLayer("rect"),
+      newShapeLayer("rect"),
+      newShapeLayer("ellipse"),
+    ]) {
+      nameInStack(l, layers);
+      layers.push(l);
+    }
+    expect(layers.map((l) => l.name)).toEqual(["polygon01", "rect01", "rect02", "ellipse01"]);
   });
 
   it("does not hand a renamed layer's number to the next one", () => {

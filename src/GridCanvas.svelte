@@ -20,7 +20,7 @@
     visibleIds,
   } from "./lib/editor.svelte";
   import { TILE_H, TILE_W } from "./lib/bmp";
-  import { cellsIn, COLS, isTyping, snapBox, type Guide } from "./lib/geometry";
+  import { cellIndexAt, cellsIn, isTyping, snapBox, type Guide } from "./lib/geometry";
   import { buildGrid, cellAt, gridSize, readBack, snapScale, type Tagged } from "./lib/scene";
 
   let host: HTMLDivElement;
@@ -56,14 +56,14 @@
   export function tileAtEvent(e: MouseEvent): string {
     if (!canvas) return "";
     const p = canvas.getScenePoint(e);
-    const col = Math.floor(p.x / TILE_W);
-    const row = Math.floor(p.y / TILE_H);
     const ids = visibleIds();
-    const index = row * COLS + col;
-    const inside = col >= 0 && col < COLS && row >= 0 && index >= 0 && index < ids.length;
-    return inside ? ids[index] : "";
+    const index = cellIndexAt(p.x, p.y, ids.length);
+    return index < 0 ? "" : ids[index];
   }
 
+  /* Lower than the Layout editor's 0.05 on purpose: a wall is seven tiles wide
+     and as many rows deep, so "the whole thing on screen" is a far smaller
+     number here than it is for one 624×804 sheet. */
   const MIN_ZOOM = 0.02;
   const MAX_ZOOM = 8;
 
@@ -579,15 +579,24 @@
 <div class="host" bind:this={host}>
   <canvas bind:this={el}></canvas>
   <div class="hud">
-    {Math.round(zoom * 100)}% &middot; {zoomLocked ? "Rad = gesperrt" : "Rad = Zoom"} &middot; Leertaste
-    oder Mittelklick = Schieben
+    <!-- English like the rest of the app, and like the Layout editor's own HUD
+         three files over — the two are the same strip in two places, and one of
+         them speaking German read as a half-finished build. -->
+    {Math.round(zoom * 100)}% &middot; {TILE_W}&times;{TILE_H} &middot; {zoomLocked
+      ? "wheel locked"
+      : "wheel = zoom"} &middot; space or middle-drag = pan
+    <!-- Written out rather than drawn as 🔒/🔓: an emoji is painted by the
+         system font in its own colours, which fights the theme and changes
+         shape between machines — the rule App.svelte states beside its own
+         hand-drawn icons. The word says the state; the tooltip says what the
+         click does. -->
     <button
       onclick={() => (zoomLocked = !zoomLocked)}
-      title={zoomLocked ? "Mausrad zoomt wieder" : "Mausrad zoomt nicht mehr"}
+      title={zoomLocked ? "Let the wheel zoom again" : "Stop the wheel from zooming"}
     >
-      {zoomLocked ? "🔒" : "🔓"} Zoom
+      Zoom {zoomLocked ? "locked" : "free"}
     </button>
-    <button onclick={fit}>Einpassen</button>
+    <button onclick={fit}>Fit</button>
   </div>
 </div>
 
@@ -610,7 +619,6 @@
     background: rgb(0 0 0 / 0.6);
     color: #d9d4e8;
     font: 12px/1.4 ui-sans-serif, system-ui, sans-serif;
-    pointer-events: auto;
   }
   .hud button {
     font: inherit;

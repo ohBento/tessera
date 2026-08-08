@@ -53,7 +53,7 @@ vi.stubGlobal("createImageBitmap", vi.fn(async () => ({ width: 1, height: 1 })))
 // constructor, and Vite's own module resolution needs `new URL` to work.
 URL.createObjectURL = () => "blob:x";
 
-const { loadOriginal, assetUrl, saveManifest, loadManifest, restoreTiles, classify } =
+const { loadOriginal, assetUrl, saveManifest, loadManifest, restoreTiles, classify, svgWithSize, importAsset } =
   await import("./project");
 
 describe("saveManifest survives overlapping writes", () => {
@@ -169,6 +169,67 @@ describe("restoreTiles", () => {
   });
 });
 
+describe("an SVG gets the size its viewBox already implies", () => {
+  /* Without absolute width/height on the root there is nothing for an <img> to
+   * measure, so the browser hands out the CSS default object size — 300×150 —
+   * and Fabric takes that as the picture's size. A class icon then arrives in
+   * the Layout at a number the file never said. */
+  it("copies the viewBox onto a root that carries no size", () => {
+    const out = svgWithSize('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 48"><path/></svg>');
+    expect(out).toContain('width="64"');
+    expect(out).toContain('height="48"');
+    // The rest of the tag survives — the namespace above all, without which
+    // nothing renders at all.
+    expect(out).toContain('xmlns="http://www.w3.org/2000/svg"');
+    expect(out).toContain("<path/>");
+  });
+
+  it("replaces a percentage rather than sitting beside it", () => {
+    // "100%" resolves against a containing block an <img> never provides, so it
+    // is no size at all — and left in place it would win, being first.
+    const out = svgWithSize(`<svg width='100%' height='100%' viewBox="0 0 20 10"/>`)!;
+    expect(out).not.toContain("100%");
+    expect(out.match(/width=/g)).toHaveLength(1);
+    expect(out).toContain('width="20"');
+  });
+
+  it("leaves a file that already knows its size alone", () => {
+    expect(svgWithSize('<svg width="16" height="16" viewBox="0 0 64 64"/>')).toBeNull();
+  });
+
+  it("is not fooled by stroke-width", () => {
+    // `\bwidth` matches the tail of it, which would read a line thickness as
+    // the picture's width and leave the file untouched.
+    const out = svgWithSize('<svg stroke-width="2" viewBox="0 0 30 30"/>');
+    expect(out).toContain('width="30"');
+  });
+
+  it("has nothing to derive without a usable viewBox", () => {
+    expect(svgWithSize("<svg><rect/></svg>")).toBeNull();
+    expect(svgWithSize('<svg viewBox="0 0 0 10"/>')).toBeNull();
+    expect(svgWithSize("not an svg at all")).toBeNull();
+  });
+
+  it("rewrites on the way into assets/, and hashes what it stored", async () => {
+    files.clear();
+    const platform = await import("./platform");
+    const svg = '<svg viewBox="0 0 64 48"/>';
+    vi.mocked(platform.readFile).mockResolvedValueOnce(new TextEncoder().encode(svg));
+    const written: Array<[string, Uint8Array]> = [];
+    vi.mocked(platform.writeFile).mockImplementation(async (path, data) => {
+      written.push([String(path), data as Uint8Array]);
+    });
+
+    const name = await importAsset("/docs/FaceTexture", "C:/icons/klasse.svg");
+
+    expect(name).toMatch(/\.svg$/);
+    expect(new TextDecoder().decode(written[0][1])).toContain('width="64"');
+    // Content-addressed on the bytes that landed, so the same icon imported
+    // twice is still one file.
+    expect(written[0][0]).toContain(name);
+  });
+});
+
 describe("loadManifest lines the manifest up with the folder", () => {
   /* The folder is the authority: characters come and go between sessions, and
    * the whole folder can be deleted and regenerated. Driven through the real
@@ -188,18 +249,50 @@ describe("loadManifest lines the manifest up with the folder", () => {
   it("drops tiles the folder no longer has from grid, shelf and drawers", async () => {
     const platform = await import("./platform");
     vi.mocked(platform.readTextFile).mockResolvedValueOnce(stored());
-    const m = await loadManifest("/docs/FaceTexture", ["a", "c"]);
+    const { manifest: m } = await loadManifest("/docs/FaceTexture", ["a", "c"]);
     const p = m.projects[0];
     expect(p.order).toEqual(["a"]);
     expect(p.shelf).toEqual(["c"]);
     expect(p.folders[0].tiles).toEqual(["a"]);
   });
 
+  it("puts the document aside before dropping a tile that carried work", async () => {
+    /* The scenario that cost the layers: BDO regenerates the folder, the ids
+     * change, and the tiles built on the old ones are deleted on the next open
+     * — with the undo history cleared in the same breath. The snapshot is the
+     * only way back, so its being written is what this pins down. */
+    files.clear();
+    const platform = await import("./platform");
+    const dressed = JSON.parse(stored());
+    dressed.tiles.b.text = { L1: "Elani" };
+    vi.mocked(platform.readTextFile).mockResolvedValueOnce(JSON.stringify(dressed));
+
+    const { lost, snapshot } = await loadManifest("/docs/FaceTexture", ["a", "c"]);
+    expect(lost).toEqual(["b"]);
+    const written = [...files.keys()].find((k) => k.includes("/snapshots/"));
+    expect(written).toContain(snapshot.replace(/:/g, "_"));
+    // The un-pruned document: the tile is in there with its wording, which is
+    // exactly what the prune is about to take away.
+    expect(JSON.parse(files.get(written!)!).manifest.tiles.b.text).toEqual({ L1: "Elani" });
+  });
+
+  it("writes no snapshot when nothing of value goes", async () => {
+    files.clear();
+    const platform = await import("./platform");
+    vi.mocked(platform.readTextFile).mockResolvedValueOnce(stored());
+    // "b" is dropped, but it is an untouched tile — warning on that would mean
+    // a warning on every ordinary open.
+    const { lost, snapshot } = await loadManifest("/docs/FaceTexture", ["a", "c"]);
+    expect(lost).toEqual([]);
+    expect(snapshot).toBe("");
+    expect([...files.keys()].some((k) => k.includes("/snapshots/"))).toBe(false);
+  });
+
   it("adopts an id the folder has and no project claims", async () => {
     // That is all the inbox is: what nothing has taken. Nothing stores it.
     const platform = await import("./platform");
     vi.mocked(platform.readTextFile).mockResolvedValueOnce(stored());
-    const m = await loadManifest("/docs/FaceTexture", ["a", "b", "c", "neu"]);
+    const { manifest: m } = await loadManifest("/docs/FaceTexture", ["a", "b", "c", "neu"]);
     expect(Object.keys(m.tiles)).toContain("neu");
     expect(projectOf(m, "neu")).toBeUndefined();
   });

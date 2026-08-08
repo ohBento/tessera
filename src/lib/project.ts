@@ -16,7 +16,7 @@ import {
   writeTextFile,
 } from "./platform";
 
-import { emptyManifest, migrate, pruneToFolder, type Manifest } from "./model";
+import { droppedWork, emptyManifest, migrate, pruneToFolder, type Manifest } from "./model";
 import type { SceneDeps } from "./scene";
 
 export async function defaultDir() {
@@ -39,15 +39,43 @@ export async function listTiles(dir: string) {
 
 export const tilePath = (dir: string, id: string) => join(dir, `${id}.bmp`);
 
-export async function loadManifest(dir: string, ids: string[]): Promise<Manifest> {
+/** The document lined up with the folder, plus what that cost.
+ *
+ *  `lost` are the ids the folder no longer has that still carried work, and
+ *  `snapshot` is the name the un-pruned document was put aside under — empty
+ *  when nothing was lost, which is every ordinary open. The snapshot is written
+ *  here rather than by the caller because this is the only place that holds the
+ *  document as it was before the folder's verdict is applied, and a caller that
+ *  forgets it turns the prune back into the silent deletion it used to be.
+ *
+ *  Putting the portraits back into the folder and reopening makes the snapshot
+ *  restorable: restoreSnapshot prunes to the folder too, so the work comes back
+ *  with the ids it belongs to. */
+export async function loadManifest(
+  dir: string,
+  ids: string[],
+): Promise<{ manifest: Manifest; lost: string[]; snapshot: string }> {
   let m = emptyManifest();
   try {
     m = migrate(JSON.parse(await readTextFile(await manifestPath(dir))));
   } catch {
     // no project yet, or unreadable — start clean rather than block the folder
   }
+  const lost = droppedWork(m, ids);
+  let snapshot = "";
+  if (lost.length) {
+    // Seconds in the name, unlike the one before a write to the game: two opens
+    // inside the same minute are a double-click away, and the second one would
+    // otherwise overwrite the first — which holds strictly more work.
+    snapshot = `Before folder cleanup ${new Date().toISOString().slice(0, 19).replace("T", " ")}`;
+    await writeSnapshot(
+      dir,
+      { name: snapshot, projectId: "" },
+      { manifest: m, prints: await loadFingerprints(dir) },
+    );
+  }
   // Characters get created and deleted between sessions; the folder wins.
-  return pruneToFolder(m, ids);
+  return { manifest: pruneToFolder(m, ids), lost, snapshot };
 }
 
 /* --- Knowing when the game changed a file under us.
@@ -134,6 +162,11 @@ export async function hashTiles(dir: string, ids: string[]): Promise<Record<stri
 let writing: Promise<void> = Promise.resolve();
 let queuedWrite: { dir: string; m: Manifest } | null = null;
 
+/** Whether a manifest write is still waiting its turn. Closing the window with
+ *  one queued drops the last edit on the floor — the model has it, the disk
+ *  never gets it — and the queue is what makes that window exist at all. */
+export const savePending = () => queuedWrite !== null;
+
 export function saveManifest(dir: string, m: Manifest): Promise<void> {
   /* Newer state supersedes older: a burst of edits — a slider being dragged —
    * asks for one save per event, and writing every intermediate stage of a
@@ -176,10 +209,62 @@ async function storeAsset(dir: string, bytes: Uint8Array, ext: string): Promise<
   return name;
 }
 
-/** Copies a picked image into assets/ under its content hash and returns the name. */
+/** Reads one attribute off an opening tag, either quoting style. */
+const attrOf = (tag: string, name: string) =>
+  // Whitespace before the name rather than \b: `\bwidth` also matches the tail
+  // of `stroke-width`, which is an ordinary thing to find on a root tag.
+  tag.match(new RegExp(`\\s${name}\\s*=\\s*("[^"]*"|'[^']*')`, "i"))?.[1].slice(1, -1);
+
+/** A length the browser can measure without a containing block. Percentages
+ *  cannot: they resolve against a block an `<img>` never gives them, which is
+ *  why "100%" counts as no size at all here. */
+const absolute = (v: string | undefined) => !!v && v.trim() !== "" && !v.trim().endsWith("%");
+
+/** Writes a viewBox-only SVG's size onto its root tag, or null if there is
+ *  nothing to fix.
+ *
+ *  An `<img>` needs an intrinsic size, and a raster file carries one in its
+ *  header. An SVG is a description: without absolute width/height on the root
+ *  there is nothing to measure, so the browser falls back to the CSS default
+ *  object size for replaced elements — 300×150, the same historical 2:1 a bare
+ *  `<canvas>` gets. Fabric then takes those numbers as the picture's size, and
+ *  a class icon lands in the Layout at a made-up scale (and, with no viewBox to
+ *  keep the ratio, a made-up shape).
+ *
+ *  The viewBox already says what the file means. Copying it onto the tag is the
+ *  whole fix, and doing it here means every later reader — Fabric, the sidebar
+ *  thumbnail, any export — sees a picture that knows its own size. Files that
+ *  already carry one are left alone; a file with neither has nothing to derive
+ *  and keeps the browser's guess. */
+export function svgWithSize(text: string): string | null {
+  const tag = text.match(/<svg\b[^>]*>/i)?.[0];
+  if (!tag) return null;
+  if (absolute(attrOf(tag, "width")) && absolute(attrOf(tag, "height"))) return null;
+
+  const box = attrOf(tag, "viewBox")?.trim().split(/[\s,]+/).map(Number);
+  if (!box || box.length !== 4 || !(box[2] > 0) || !(box[3] > 0)) return null;
+
+  // Replaced, not appended: a "100%" left in place would sit beside the new
+  // value, and the first one wins.
+  const bare = tag.replace(/\s+(width|height)\s*=\s*("[^"]*"|'[^']*')/gi, "");
+  // A function replacer, so a `$&` sitting inside the tag's own attributes
+  // cannot be read back as a substitution pattern.
+  return text.replace(tag, () => `<svg width="${box[2]}" height="${box[3]}"${bare.slice(4)}`);
+}
+
+/** Copies a picked image into assets/ under its content hash and returns the name.
+ *
+ *  An SVG may be rewritten on the way in — see svgWithSize. The hash is taken
+ *  after that, which is the point of hashing the bytes that get stored: the
+ *  same icon imported twice still lands on one file. */
 export async function importAsset(dir: string, sourcePath: string): Promise<string> {
   const ext = sourcePath.slice(sourcePath.lastIndexOf(".")).toLowerCase() || ".png";
-  return storeAsset(dir, await readFile(sourcePath), ext);
+  let bytes = await readFile(sourcePath);
+  if (ext === ".svg") {
+    const sized = svgWithSize(new TextDecoder().decode(bytes));
+    if (sized) bytes = new TextEncoder().encode(sized);
+  }
+  return storeAsset(dir, bytes, ext);
 }
 
 /** Same content-addressed scheme as importAsset, for bytes that were rendered
@@ -247,6 +332,15 @@ export function loadOriginal(dir: string, id: string): Promise<ImageBitmap> {
  *  exactly that promise — the vault copy is thrown away and the file underneath
  *  is somebody else's — so the cache has to be told. */
 export const forgetOriginal = (id: string) => originals.delete(id);
+
+/** Forgets every cached original.
+ *
+ *  For re-reading the folder, where the promise loadOriginal caches on — that
+ *  the bytes behind an id never change — is exactly what the user is telling us
+ *  is no longer true. Without this, re-opening a folder whose files were
+ *  replaced from outside redrew the wall from the pixels of the session before
+ *  it, and only restarting the app showed what was actually on disk. */
+export const forgetAllOriginals = () => originals.clear();
 
 const urls = new Map<string, Promise<string>>();
 
@@ -323,15 +417,46 @@ export async function restoreTiles(dir: string, ids: string[]): Promise<number> 
  * that question would start asking about changes it had already settled. */
 const snapshotDir = async (dir: string) => join(await projectDir(dir), "snapshots");
 
-const snapshotFile = async (dir: string, name: string) =>
-  join(await snapshotDir(dir), `${name.replace(/[^\w \-.]/g, "_")}.json`);
+/** Which snapshot: the name it is shown under, and the project it belongs to.
+ *
+ *  `projectId` is "" for one taken with no wall open — the whole document put
+ *  aside, which is what every snapshot used to be. */
+export type SnapshotRef = { name: string; projectId: string };
 
-export async function listSnapshots(dir: string): Promise<string[]> {
+/* The project id rides in the filename rather than inside the file, so listing
+ * stays one readDir instead of opening every snapshot to ask who it belongs to.
+ * `~` is safe as the separator because the name is sanitised to word
+ * characters, spaces, dashes and dots — a name can never contain one, so the
+ * split is unambiguous. A file with no separator is a document-wide snapshot,
+ * which is exactly what the ones written before projects had their own are. */
+/** What two snapshot names have to differ in to be different files.
+ *
+ *  Exported because the caller has to compare by it, not by what was typed:
+ *  "a/b" and "a_b" are two names and one file, so a rename that only checked
+ *  the typed text walked straight over the other snapshot — measured, and with
+ *  no undo behind it. Anything that picks or accepts a name asks this. */
+export const snapshotKey = (name: string) => name.replace(/[^\w \-.]/g, "_");
+
+const sanitise = snapshotKey;
+
+const snapshotFile = async (dir: string, ref: SnapshotRef) =>
+  join(
+    await snapshotDir(dir),
+    ref.projectId ? `${ref.projectId}~${sanitise(ref.name)}.json` : `${sanitise(ref.name)}.json`,
+  );
+
+export async function listSnapshots(dir: string): Promise<SnapshotRef[]> {
   try {
     return (await readDir(await snapshotDir(dir)))
       .filter((e) => e.isFile && e.name.endsWith(".json"))
-      .map((e) => e.name.replace(/\.json$/, ""))
-      .sort();
+      .map((e) => {
+        const stem = e.name.replace(/\.json$/, "");
+        const cut = stem.indexOf("~");
+        return cut < 0
+          ? { name: stem, projectId: "" }
+          : { name: stem.slice(cut + 1), projectId: stem.slice(0, cut) };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
   } catch {
     return [];
   }
@@ -339,9 +464,9 @@ export async function listSnapshots(dir: string): Promise<string[]> {
 
 export type Snapshot = { manifest: Manifest; prints: Fingerprints };
 
-export async function writeSnapshot(dir: string, name: string, snap: Snapshot) {
+export async function writeSnapshot(dir: string, ref: SnapshotRef, snap: Snapshot) {
   await mkdir(await snapshotDir(dir), { recursive: true });
-  await writeTextFile(await snapshotFile(dir, name), JSON.stringify(snap, null, 2));
+  await writeTextFile(await snapshotFile(dir, ref), JSON.stringify(snap, null, 2));
 }
 
 /** Reads one back, migrating it the same way the manifest itself is.
@@ -350,8 +475,8 @@ export async function writeSnapshot(dir: string, name: string, snap: Snapshot) {
  *  snapshot — it *is* the manifest. Old snapshots are the whole point of having
  *  them, so the reader keeps taking both shapes rather than making them
  *  unreadable to save a branch. */
-export async function readSnapshot(dir: string, name: string): Promise<Snapshot> {
-  const raw = JSON.parse(await readTextFile(await snapshotFile(dir, name)));
+export async function readSnapshot(dir: string, ref: SnapshotRef): Promise<Snapshot> {
+  const raw = JSON.parse(await readTextFile(await snapshotFile(dir, ref)));
   const bare = !raw || typeof raw !== "object" || !("manifest" in raw);
   return {
     manifest: migrate(bare ? raw : raw.manifest),
@@ -359,11 +484,15 @@ export async function readSnapshot(dir: string, name: string): Promise<Snapshot>
   };
 }
 
-export async function deleteSnapshot(dir: string, name: string) {
-  await remove(await snapshotFile(dir, name));
+export async function deleteSnapshot(dir: string, ref: SnapshotRef) {
+  await remove(await snapshotFile(dir, ref));
 }
 
-async function vaultedIds(dir: string): Promise<string[]> {
+/** Which ids the vault holds a pristine copy of — the ids "Reset in game" can
+ *  actually put back. Exported because the button has to be honest before it is
+ *  pressed: it used to offer every tile of the project and then report "none of
+ *  these were written" after the confirmation. */
+export async function vaultedIds(dir: string): Promise<string[]> {
   try {
     return (await readDir(await vaultDir(dir)))
       .filter((e) => e.isFile && e.name.toLowerCase().endsWith(".bmp"))
