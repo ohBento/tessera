@@ -106,6 +106,24 @@ export function applyCrop(img: fabric.FabricImage, crop: Inset | undefined) {
   img.height = Math.max(1, span.h * src.height);
 }
 
+/** The SVG saturate matrix over Rec. 709 luma, for the layer's -1..1 dial.
+ *
+ *  Not Fabric's own Saturation filter: that one pulls every channel towards the
+ *  pixel's maximum, so draining a pure magenta ended at white instead of grey.
+ *  This matrix fades each pixel towards its luminance — what every photo tool
+ *  means by desaturating — and past 0 the same matrix oversaturates. */
+function saturationMatrix(v: number) {
+  const s = v + 1; // dial -1..1 → saturate factor 0..2, 1 = untouched
+  const [lr, lg, lb] = [0.2126, 0.7152, 0.0722];
+  // prettier-ignore
+  return [
+    lr + (1 - lr) * s, lg * (1 - s),      lb * (1 - s),      0, 0,
+    lr * (1 - s),      lg + (1 - lg) * s, lb * (1 - s),      0, 0,
+    lr * (1 - s),      lg * (1 - s),      lb + (1 - lb) * s, 0, 0,
+    0,                 0,                 0,                 1, 0,
+  ];
+}
+
 async function imageObject(
   l: Layer & { kind: "image" },
   deps: SceneDeps,
@@ -113,6 +131,20 @@ async function imageObject(
 ): Promise<fabric.Object> {
   const img = await fabric.FabricImage.fromURL(await deps.asset(l.asset));
   applyCrop(img, l.crop);
+  /* Only the dials that were touched: applyFilters bakes a new element, and
+   * paying that on every image for four no-op filters would slow the wall for
+   * nothing. Baked here means a stamp carries the graded pixels for free. */
+  const filters = [
+    l.brightness ? new fabric.filters.Brightness({ brightness: l.brightness }) : null,
+    l.contrast ? new fabric.filters.Contrast({ contrast: l.contrast }) : null,
+    l.saturation ? new fabric.filters.ColorMatrix({ matrix: saturationMatrix(l.saturation) }) : null,
+    l.hue ? new fabric.filters.HueRotation({ rotation: l.hue }) : null,
+    l.blur ? new fabric.filters.Blur({ blur: l.blur }) : null,
+  ].filter((f) => f !== null);
+  if (filters.length) {
+    img.filters = filters;
+    img.applyFilters();
+  }
   img.scaleToWidth(l.scale * box.w);
   img.set({
     originX: "center",
@@ -124,7 +156,86 @@ async function imageObject(
     flipX: !!l.flipX,
     flipY: !!l.flipY,
   });
+  frameImage(img, l, box);
+  if (l.shadow) {
+    /* nonScaling, unlike a caption's: a picture is drawn at natural size and
+     * scaled down hard, and a blur that scaled with it would be a smear. The
+     * stored number is in tile pixels and should land as tile pixels. */
+    img.shadow = new fabric.Shadow({
+      color: l.shadowColor ?? "#000000",
+      blur: l.shadow * box.w,
+      offsetX: 0,
+      offsetY: 0,
+      nonScaling: true,
+    });
+  }
   return img;
+}
+
+/** Rounded corners and a frame, baked into the picture's own pixels.
+ *
+ *  Not a clipPath, which is where this started: an object has one clipPath slot
+ *  and three things want it — the corners, the cell a tile layer must stay
+ *  inside, and a mask. Nesting them to intersect looked right and rendered
+ *  wrong; the picture came back blended with what lay under it, because the
+ *  inner clip is composited through the outer one's transform. Baking sidesteps
+ *  the whole question: pixels compose with everything, and the stamp carries
+ *  the frame for free.
+ *
+ *  Runs after the filters and before the scaling, so it grades what it frames
+ *  and frames what will be scaled. The crop is baked with it — the frame has to
+ *  follow the visible window, not the picture the window was cut from.
+ *
+ *  Widths arrive as fractions of a tile and are drawn in the picture's own
+ *  pixels, so the conversion is the scale the layer is about to be given. A
+ *  frame asked for as 1% of a tile lands as 1% of a tile at any picture size. */
+function frameImage(
+  img: fabric.FabricImage,
+  l: Layer & { kind: "image" },
+  box: { w: number; h: number },
+) {
+  const w = Math.round(img.width);
+  const h = Math.round(img.height);
+  const radius = Math.min(l.cornerRadius ?? 0, 0.5) * Math.min(w, h);
+  // Source pixels per tile pixel, undoing the scale the layer is about to get.
+  const border = (l.borderWidth ?? 0) * box.w * (w / (l.scale * box.w));
+  if (!radius && !border) return;
+
+  const out = document.createElement("canvas");
+  out.width = w;
+  out.height = h;
+  const ctx = out.getContext("2d")!;
+  const trace = (inset: number) => {
+    const r = Math.max(0, radius - inset);
+    ctx.beginPath();
+    ctx.moveTo(inset + r, inset);
+    ctx.arcTo(w - inset, inset, w - inset, h - inset, r);
+    ctx.arcTo(w - inset, h - inset, inset, h - inset, r);
+    ctx.arcTo(inset, h - inset, inset, inset, r);
+    ctx.arcTo(inset, inset, w - inset, inset, r);
+    ctx.closePath();
+  };
+
+  ctx.save();
+  trace(0);
+  ctx.clip();
+  // The crop window, drawn to fill the new canvas — cropX/cropY are cleared
+  // below, or the trim would be taken a second time off the framed copy.
+  ctx.drawImage(img.getElement(), img.cropX ?? 0, img.cropY ?? 0, w, h, 0, 0, w, h);
+  ctx.restore();
+
+  if (border) {
+    // Inset by half, so the whole stroke lands inside the picture's edge and
+    // framing never changes the space the layer occupies.
+    trace(border / 2);
+    ctx.lineWidth = border;
+    ctx.strokeStyle = l.borderColor ?? "#000000";
+    ctx.stroke();
+  }
+
+  img.setElement(out);
+  img.cropX = 0;
+  img.cropY = 0;
 }
 
 /** A colour, or a Fabric gradient built from one of ours.
@@ -136,9 +247,13 @@ async function imageObject(
  *  because that is the form the angle maths is tested in. */
 function paintOf(paint: Paint, w: number, h: number): NonNullable<fabric.FabricObjectProps["fill"]> {
   if (!isGradient(paint)) return paint;
+  /* `mid` slides the blend along the line: past 0.5 the transition band keeps
+   * its width but one colour holds solid before or after it, which is what
+   * "make this colour more prominent" means. */
+  const mid = paint.mid ?? 0.5;
   const stops = [
-    { offset: 0, color: paint.from },
-    { offset: 1, color: paint.to },
+    { offset: Math.max(0, 2 * mid - 1), color: paint.from },
+    { offset: Math.min(1, 2 * mid), color: paint.to },
   ];
   const cx = w / 2;
   const cy = h / 2;
@@ -276,6 +391,15 @@ function shapeObject(l: ShapeLayer, box: { w: number; h: number; x: number; y: n
     // Border grows outward from the edge rather than being scaled with the
     // object, so a 2px border stays 2px when the shape is resized.
     strokeUniform: true,
+    // Same halo a caption casts, offset zero — see textObject.
+    shadow: l.shadow
+      ? new fabric.Shadow({
+          color: l.shadowColor ?? "#000000",
+          blur: l.shadow * box.w,
+          offsetX: 0,
+          offsetY: 0,
+        })
+      : undefined,
   };
   if (l.shape === "ellipse") return new fabric.Ellipse({ ...common, rx: w / 2, ry: h / 2 });
   if (l.shape === "polygon")
@@ -560,6 +684,13 @@ function makeInteractive(obj: fabric.Object, l: Layer, allowRotate = true) {
   obj.selectable = !locked;
   obj.evented = !locked;
   obj.hasControls = !locked;
+  /* Fabric's stock blue frame, recoloured to the app's accent. Here and not
+   * per canvas, because this is the one door every interactive object walks
+   * through — the trap this function's comment below already names. */
+  obj.borderColor = "#cbb8ff";
+  obj.cornerColor = "#0e0b16";
+  obj.cornerStrokeColor = "#cbb8ff";
+  obj.transparentCorners = false;
   const sides = sideHandles(l);
   if (l.kind === "image") obj.controls = { ...obj.controls, ...cropControls() };
   obj.setControlsVisibility({ ml: sides, mr: sides, mt: sides, mb: sides, mtr: allowRotate });

@@ -23,6 +23,7 @@ export type Gradient = {
   angle: number; // degrees, 0 = left to right, ignored when radial
   radial?: boolean; // from the centre outwards instead of directional
   radius?: number; // radial only: multiplier on the default reach, 1 = default
+  mid?: number; // 0..1, where the blend sits; past the middle one colour holds solid. 0.5 = even
 };
 
 /** Anywhere a colour can be picked, a gradient is allowed instead. */
@@ -38,7 +39,6 @@ type Common = {
   y: number; // centre, 0..1 of tile height
   rotation: number; // degrees
   opacity: number; // 0..1
-  blend: GlobalCompositeOperation;
   /* Optional so manifests written before these existed still load unchanged. */
   name?: string;
   /* Which img/text/shape this was in its stack when it was created. Kept apart
@@ -47,17 +47,20 @@ type Common = {
   seq?: number;
   locked?: boolean;
   hidden?: boolean;
-  /* Which coordinate space x/y (and any size) are fractions of. Absent means
-   * "tile", so every manifest written before this loads unchanged. A "grid"
-   * layer spans the whole wall — it is placed once, not per tile, which is why
-   * the mosaic needs no mechanism of its own. Only meaningful on a
-   * project-scope layer: a tile-local one has no grid to span. */
-  space?: "tile" | "grid";
-  /* Glow is a shadow with no offset but its own alpha, which Canvas2D's shadow
-   * API cannot express — it is composited as a separate pass instead. */
-  glow?: number; // blur radius as a fraction of tile width, 0 or absent = off
-  glowColor?: Paint;
-  glowOpacity?: number; // 0..1, independent of the layer's own opacity
+  /* Set on a layer whose x/y (and size) are fractions of the whole wall rather
+   * than of one tile — placed once across every portrait, which is why the
+   * mosaic needs no mechanism of its own. Absence is the tile-local case, and
+   * that is the only reason there is no "tile" value to write: a second name
+   * for "not set" is a value nobody can ever be sure got assigned. Only
+   * meaningful on a project-scope layer; a tile-local one has no wall to
+   * span. */
+  space?: "grid";
+  /* A soft halo behind the layer. With no offset it is a glow — one feature
+   * covers both, which is why there is no separate glow field. Optional here
+   * and overridden as required on TextLayer, which had it first: everything
+   * written before shapes and pictures could cast one loads unchanged. */
+  shadow?: number; // blur radius as a fraction of tile width, 0 or absent = off
+  shadowColor?: string;
   /* Another layer's id to clip this one to — a shape by its outline, a picture
    * by the pixels it actually has, a caption by its letters. A dangling id (the
    * layer got deleted) simply fails to resolve at render time and this one
@@ -69,7 +72,8 @@ type Common = {
   maskInvert?: boolean;
   /* Set on anything a Layout put here: the picture rendered from it, and any
    * caption it keeps live. Lets one Layout find every copy of itself across
-   * every overlay and bring them all up to date in one pass. Absent on a layer
+   * every tile carrying it and bring them all up to date in one pass. Absent
+   * on a layer
    * created by hand. */
   layoutId?: string;
   /* Inside a Layout: keep this layer out of the rendered stamp and copy it
@@ -91,10 +95,6 @@ type Common = {
 /** How much of a picture is trimmed off each side, as fractions of the source.
  *  All four at 0 is the whole picture, which is what absence means. */
 export type Inset = { l: number; r: number; t: number; b: number };
-
-export const NO_CROP: Inset = { l: 0, r: 0, t: 0, b: 0 };
-
-export const cropOf = (l: ImageLayer): Inset => l.crop ?? NO_CROP;
 
 /** What is left of a picture after the trim, as fractions of the source. */
 export const cropSpan = (c: Inset) => ({ w: 1 - c.l - c.r, h: 1 - c.t - c.b });
@@ -125,6 +125,26 @@ export type ImageLayer = Common & {
   /* Likewise absent on everything written before cropping existed, and absent
    * means the whole picture. */
   crop?: Inset;
+  /* Colour grading, all -1..1 with 0 (or absent) as neutral — the ranges
+   * Fabric's own filters take, stored untranslated. Images only: text and
+   * shapes pick their colour directly, and a second dial that turns the same
+   * knob is not a feature. `hue` is a fraction of a half turn, so ±1 is ±180°. */
+  brightness?: number;
+  contrast?: number;
+  saturation?: number;
+  hue?: number;
+  /* 0..1 as Fabric's Blur filter takes it — a fraction of the image's size,
+   * not pixels, so the softness survives a resize. 0 or absent = sharp. */
+  blur?: number;
+  /* A frame around the picture, in the same units a shape's border uses: a
+   * fraction of tile width. Drawn inside the edge, so framing a layer never
+   * changes the space it occupies. 0 or absent = no frame. */
+  borderWidth?: number;
+  borderColor?: string;
+  /* 0..0.5 of the picture's short side, like a rect's. One radius for all four
+   * corners: per-corner control is a shape's business, and a picture wanting
+   * three round corners can be masked by one. */
+  cornerRadius?: number;
 };
 
 export type ShapeKind = "rect" | "ellipse" | "polygon";
@@ -168,10 +188,14 @@ export type TextLayer = Common & {
 
 /** Children keep their own tile-absolute coordinates; the group's x/y is a
  *  translation applied on top, so moving a group shifts everything inside it
- *  without rewriting a single child position. Its opacity/blend apply to
- *  the flattened result, which is what makes it a real group rather than a
- *  selection: half-transparent overlapping children stop showing through each
- *  other. */
+ *  without rewriting a single child position.
+ *
+ *  Its opacity is multiplied into the children on the way down rather than
+ *  applied to a flattened picture, so half-transparent children still show
+ *  through each other. Nothing here flattens: a group is a shared translation
+ *  and a shared fade, not a merged image. The doc used to promise the
+ *  opposite, which is worth saying plainly — see layoutObjects in scene.ts,
+ *  where the same limit is written down beside the code that causes it. */
 export type GroupLayer = Common & {
   kind: "group";
   children: Layer[];
@@ -193,7 +217,8 @@ export function findLayer(layers: Layer[], id: string): Layer | undefined {
 }
 
 /** A group's x/y is a displacement applied on top of children that already
- *  carry absolute coordinates (see paintGroup in render.ts), so a child renders
+ *  carry absolute coordinates (see layoutObjects in scene.ts, which is what is
+ *  left of the old render.ts), so a child renders
  *  at its own x/y plus every enclosing group's displacement. Crossing that
  *  boundary — grouping, ungrouping, dragging a layer in or out — has to fold
  *  the displacement in or out, or the layer visibly jumps by exactly that much.
@@ -343,7 +368,7 @@ export type Project = {
   order: string[];
   shelf: string[];
   /** Grid-space layers: the picture spread across this wall. All that is left
-   *  of overlays, and the only place a layer is not tile-local. */
+   *  of the wall itself, and the only place a layer is not tile-local. */
   gridLayers: Layer[];
   folders: Folder[];
 };
@@ -380,15 +405,46 @@ function detach(p: Project, tileId: string) {
   for (const f of p.folders) f.tiles = f.tiles.filter((t) => t !== tileId);
 }
 
-/** Moves the unclaimed tiles among `ids` onto a project's shelf, returning how
- *  many landed. Claimed ones are skipped rather than stolen: taking a tile out
- *  of another wall silently changes a wall the user is not looking at. */
-export function addToProject(m: Manifest, projectId: string, ids: string[]): number {
-  const p = m.projects.find((x) => x.id === projectId);
-  if (!p) return 0;
-  const free = inboxIds(m, ids);
-  p.shelf.push(...free);
-  return free.length;
+/** Puts one project's slice of `from` back into `into`, and says how many tiles
+ *  had to be taken off another wall to do it.
+ *
+ *  What a project-scoped snapshot restores: the project record itself — its
+ *  order, shelf, folders and grid layers — plus the layers, wording and
+ *  pictures on the tiles it owns. Every other project keeps exactly what it
+ *  has, which is the whole point of scoping a snapshot to one wall.
+ *
+ *  The one place it cannot leave others alone is a tile that has since moved:
+ *  ownership is exclusive, so putting the old arrangement back means taking
+ *  that tile off whichever wall holds it now. Taking one silently changes a wall
+ *  the user is not looking at, so this counts them and hands the number back
+ *  for the caller to say out loud.
+ *
+ *  Layouts are deliberately untouched. They are a library shared by every
+ *  project, a stamp on a tile is an ordinary picture that renders from its
+ *  asset whether or not the Layout still exists, and rolling one wall back is
+ *  no reason to resurrect a design another wall is done with. */
+export function restoreProjectInto(into: Manifest, from: Manifest, projectId: string): number {
+  const src = from.projects.find((p) => p.id === projectId);
+  if (!src) return 0;
+  const owned = projectTiles(src);
+
+  let taken = 0;
+  for (const id of owned) {
+    const holder = projectOf(into, id);
+    if (!holder || holder.id === projectId) continue;
+    detach(holder, id);
+    taken++;
+  }
+
+  // Back where it was in the list, not at the end: the order of the projects is
+  // the order of the cards on the overview, and a rollback should not reshuffle
+  // them.
+  const at = into.projects.findIndex((p) => p.id === projectId);
+  if (at >= 0) into.projects[at] = src;
+  else into.projects.push(src);
+
+  for (const id of owned) if (from.tiles[id]) into.tiles[id] = from.tiles[id];
+  return taken;
 }
 
 /** Hands a tile from whichever project holds it to another, onto its shelf.
@@ -623,7 +679,7 @@ export const emptyManifest = (): Manifest => ({
  *
  *  There are two such places and they are deliberately not the same type: a
  *  group's stack, and one tile's own. Everything that acts on stamps — refresh,
- *  count, delete — has to reach both, and having each of them ask "overlay or
+ *  count, delete — has to reach both, and having each of them ask "wall or
  *  tile?" separately is how one of the two quietly gets left out. */
 export type StampHolder = { layers: Layer[]; tiles: string[] };
 
@@ -706,7 +762,6 @@ const common = (id = newId()): Common => ({
   y: 0.5,
   rotation: 0,
   opacity: 1,
-  blend: "source-over",
 });
 
 export const DEFAULT_IMAGE_SCALE = 0.3;
@@ -741,26 +796,6 @@ export const newGroupLayer = (children: Layer[] = []): GroupLayer => ({
   children,
 });
 
-/** Resets size, rotation and opacity to their defaults but keeps position and
- *  every effect — those are rarely what a user wants to lose by mistake. */
-export function resetTransform(layer: Layer) {
-  layer.rotation = 0;
-  layer.opacity = 1;
-  if (layer.kind === "image") {
-    layer.scale = DEFAULT_IMAGE_SCALE;
-    layer.flipX = false;
-    layer.flipY = false;
-    // A trim is part of the layer's size, so "reset the size" has to undo it
-    // too — otherwise the picture comes back at default scale still cut up.
-    delete layer.crop;
-  } else if (layer.kind === "shape") {
-    layer.w = DEFAULT_SHAPE_SIZE;
-    layer.h = DEFAULT_SHAPE_SIZE;
-  } else if (layer.kind === "text") {
-    layer.size = DEFAULT_TEXT_SIZE;
-  }
-}
-
 export const newTextLayer = (): TextLayer => ({
   ...common(),
   kind: "text",
@@ -769,7 +804,7 @@ export const newTextLayer = (): TextLayer => ({
    * placeholder still works, it just has to be typed on purpose. */
   text: "Text",
   font: "Segoe UI",
-  size: 0.08,
+  size: DEFAULT_TEXT_SIZE,
   /* New captions start at their anchor and grow to the right. Existing layers
    * carry no align and keep falling back to "center", so this changes what is
    * created from now on rather than re-laying-out anyone's finished tiles. */
@@ -789,6 +824,8 @@ const LAYER_PREFIX: Record<Layer["kind"], string> = {
   group: "group",
 };
 
+const prefixOf = (l: Layer) => (l.kind === "shape" ? l.shape : LAYER_PREFIX[l.kind]);
+
 /** Names a layer for the stack it is about to join: img01, text01, img02.
  *
  *  The count comes off a hidden `seq`, never off the names, because renaming
@@ -800,10 +837,17 @@ const LAYER_PREFIX: Record<Layer["kind"], string> = {
  *  A stack written before any of this carries no numbers at all and starts
  *  again at one. Nothing is renamed for it: a name someone typed is theirs. */
 export function nameInStack(layer: Layer, layers: Layer[]) {
+  /* A shape is named for the shape it is. Rectangle, ellipse and polygon all
+   * came out "shapeNN", which in a list of five is three kinds of thing wearing
+   * one name and no icon to tell them apart. */
+  const prefix = prefixOf(layer);
+  // Counted per prefix, not per kind: sharing one counter across all shapes
+  // made the first rectangle beside a polygon come out "rect02", with no
+  // rect01 anywhere to explain it.
   let n = 0;
-  for (const l of walkLayers(layers)) if (l.kind === layer.kind) n = Math.max(n, l.seq ?? 0);
+  for (const l of walkLayers(layers)) if (prefixOf(l) === prefix) n = Math.max(n, l.seq ?? 0);
   layer.seq = n + 1;
-  layer.name = `${LAYER_PREFIX[layer.kind]}${String(layer.seq).padStart(2, "0")}`;
+  layer.name = `${prefix}${String(layer.seq).padStart(2, "0")}`;
 }
 
 /** Every shape in this Layout that some layer is using as a mask.
@@ -862,16 +906,6 @@ export const layerLabel = (l: Layer) => {
  *  belong to the project and are drawn once over the whole wall, not per tile. */
 export const resolveLayers = (m: Manifest, id: string): Layer[] => m.tiles[id]?.layers ?? [];
 
-/** Exactly what a tile renders to. Comparing this against what was last written
- *  is what marks a tile dirty without any extra bookkeeping. */
-export const effectiveTile = (m: Manifest, id: string) => ({
-  base: m.tiles[id]?.base ?? null,
-  layers: resolveLayers(m, id),
-  text: m.tiles[id]?.text ?? {},
-});
-
-export type Effective = ReturnType<typeof effectiveTile>;
-
 /** What one tile's copy of a caption actually says.
  *
  *  `??` and not `||`: an override of "" means the user emptied this tile's
@@ -927,7 +961,7 @@ export function bakeable(layout: Layout): Layout {
   return { ...layout, layers: keep(layout.layers) };
 }
 
-/** Puts a Layout's live captions on an overlay, beside its stamp, and takes
+/** Puts a Layout's live captions on the tile, beside its stamp, and takes
  *  away the ones it no longer has.
  *
  *  Ids are carried over deliberately: per-tile wording lives in `tile.text`
@@ -998,6 +1032,67 @@ export function pruneToFolder(m: Manifest, ids: string[]): Manifest {
   return m;
 }
 
+/** Which of the tiles `pruneToFolder` is about to delete carry work — layers, a
+ *  baked picture, wording, or a per-tile swap.
+ *
+ *  The prune is right: the folder wins. What was wrong is that it happened in
+ *  silence. A character deleted in BDO, or a folder the game regenerated with
+ *  new numbers, takes an evening of layers with it, and the undo history is
+ *  cleared on the same open — so nothing on screen ever said a thing was gone.
+ *  The caller asks this first, puts the un-pruned document aside as a snapshot,
+ *  and says so.
+ *
+ *  An untouched tile is not work: every id in the folder gets an empty tile on
+ *  load, and reporting those would mean a warning on every ordinary open. */
+export function droppedWork(m: Manifest, ids: string[]): string[] {
+  const has = new Set(ids);
+  return Object.keys(m.tiles).filter((id) => {
+    const t = m.tiles[id];
+    if (has.has(id) || !t) return false;
+    return (
+      !!t.base ||
+      t.layers.length > 0 ||
+      Object.keys(t.text).length > 0 ||
+      Object.keys(t.swap ?? {}).length > 0
+    );
+  });
+}
+
+/** Drops every layer whose `layoutId` names a layout the library no longer has,
+ *  on every tile, and says how many went.
+ *
+ *  The enforcement of one rule: a layout and its layers on the wall do not
+ *  survive each other. Deleting a layout cascades through this, and it runs
+ *  again on every open — because there are ways for dead references to arrive
+ *  that no cascade can see: manifests written before the cascade existed, and a
+ *  project snapshot bringing back stamps of a layout deleted since it was
+ *  taken. Without the sweep those sat on the tiles as pictures nothing could
+ *  name, which on a real wall was sixteen layers nobody could account for.
+ *
+ *  Top-level only, which is where every stamp and live copy lives — stampInto
+ *  and syncLiveLayers push into the tile's own list, never into a group.
+ *
+ *  The wording and the per-tile picture go with the layer, because both are
+ *  keyed by layer id and the layer is what reaches them. Only here, though, and
+ *  deliberately not when a Layout merely switches a caption off: there the same
+ *  id comes back the moment it is switched on again, and with it every word
+ *  that was typed on every tile. A deleted Layout has no way back. */
+export function pruneDeadLayoutRefs(m: Manifest): number {
+  const alive = new Set(m.layouts.map((l) => l.id));
+  let dropped = 0;
+  for (const tile of Object.values(m.tiles)) {
+    const before = tile.layers.length;
+    const gone = tile.layers.filter((l) => l.layoutId && !alive.has(l.layoutId));
+    tile.layers = tile.layers.filter((l) => !l.layoutId || alive.has(l.layoutId));
+    for (const l of gone) {
+      delete tile.text[l.id];
+      delete tile.swap?.[l.id];
+    }
+    dropped += before - tile.layers.length;
+  }
+  return dropped;
+}
+
 /** Drops live layers whose stamp is gone.
  *
  *  A Layout keeps its per-tile captions and pictures beside the stamp it
@@ -1058,7 +1153,7 @@ export function deleteStampCascade(layers: Layer[], stampId: string): number {
  *  where it belongs.
  *
  *  Pure Manifest surgery, no asset loading or canvas involved, which is what
- *  lets the whole effect of "Anwenden" be tested without Tauri: only reading
+ *  lets the whole effect of "Apply" be tested without Tauri: only reading
  *  the picture's natural pixel size (to feed mosaicBakeCrops) needs it. */
 export function bakeMosaicInto(
   m: Manifest,
@@ -1091,10 +1186,16 @@ export function bakeMosaicInto(
  *  The pixels were never at risk — the originals sit in the vault and in the
  *  game folder, and the mosaic keeps its content-addressed asset — so this
  *  gives back the only thing that was actually lost, which is the way out. */
-export function clearBases(m: Manifest): number {
+export function clearBases(m: Manifest, ids?: string[]): number {
+  /* Bounded by the wall it was pressed on. Document-wide it reached across
+   * accounts: the button sits in one project's toolbar, its tooltip says "every
+   * tile", and a user with three walls read that as "every tile of this one" —
+   * while it cleared mosaics off projects that were not even on screen, where
+   * the Ctrl+Z that would have caught it is invisible. */
+  const wanted = ids && new Set(ids);
   let n = 0;
-  for (const tile of Object.values(m.tiles)) {
-    if (!tile.base) continue;
+  for (const [id, tile] of Object.entries(m.tiles)) {
+    if (!tile.base || (wanted && !wanted.has(id))) continue;
     tile.base = null;
     n++;
   }

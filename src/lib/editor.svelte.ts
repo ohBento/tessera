@@ -13,6 +13,7 @@ import {
   duplicateLayers,
   duplicateLayout,
   emptyManifest,
+  emptyTile,
   findLayer,
   findList,
   groupShift,
@@ -37,9 +38,11 @@ import {
   projectTiles,
   pruneToFolder,
   putInFolder,
+  pruneDeadLayoutRefs,
   refreshStamps,
   removeFromProjectToInbox,
   relocateLayer,
+  restoreProjectInto,
   removeLayerFrom,
   resolveLayers,
   shiftLayer,
@@ -68,11 +71,13 @@ import {
   loadAsset,
   classify,
   dropVaultCopy,
+  forgetAllOriginals,
   forgetOriginal,
   hashTiles,
   loadFingerprints,
   loadManifest,
   pruneVault,
+  vaultedIds,
   saveFingerprints,
   restoreTiles,
   saveGeneratedAsset,
@@ -81,6 +86,8 @@ import {
   listSnapshots,
   readSnapshot,
   writeSnapshot,
+  snapshotKey,
+  type SnapshotRef,
   tauriDeps,
 } from "./project";
 import { textWidth, type SceneDeps, type Tagged } from "./scene";
@@ -130,6 +137,11 @@ export const app = $state({
   /** What each tile hashed to on this open, so answering the question does not
    *  mean reading 90 MB a second time. */
   hashes: {} as Record<string, string>,
+  /** Ids the vault holds an original for. Read on open and after anything that
+   *  adds or drops a copy, because "Reset in game" is only true for these —
+   *  offering it for a tile that was never written promises a restore that
+   *  cannot happen. */
+  vaulted: [] as string[],
   /** The tiles a selected wall picture would be baked into — outlined on the
    *  wall so the gaps are visible before Apply rather than after. */
   coverPreview: [] as string[],
@@ -144,7 +156,7 @@ export const app = $state({
   /** Snapshot names on disk, newest read wins. Kept in state because the list
    *  is a directory listing and nothing else would make the sidebar redraw
    *  when one is added. */
-  snapshots: [] as string[],
+  snapshots: [] as SnapshotRef[],
   /** Every layer picked in the Layout's list. `layoutSelected` is the last of
    *  these — the one the canvas puts handles on — while grouping needs the
    *  whole set. */
@@ -312,7 +324,7 @@ export async function newFolderHere(name: string) {
   const p = openProject();
   if (!p) return;
   await mutate(() => {
-    const f = newFolder(name.trim() || `Group ${p.folders.length + 1}`);
+    const f = newFolder(name.trim() || `Folder ${p.folders.length + 1}`);
     // The picked tiles go straight in: making a drawer is something you do
     // *to* a selection, and an empty one would then have to be filled by hand.
     for (const id of app.selectedTiles) f.tiles.push(id);
@@ -374,6 +386,38 @@ export async function releaseTilesToInbox() {
   await mutate(() => {
     for (const id of leaving) removeFromProjectToInbox(app.manifest, id, false);
     clearAll();
+  });
+}
+
+/** How many of the picked tiles carry anything a strip would take. */
+export const strippableCount = () =>
+  app.selectedTiles.filter((id) => app.manifest.tiles[id]?.layers.length).length;
+
+/** Takes every layer off the picked tiles — stamps, live captions and layers
+ *  built by hand alike.
+ *
+ *  The inverse of assigning a layout, and deliberately blunter than one: a wall
+ *  given the wrong design has forty-four tiles to undress, and doing it a layer
+ *  at a time is the trip this exists to save.
+ *
+ *  `base` stays. A baked mosaic is not a layer — it is what the portrait *is*
+ *  after Apply — and "Restore portraits" is the button that owns undoing it.
+ *  Wording and per-tile pictures go, because both are keyed by layer id and
+ *  would otherwise sit there orphaned, ready to reappear under a later stamp
+ *  that happened to reuse the id.
+ *
+ *  One mutation, so one Ctrl+Z dresses the whole wall again. */
+export async function stripSelectedTiles() {
+  const stripping = app.selectedTiles.filter((id) => app.manifest.tiles[id]?.layers.length);
+  if (!stripping.length) return;
+  await mutate(() => {
+    for (const id of stripping)
+      app.manifest.tiles[id] = { ...emptyTile(), base: app.manifest.tiles[id].base };
+    /* Said out loud, and saying what actually went. Undressing a wall used to
+     * happen in complete silence next to actions that report their count, and
+     * the wording and per-tile pictures it also takes are keyed by layer id —
+     * so "layers" undersells it to exactly the person who typed them. */
+    app.error = `Cleared ${stripping.length} tile(s) — layers, wording and per-tile pictures`;
   });
 }
 
@@ -498,15 +542,25 @@ export async function renameProject(projectId: string, name: string) {
   await mutate(() => (p.name = name.trim()), true, `rename:${projectId}`);
 }
 
-/** Deleting a project hands its tiles back to the inbox and keeps every layer
- *  on them: artwork belongs to the tile, not to the wall it was arranged on.
- *  That is the whole point of the split, and it is why this needs no warning
- *  about losing work — there is none to lose. */
-export async function deleteProject(projectId: string) {
+/** Deletes a project. `stripLayers` also undresses every tile it owned — the
+ *  caller asks, because only the user knows whether the artwork was for these
+ *  characters or for the wall that is going. Either way the tiles return to the
+ *  inbox, and one Ctrl+Z brings project and layers back together. */
+export async function deleteProject(projectId: string, stripLayers = false) {
   await mutate(() => {
     const at = app.manifest.projects.findIndex((p) => p.id === projectId);
-    if (at >= 0) app.manifest.projects.splice(at, 1);
-    if (app.openProjectId === projectId) app.openProjectId = "";
+    if (at < 0) return;
+    const owned = projectTiles(app.manifest.projects[at]);
+    app.manifest.projects.splice(at, 1);
+    if (stripLayers)
+      for (const id of owned) {
+        const tile = app.manifest.tiles[id];
+        if (tile) app.manifest.tiles[id] = { ...emptyTile(), base: tile.base };
+      }
+    if (app.openProjectId === projectId) {
+      app.openProjectId = "";
+      closedByDelete = projectId;
+    }
     clearAll();
   });
 }
@@ -550,8 +604,8 @@ const plain = <T>(v: T): T => JSON.parse(JSON.stringify(v));
  *  time. */
 async function mutate(fn: () => void, structural = true, run?: string) {
   /* Cleared here rather than left to time out: the status line has one slot,
-   * and a note from three actions ago ("12 Kacheln geschrieben") sat there
-   * hiding the live selection count and its "aufheben" link until something
+   * and a note from three actions ago ("12 tile(s) written") sat there hiding
+   * the live selection count and its "clear" link until something
    * else happened to overwrite it. Anything a mutation wants to say sets it
    * inside fn, after this. */
   app.error = "";
@@ -582,12 +636,24 @@ const layerExists = (id: string) => !!id && !!listOf(id);
  *  unconditionally looked harmless but was not: assigning tiles needs a chosen
  *  layer to find the overlay through, so one undo left the assign action doing
  *  nothing at all, silently. */
+/** The wall a delete closed, so undoing the delete can open it again.
+ *
+ *  Which wall you are looking at is view state and deliberately outside the
+ *  document — but deleting a project has to close it, and Ctrl+Z then put the
+ *  project back while leaving you standing in Unsorted. It read as an undo that
+ *  had not worked. */
+let closedByDelete = "";
+
 async function travel(step: typeof undo<Manifest>) {
   const there = step(history, plain(app.manifest));
   if (!there) return;
   const chosen = app.selected;
   app.manifest = there;
   app.selected = layerExists(chosen) ? chosen : "";
+  if (closedByDelete && there.projects.some((p) => p.id === closedByDelete)) {
+    app.openProjectId = closedByDelete;
+    closedByDelete = "";
+  }
   app.version++;
   await persist();
 }
@@ -652,13 +718,22 @@ export async function deleteLayer(id: string) {
  *  it — the index into this list *is* the grid coordinate. */
 export const visibleIds = () => wall().ids;
 
-async function run(label: string, fn: () => Promise<void>) {
+/** Runs one named piece of work, and says whether it got through.
+ *
+ *  The answer is there for callers that must not carry on after a failure —
+ *  writing to the game folder once its safety snapshot did not go up, above
+ *  all. Without it the failure was worse than invisible: the next `run` clears
+ *  `app.error` as its first act, so the message was gone before anyone read
+ *  it, and the write went ahead regardless. */
+async function run(label: string, fn: () => Promise<void>): Promise<boolean> {
   app.busy = label;
   app.error = "";
   try {
     await fn();
+    return true;
   } catch (e) {
     app.error = String(e);
+    return false;
   } finally {
     app.busy = "";
   }
@@ -682,12 +757,31 @@ async function persist(): Promise<boolean> {
 export async function openFolder(dir?: string) {
   await run("load", async () => {
     app.dir = dir ?? (await defaultDir());
+    /* Re-opening is the one moment the files behind the ids may all have been
+     * replaced from outside — a restore, a folder copied in by hand, the game
+     * regenerating a portrait. loadOriginal caches on the opposite promise, so
+     * without this the wall comes back drawn from the last session's pixels. */
+    forgetAllOriginals();
     const ids = await listTiles(app.dir);
     // Before anything reads an original: a vault copy for an id the folder no
     // longer has is either dead weight or, if BDO reuses the number, the wrong
     // picture served as that tile's pristine state.
     await pruneVault(app.dir, ids);
-    app.manifest = await loadManifest(app.dir, ids);
+    app.vaulted = await vaultedIds(app.dir);
+    /* A character deleted in the game takes its tile out of the document with
+     * it — layers, wording and per-tile pictures included — and the undo
+     * history is cleared a few lines further down, so there is no way back from
+     * inside the app. loadManifest puts the document aside first and says what
+     * went; the message below is the only thing standing between that and work
+     * disappearing without a word. */
+    const { manifest, lost, snapshot } = await loadManifest(app.dir, ids);
+    app.manifest = manifest;
+    /* Layers naming a layout the library no longer has: manifests from before
+     * the delete cascaded, or a snapshot that brought stamps back after their
+     * layout was deleted. Swept on open, same philosophy as pruneVault — the
+     * library is the truth and the wall adapts. Persisted only when something
+     * actually went, so a clean open writes nothing. */
+    if (pruneDeadLayoutRefs(app.manifest)) await saveManifest(app.dir, plain(app.manifest));
     /* The folder's own list, kept because the inbox is derived from it rather
      * than stored: what the folder has, minus what the projects claim. Storing
      * the inbox instead would mean a second copy of this list drifting away
@@ -720,6 +814,11 @@ export async function openFolder(dir?: string) {
     history.past.length = 0;
     history.future.length = 0;
     app.version++;
+    // Last, so nothing after it clears the line.
+    if (lost.length)
+      app.error =
+        `${lost.length} tile(s) are no longer in the folder — their layers went with them. ` +
+        `Put the portraits back and reopen, then restore "${snapshot}".`;
   });
 }
 
@@ -752,7 +851,7 @@ export async function addGridImage() {
       layer.space = "grid";
       layer.scale = 1;
       project.gridLayers.push(layer);
-      // Selected straight away, like every other insert: "Anwenden" acts on
+      // Selected straight away, like every other insert: "Apply" acts on
       // the chosen layer, and leaving it unchosen meant the button stayed grey
       // until you went hunting for the thing you had just added.
       app.selected = layer.id;
@@ -799,7 +898,7 @@ export async function applyTransform(
 const scaled = (p: Transform) => p.fx !== 1 || p.fy !== 1;
 
 /** The currently selected grid-space picture, if that is what is selected —
- *  what "Anwenden" acts on. */
+ *  what "Apply" acts on. */
 function selectedMosaic(): ImageLayer | undefined {
   const l = app.selected ? findLayer(listOf(app.selected) ?? [], app.selected) : undefined;
   return l?.kind === "image" && l.space === "grid" ? l : undefined;
@@ -839,15 +938,19 @@ export async function coverTheWall() {
 
 /** How many tiles are showing a baked mosaic instead of their own portrait —
  *  the number on the button, so it says what it is about to touch. */
-export const bakedCount = () => Object.values(app.manifest.tiles).filter((t) => !!t.base).length;
+/** How many portraits on *this* wall are hidden under a baked mosaic. Counted
+ *  on the wall in front of you, like the button that acts on it. */
+export const bakedCount = () =>
+  visibleIds().filter((id) => !!app.manifest.tiles[id]?.base).length;
 
 /** Takes every baked background off the wall at once. One mutation, so one
  *  Ctrl+Z puts the whole mosaic back — which is why this asks nothing first. */
 export async function clearMosaic() {
   const n = bakedCount();
   if (!n) return;
+  const ids = visibleIds();
   await mutate(() => {
-    clearBases(app.manifest);
+    clearBases(app.manifest, ids);
     app.error = `${n} portrait(s) restored`;
   });
 }
@@ -931,10 +1034,14 @@ export async function duplicateLayoutDoc(id: string) {
   });
 }
 
+/** Deletes a layout and, through the sweep, every stamp and live caption it
+ *  put on any tile. One mutation, so Ctrl+Z brings the layout back with all of
+ *  its stamps still in place. */
 export async function deleteLayoutDoc(id: string) {
   await mutate(() => {
     const at = app.manifest.layouts.findIndex((l) => l.id === id);
     if (at >= 0) app.manifest.layouts.splice(at, 1);
+    pruneDeadLayoutRefs(app.manifest);
     if (app.openLayoutId === id) closeLayoutDoc();
   });
 }
@@ -946,7 +1053,7 @@ export async function renameLayout(id: string, name: string) {
 }
 
 /** A layer by id in whichever document holds it: the open Layout's own list,
- *  or the wall's overlays. Rename and lock work the same in both, so they take
+ *  or the wall's own layers. Rename and lock work the same in both, so they take
  *  this rather than each document getting its own copy. */
 const anyLayer = (id: string) =>
   findLayer(openLayout()?.layers ?? [], id) ?? findLayer(listOf(id) ?? [], id);
@@ -998,17 +1105,24 @@ export async function toggleLayoutLayerHidden(id: string) {
   await mutate(() => (l.hidden = !l.hidden));
 }
 
-/** Deletes a layer. On a group this dissolves it instead, handing the members
- *  back — see removeLayerFrom. */
-export async function deleteLayoutLayer(id: string) {
+/** Deletes layers. On a group this dissolves it instead, handing the members
+ *  back — see removeLayerFrom.
+ *
+ *  Takes a list because the menu above it does: "Group 2 layers" and
+ *  "Duplicate 2 layers" act on the selection, and Delete sitting underneath
+ *  them removed exactly one of the two without saying so. One mutation for the
+ *  lot, so one Ctrl+Z brings them all back. */
+export async function deleteLayoutLayers(ids: string[]) {
   const layout = openLayout();
-  if (!layout) return;
+  if (!layout || !ids.length) return;
   await mutate(() => {
-    removeLayerFrom(findList(layout.layers, id) ?? layout.layers, id);
-    app.layoutSelection = app.layoutSelection.filter((x) => x !== id);
-    if (app.layoutSelected === id) app.layoutSelected = "";
+    for (const id of ids) removeLayerFrom(findList(layout.layers, id) ?? layout.layers, id);
+    app.layoutSelection = app.layoutSelection.filter((x) => !ids.includes(x));
+    if (ids.includes(app.layoutSelected)) app.layoutSelected = "";
   });
 }
+
+export const deleteLayoutLayer = (id: string) => deleteLayoutLayers([id]);
 
 export async function addLayoutImage() {
   const layout = openLayout();
@@ -1429,7 +1543,7 @@ export function canSaveLayout(layoutId: string): boolean {
 }
 
 /** Re-renders once and refreshes every existing stamp of this Layout across
- *  every overlay, so a design used in several places updates everywhere at
+ *  every tile that carries it, so a design used in several places updates everywhere at
  *  once instead of being re-stamped by hand at each. */
 export async function saveLayout(layoutId: string) {
   const layout = app.manifest.layouts.find((l) => l.id === layoutId);
@@ -1463,6 +1577,7 @@ export async function keepCharacter(id: string) {
      * loadOriginal prefers it over the game's own file — keeping it would mean
      * the editor went on showing the old haircut for good. */
     await dropVaultCopy(app.dir, id);
+    app.vaulted = app.vaulted.filter((x) => x !== id);
     forgetOriginal(id);
     app.changedTiles = app.changedTiles.filter((x) => x !== id);
     app.version++;
@@ -1479,9 +1594,56 @@ export async function replaceCharacter(id: string) {
     prints[id] = { original: app.hashes[id] ?? "" };
     await saveFingerprints(app.dir, prints);
     await dropVaultCopy(app.dir, id);
+    app.vaulted = app.vaulted.filter((x) => x !== id);
     forgetOriginal(id);
     await mutate(() => removeFromProjectToInbox(app.manifest, id, true));
     app.changedTiles = app.changedTiles.filter((x) => x !== id);
+  });
+}
+
+/** Answers "same character" for the whole list at once — the case where the
+ *  game regenerated the folder wholesale and every face is still who it was.
+ *
+ *  Deliberately NOT keepCharacter in a loop: the single click drops the tile's
+ *  vault copy, because after a real restyle the vault holds the old face. A
+ *  mass regeneration is the opposite situation — the vault is the curated set
+ *  of originals, and it is the one thing this answer must not eat. So the new
+ *  files are recorded as seen and the vault stays untouched; a face that truly
+ *  did change still has its per-tile button, with the stricter behaviour. */
+export async function keepAllCharacters() {
+  const ids = [...app.changedTiles];
+  if (!ids.length) return;
+  await run("recheck", async () => {
+    const prints = await loadFingerprints(app.dir);
+    for (const id of ids) prints[id] = { original: app.hashes[id] ?? "" };
+    await saveFingerprints(app.dir, prints);
+    app.changedTiles = [];
+    /* No cache to drop and no rebuild: the vault copies stay, and they are
+     * exactly what loadOriginal is already serving. */
+  });
+}
+
+/** Answers "new character" for the whole list at once: every changed tile is
+ *  stripped, sent back to the inbox, and its vault copy dropped — one mutation,
+ *  so one Ctrl+Z puts all the layers back (the vault copies stay gone, as with
+ *  the per-tile button). */
+export async function replaceAllCharacters() {
+  const ids = [...app.changedTiles];
+  if (!ids.length) return;
+  await run("recheck", async () => {
+    const prints = await loadFingerprints(app.dir);
+    for (const id of ids) prints[id] = { original: app.hashes[id] ?? "" };
+    await saveFingerprints(app.dir, prints);
+    const dropped = new Set(ids);
+    app.vaulted = app.vaulted.filter((x) => !dropped.has(x));
+    for (const id of ids) {
+      await dropVaultCopy(app.dir, id);
+      forgetOriginal(id);
+    }
+    await mutate(() => {
+      for (const id of ids) removeFromProjectToInbox(app.manifest, id, true);
+    });
+    app.changedTiles = [];
   });
 }
 
@@ -1489,12 +1651,18 @@ export async function replaceCharacter(id: string) {
  *  yet, and writing it would push unfinished portraits into the game. */
 export const canSaveToGame = () => !!openProject()?.order.length;
 
-/** How many of this project's tiles could be put back — everything it owns,
- *  placed or shelved, since a tile written to the game keeps its vault copy
- *  whether or not it still has a slot. */
+/** How many of this project's tiles could be put back: the ones the vault
+ *  actually holds an original for, placed or shelved alike — a tile written to
+ *  the game keeps its vault copy whether or not it still has a slot.
+ *
+ *  Counting everything the project owns was a promise the folder could not
+ *  keep: the dialog offered twelve portraits and the status line answered
+ *  "none of these were written" once it was too late to say no. */
 export const restorableCount = () => {
   const p = openProject();
-  return p ? projectTiles(p).length : 0;
+  if (!p) return 0;
+  const held = new Set(app.vaulted);
+  return projectTiles(p).filter((id) => held.has(id)).length;
 };
 
 /** Writes the game's own portraits back over this project's tiles.
@@ -1524,69 +1692,180 @@ export async function restoreProject() {
  * never deleted, so a restored snapshot finds everything it names still on
  * disk. See project.ts for why the folder itself is not copied. --- */
 
-export const snapshots = () => app.snapshots;
+/** The snapshots of the wall in front of you.
+ *
+ *  A snapshot belongs to the project it was taken in, and only that project
+ *  lists it: rolling one account's wall back is not an offer the next account
+ *  should be shown. With no project open the list is the document-wide ones —
+ *  which is also where every snapshot written before this split lands, since a
+ *  file with no project in its name is exactly that. */
+export const snapshots = () =>
+  app.snapshots.filter((s) =>
+    app.openProjectId
+      ? s.projectId === app.openProjectId
+      : /* On the overview: the document-wide ones, and any left behind by a
+           project that has since been deleted. Those name a wall nothing lists
+           any more, and without a home here they would be unreachable — which
+           matters most in the one case they are for, since restoring one builds
+           the deleted project back. */
+        !s.projectId || !app.manifest.projects.some((p) => p.id === s.projectId),
+  );
 
 async function refreshSnapshots() {
   app.snapshots = app.dir ? await listSnapshots(app.dir) : [];
 }
 
-/** Puts the document aside under a name. */
-export async function takeSnapshot(name: string) {
-  if (!app.dir) return;
-  await run("snapshot", async () => {
-    await writeSnapshot(app.dir, name, {
-      manifest: plain(app.manifest),
-      prints: await loadFingerprints(app.dir),
-    });
+/** Whether a name would land on a snapshot this project already has.
+ *
+ *  Compared by file key rather than by the text, because that is what decides
+ *  whether one overwrites the other: writeSnapshot has no idea a file is
+ *  already there, and there is no undo behind a snapshot. */
+const snapshotTaken = (name: string) =>
+  snapshots().some((s) => snapshotKey(s.name) === snapshotKey(name));
+
+/** `base`, or the first "base (2)", "base (3)" that is free.
+ *
+ *  Every snapshot written by the app rather than typed by hand goes through
+ *  here. The one before a write to the game is named to the minute, so two
+ *  writes in the same minute used to be one file — the second quietly replacing
+ *  the restore point the first had just made, which is the one moment it exists
+ *  for. */
+function freeSnapshotName(base: string) {
+  if (!snapshotTaken(base)) return base;
+  for (let n = 2; ; n++) if (!snapshotTaken(`${base} (${n})`)) return `${base} (${n})`;
+}
+
+/** Puts the document aside under a name, tagged with the wall it was taken on,
+ *  and says whether it landed.
+ *
+ *  The whole manifest goes in either way — twenty kilobytes, and a project's
+ *  slice of it cannot be read back without the rest to prune against. What the
+ *  tag decides is who sees it and how much of it comes back.
+ *
+ *  The answer matters to one caller: the snapshot before a write to the game is
+ *  a safety net, and writing over the game's files after the net failed to go
+ *  up is the one order that must not happen. */
+export async function takeSnapshot(name: string): Promise<boolean> {
+  if (!app.dir) return false;
+  return await run("snapshot", async () => {
+    await writeSnapshot(
+      app.dir,
+      { name: freeSnapshotName(name), projectId: app.openProjectId },
+      { manifest: plain(app.manifest), prints: await loadFingerprints(app.dir) },
+    );
     await refreshSnapshots();
   });
 }
 
 /** A default name that does not collide, so the row can be renamed rather than
- *  demanding a dialog first. */
+ *  demanding a dialog first. Counted per project, because that is the list it
+ *  will appear in — two walls may both have a "Snapshot 1", and their files do
+ *  not collide because the project id is part of the filename. */
 export const nextSnapshotName = () => {
-  const taken = new Set(app.snapshots);
-  for (let n = 1; ; n++) if (!taken.has(`Snapshot ${n}`)) return `Snapshot ${n}`;
+  for (let n = 1; ; n++) if (!snapshotTaken(`Snapshot ${n}`)) return `Snapshot ${n}`;
 };
 
-export async function renameSnapshot(from: string, to: string) {
+export async function renameSnapshot(ref: SnapshotRef, to: string) {
   const name = to.trim();
-  if (!app.dir || !name || name === from || app.snapshots.includes(name)) return;
+  if (!app.dir || !name || name === ref.name) return;
+  if (snapshotTaken(name)) {
+    // Said out loud rather than swallowed: the field springs back to the old
+    // name, which on its own looks like a dropped keystroke.
+    app.error = `There is already a snapshot called "${name}"`;
+    return;
+  }
   await run("snapshot", async () => {
-    await writeSnapshot(app.dir, name, await readSnapshot(app.dir, from));
-    await deleteSnapshot(app.dir, from);
+    const moved = { name, projectId: ref.projectId };
+    await writeSnapshot(app.dir, moved, await readSnapshot(app.dir, ref));
+    await deleteSnapshot(app.dir, ref);
     await refreshSnapshots();
   });
 }
 
-export async function removeSnapshot(name: string) {
+export async function removeSnapshot(ref: SnapshotRef) {
   if (!app.dir) return;
   await run("snapshot", async () => {
-    await deleteSnapshot(app.dir, name);
+    await deleteSnapshot(app.dir, ref);
     await refreshSnapshots();
   });
 }
 
-/** Puts a snapshot back as the document.
+/** Puts a snapshot back.
  *
- *  The game folder is not touched: what is on disk there is a separate
- *  decision, and "Write to game" is where it gets made. Pruned to the ids the
- *  folder actually has, because a snapshot from before a character was deleted
- *  would otherwise put rows back for portraits that no longer exist.
+ *  How much comes back is what the snapshot was taken on. One taken with a wall
+ *  open puts that wall back and leaves every other project alone; one taken
+ *  with none open is the whole document, which is what all of them used to be.
+ *
+ *  The game folder is not touched either way: what is on disk there is a
+ *  separate decision, and "Write to game" is where it gets made. Pruned to the
+ *  ids the folder actually has, because a snapshot from before a character was
+ *  deleted would otherwise put rows back for portraits that no longer exist.
  *
  *  One mutation, so Ctrl+Z undoes the whole restore. */
-export async function restoreSnapshot(name: string) {
+export async function restoreSnapshot(ref: SnapshotRef) {
   if (!app.dir) return;
   await run("snapshot", async () => {
-    const snap = await readSnapshot(app.dir, name);
-    const restored = pruneToFolder(snap.manifest, app.folderIds);
-    await saveFingerprints(app.dir, snap.prints);
+    const snap = await readSnapshot(app.dir, ref);
+    const stored = pruneToFolder(snap.manifest, app.folderIds);
+
+    if (!ref.projectId) {
+      /* ponytail: the fingerprints are written outside the mutation, so Ctrl+Z
+       * takes the document back and leaves them describing the restored state.
+       * The cost is one wrong answer to "did the game change this file" on the
+       * next open, which the user is asked about and can correct; the fix is
+       * teaching undo about state that lives outside the manifest, which is a
+       * bigger machine than the bug. Left deliberately, written down here. */
+      await saveFingerprints(app.dir, snap.prints);
+      await mutate(() => {
+        app.manifest = stored;
+        /* Inside the mutation, so the sweep is part of the same undo step. A
+         * snapshot predates any layout deleted since it was taken, and putting
+         * it back therefore puts stamps back too — which stood on the tiles as
+         * pictures named by a raw id until the next start. The rule is that a
+         * layout and its layers do not survive each other; it has to hold here
+         * as well, not only on open. */
+        pruneDeadLayoutRefs(app.manifest);
+        clearAll();
+        app.openProjectId = "";
+      });
+      app.error = `Restored "${ref.name}"`;
+      return;
+    }
+
+    /* Only this wall's answers about its own portraits. The file holds every
+     * project's, and writing all of them back would undo change-detection
+     * decisions made on walls this restore is supposed to leave alone. */
+    const owned = new Set(
+      projectTiles(stored.projects.find((p) => p.id === ref.projectId) ?? newProject("")),
+    );
+    const prints = await loadFingerprints(app.dir);
+    for (const id of owned) if (snap.prints[id]) prints[id] = snap.prints[id];
+    await saveFingerprints(app.dir, prints);
+
+    /* Tiles the wall has picked up since the snapshot was taken. The snapshot's
+     * project record replaces the current one wholesale, so they are not in it
+     * — they land in Unsorted, keeping their layers. Counted here because the
+     * message used to name only the tiles taken *from* other projects, and a
+     * portrait quietly leaving this wall is the half a user notices. */
+    const heldNow = projectTiles(
+      app.manifest.projects.find((p) => p.id === ref.projectId) ?? newProject(""),
+    );
+    const released = heldNow.filter((id) => !owned.has(id)).length;
+
+    let taken = 0;
     await mutate(() => {
-      app.manifest = restored;
+      taken = restoreProjectInto(app.manifest, stored, ref.projectId);
+      // Same reason as the document-wide route above.
+      pruneDeadLayoutRefs(app.manifest);
       clearAll();
-      app.openProjectId = "";
     });
-    app.error = `Restored "${name}"`;
+    const also = [
+      taken ? `${taken} tile(s) taken back from another project` : "",
+      released ? `${released} newer tile(s) sent to Unsorted` : "",
+    ].filter(Boolean);
+    app.error = also.length
+      ? `Restored "${ref.name}" — ${also.join(", ")}`
+      : `Restored "${ref.name}"`;
   });
 }
 
@@ -1597,7 +1876,11 @@ export async function saveToGame() {
    * files. Nobody thinks to take one first, and this is the moment they would
    * wish they had. */
   const stamp = new Date().toISOString().slice(0, 16).replace("T", " ");
-  await takeSnapshot(`Before write ${stamp}`);
+  /* And no write if it failed. The snapshot is the only way back from this
+   * action, so going ahead without one turns a full disk into lost work. The
+   * message takeSnapshot left in app.error stays, because the write that would
+   * have cleared it never starts. */
+  if (!(await takeSnapshot(`Before write ${stamp}`))) return;
   await run("save", async () => {
     if (!app.deps) throw new Error("no folder open");
     /* Snapshotted together: the id list positions the export window and keys
@@ -1608,6 +1891,9 @@ export async function saveToGame() {
       plain(app.manifest),
       app.deps,
     );
-    app.error = `${n} tiles written`;
+    // The write vaults every original it touched on the way past, so what
+    // "Reset in game" can put back has just grown.
+    app.vaulted = await vaultedIds(app.dir);
+    app.error = `${n} tile(s) written`;
   });
 }

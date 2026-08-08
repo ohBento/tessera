@@ -20,7 +20,7 @@
     visibleIds,
   } from "./lib/editor.svelte";
   import { TILE_H, TILE_W } from "./lib/bmp";
-  import { cellsIn, COLS, isTyping, snapBox, type Guide } from "./lib/geometry";
+  import { cellIndexAt, cellsIn, isTyping, snapBox, type Guide } from "./lib/geometry";
   import { buildGrid, cellAt, gridSize, readBack, snapScale, type Tagged } from "./lib/scene";
 
   let host: HTMLDivElement;
@@ -56,14 +56,14 @@
   export function tileAtEvent(e: MouseEvent): string {
     if (!canvas) return "";
     const p = canvas.getScenePoint(e);
-    const col = Math.floor(p.x / TILE_W);
-    const row = Math.floor(p.y / TILE_H);
     const ids = visibleIds();
-    const index = row * COLS + col;
-    const inside = col >= 0 && col < COLS && row >= 0 && index >= 0 && index < ids.length;
-    return inside ? ids[index] : "";
+    const index = cellIndexAt(p.x, p.y, ids.length);
+    return index < 0 ? "" : ids[index];
   }
 
+  /* Lower than the Layout editor's 0.05 on purpose: a wall is seven tiles wide
+     and as many rows deep, so "the whole thing on screen" is a far smaller
+     number here than it is for one 624×804 sheet. */
   const MIN_ZOOM = 0.02;
   const MAX_ZOOM = 8;
 
@@ -211,7 +211,7 @@
 
   onMount(() => {
     canvas = new fabric.Canvas(el, {
-      backgroundColor: "#161c21",
+      backgroundColor: "#17171a",
       preserveObjectStacking: true,
       // A model with a single `scale` per image cannot store a stretch, so
       // corner handles must never produce one.
@@ -410,9 +410,9 @@
           ctx.strokeStyle = "rgba(255, 196, 92, 1)";
           ctx.lineWidth = 3;
         } else if (picked.has(id)) {
-          ctx.fillStyle = "rgba(120, 220, 255, 0.22)";
+          ctx.fillStyle = "rgba(166, 133, 255, 0.22)";
           ctx.fillRect(x, y, w, h);
-          ctx.strokeStyle = "rgba(140, 225, 255, 0.95)";
+          ctx.strokeStyle = "rgba(203, 184, 255, 0.95)";
           ctx.lineWidth = 2;
         } else {
           ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
@@ -456,8 +456,8 @@
        * selects objects and this one selects tiles — different things that
        * merely look alike. */
       if (band) {
-        ctx.fillStyle = "rgba(120, 220, 255, 0.10)";
-        ctx.strokeStyle = "rgba(140, 225, 255, 0.9)";
+        ctx.fillStyle = "rgba(166, 133, 255, 0.10)";
+        ctx.strokeStyle = "rgba(203, 184, 255, 0.9)";
         ctx.lineWidth = 1;
         const bx = Math.round(band.x * vt[0] + vt[4]) + 0.5;
         const by = Math.round(band.y * vt[3] + vt[5]) + 0.5;
@@ -579,15 +579,24 @@
 <div class="host" bind:this={host}>
   <canvas bind:this={el}></canvas>
   <div class="hud">
-    {Math.round(zoom * 100)}% &middot; {zoomLocked ? "Rad = gesperrt" : "Rad = Zoom"} &middot; Leertaste
-    oder Mittelklick = Schieben
+    <!-- English like the rest of the app, and like the Layout editor's own HUD
+         three files over — the two are the same strip in two places, and one of
+         them speaking German read as a half-finished build. -->
+    {Math.round(zoom * 100)}% &middot; {TILE_W}&times;{TILE_H} &middot; {zoomLocked
+      ? "wheel locked"
+      : "wheel = zoom"} &middot; space or middle-drag = pan
+    <!-- Written out rather than drawn as 🔒/🔓: an emoji is painted by the
+         system font in its own colours, which fights the theme and changes
+         shape between machines — the rule App.svelte states beside its own
+         hand-drawn icons. The word says the state; the tooltip says what the
+         click does. -->
     <button
       onclick={() => (zoomLocked = !zoomLocked)}
-      title={zoomLocked ? "Mausrad zoomt wieder" : "Mausrad zoomt nicht mehr"}
+      title={zoomLocked ? "Let the wheel zoom again" : "Stop the wheel from zooming"}
     >
-      {zoomLocked ? "🔒" : "🔓"} Zoom
+      Zoom {zoomLocked ? "locked" : "free"}
     </button>
-    <button onclick={fit}>Einpassen</button>
+    <button onclick={fit}>Fit</button>
   </div>
 </div>
 
@@ -608,16 +617,15 @@
     padding: 4px 8px;
     border-radius: 4px;
     background: rgb(0 0 0 / 0.6);
-    color: #cfd6dc;
+    color: #d9d4e8;
     font: 12px/1.4 ui-sans-serif, system-ui, sans-serif;
-    pointer-events: auto;
   }
   .hud button {
     font: inherit;
     padding: 2px 8px;
     border: 1px solid #3a444c;
     border-radius: 3px;
-    background: #1b2228;
+    background: #1d1832;
     color: inherit;
     cursor: pointer;
   }

@@ -27,7 +27,7 @@
    *  attribute. */
   const css = (name: string) => `"${name.replace(/["\\]/g, "\\$&")}"`;
 
-  /** Some fields only mean something in a Layout — "pro Kachel" is about what
+  /** Some fields only mean something in a Layout — "editable in grid" is about what
    *  happens at stamp time, and a layer already on a tile is past that. */
   let { layer, inLayout = false }: { layer: Layer; inLayout?: boolean } = $props();
 
@@ -47,14 +47,20 @@
 
   /** Degrees folded into one turn. Typing -10 means 350, and a layer left at
    *  370 by some earlier gesture shows as 10 rather than pinning the slider at
-   *  its end — where the next nudge would have spun it most of the way round. */
-  const turn = (deg: number) => ((deg % 360) + 360) % 360;
+   *  its end — where the next nudge would have spun it most of the way round.
+   *  Exactly 360 stays 360: it is where the slider's own drag ends, and folding
+   *  it to 0 snapped the knob back to the far left mid-gesture. */
+  const turn = (deg: number) => (deg === 360 ? 360 : ((deg % 360) + 360) % 360);
 </script>
 
 <h2 class="spaced">Properties</h2>
 
 {#if layer.kind === "text"}
-  <label class="field">
+  <!-- The placeholder is a real feature with nothing in the UI to announce it,
+       so the field says so itself. In the Layout there is no tile to expand it
+       against and it stays literal — which looked like a placeholder that does
+       not work. -->
+  <label class="field" title="{'{{id}}'} becomes each portrait's id when the layout is stamped">
     <span>Text</span>
     <textarea rows="2" value={layer.text} oninput={(e) => set("text", e.currentTarget.value)}
     ></textarea>
@@ -83,10 +89,15 @@
       {/each}
     </select>
   </label>
-  <label class="field">
+  <label
+    class="field"
+    title="Same setting as the list above — type a font this machine does not have"
+  >
     <span>Custom</span>
     <!-- The way to a font this machine does not have. A Layout is portable and
-         the list is not, so the name has to stay typable. -->
+         the list is not, so the name has to stay typable. Both controls write
+         the same field, which the tooltip now says: side by side and
+         pre-filled with the same value, the pair read as a contest. -->
     <input value={layer.font} onchange={(e) => set("font", e.currentTarget.value)} />
   </label>
   <label class="field">
@@ -127,12 +138,22 @@
   <!-- The glyphs every text editor uses: a bold B, an italic I, and alignment
        as little line stacks whose ragged side says which way the text falls. -->
   <div class="row">
-    <button class="b" class:on={layer.bold} title="Bold" onclick={() => set("bold", !layer.bold)}>
+    <!-- aria-pressed, because "on" is drawn the same way focus is: after
+         tabbing to Italic it looked switched on, and nothing but the canvas
+         could tell you otherwise. -->
+    <button
+      class="b"
+      class:on={layer.bold}
+      aria-pressed={!!layer.bold}
+      title="Bold"
+      onclick={() => set("bold", !layer.bold)}
+    >
       B
     </button>
     <button
       class="i"
       class:on={layer.italic}
+      aria-pressed={!!layer.italic}
       title="Italic"
       onclick={() => set("italic", !layer.italic)}
     >
@@ -142,6 +163,7 @@
       {@const w = a === "center" ? [14, 8, 12, 6] : [14, 9, 13, 7]}
       <button
         class:on={(layer.align ?? "center") === a}
+        aria-pressed={(layer.align ?? "center") === a}
         title={a === "left" ? "Align left" : a === "right" ? "Align right" : "Center"}
         onclick={() => set("align", a)}
       >
@@ -162,6 +184,9 @@
   </div>
   {@render paint("Color", "color", layer.color)}
   <label class="field">
+    <!-- "Outline" on a caption, "Border" on a shape and a picture: a letter
+         gets an outline, a box gets a border, and calling both the same thing
+         would make the wider scale a shape uses look like a bug. -->
     <span>Outline</span>
     <input
       type="range"
@@ -178,23 +203,7 @@
       oninput={(e) => set("strokeColor", e.currentTarget.value)}
     />
   </label>
-  <label class="field">
-    <span>Shadow</span>
-    <input
-      type="range"
-      min="0"
-      max="0.1"
-      step="0.002"
-      value={layer.shadow}
-      oninput={(e) => set("shadow", num(e))}
-    />
-    {@render amount("shadow", layer.shadow * TILE_W, (n) => n / TILE_W, 0)}
-    <input
-      type="color"
-      value={layer.shadowColor}
-      oninput={(e) => set("shadowColor", e.currentTarget.value)}
-    />
-  </label>
+  {@render shadowField()}
 {:else if layer.kind === "shape"}
   <!-- Width and height are the one size the canvas handles cannot give you
        exactly, and a shape is the only kind that keeps them apart. -->
@@ -257,7 +266,7 @@
       />
       <!-- Per cent of the shape's short side, which is what the number means —
            it is not a length, and half is the most a rounded rect can express. -->
-      {@render amount("cornerRadius", layer.cornerRadius * 100, (n) => n / 100, 0, 50)}
+      {@render amount("cornerRadius", layer.cornerRadius * 100, (n) => n / 100, 0, 50, "%")}
     </label>
     <!-- Which corners the radius reaches. A tab, a speech bubble and a
          half-round bar are all the same rect with two of these off, so one
@@ -287,7 +296,11 @@
   {/if}
   {#if layer.shape === "polygon"}
     <label class="field">
-      <span>Corners</span>
+      <!-- "Sides", not "Corners": next to a rounded rectangle's Corners slider
+           and a picture's, the same word for a count and for a radius made the
+           polygon read as roundable. The model has called it `sides` all
+           along. -->
+      <span>Sides</span>
       <input
         type="range"
         min="3"
@@ -297,10 +310,13 @@
         oninput={(e) => set("sides", num(e))}
       />
       <!-- Three is a triangle and the floor; the ceiling is where more corners
-           stop being visible and the shape is just a slow circle. -->
-      {@render amount("sides", layer.sides, (n) => n, 3, 64)}
+           stop being visible and the shape is just a slow circle. One ceiling,
+           not two: the box used to accept 64, which the slider then threw back
+           to 12 on the next touch. -->
+      {@render amount("sides", layer.sides, (n) => n, 3, 12, "")}
     </label>
   {/if}
+  {@render shadowField()}
 {:else if layer.kind === "image"}
   {#if inLayout}
     <label
@@ -347,8 +363,94 @@
       Reset crop
     </button>
   </div>
+  <!-- Colour grading, images only: text and shapes pick their colour directly,
+       and a second dial that turns the same knob is not a feature. Stored in
+       the -1..1 the renderer's filters take; shown as per cent, and the hue as
+       the degrees it turns. -->
+  {#each [
+    { key: "brightness", label: "Brightness" },
+    { key: "contrast", label: "Contrast" },
+    { key: "saturation", label: "Saturation" },
+  ] as const as f}
+    <label class="field">
+      <span>{f.label}</span>
+      <input
+        type="range"
+        min="-1"
+        max="1"
+        step="0.01"
+        value={layer[f.key] ?? 0}
+        oninput={(e) => set(f.key, num(e))}
+      />
+      {@render amount(f.key, (layer[f.key] ?? 0) * 100, (n) => n / 100, -100, 100, "%")}
+    </label>
+  {/each}
+  <label class="field">
+    <span>Hue</span>
+    <input
+      type="range"
+      min="-1"
+      max="1"
+      step="0.01"
+      value={layer.hue ?? 0}
+      oninput={(e) => set("hue", num(e))}
+    />
+    {@render amount("hue", (layer.hue ?? 0) * 180, (n) => n / 180, -180, 180, "°")}
+  </label>
+  <label class="field">
+    <span>Blur</span>
+    <input
+      type="range"
+      min="0"
+      max="1"
+      step="0.01"
+      value={layer.blur ?? 0}
+      oninput={(e) => set("blur", num(e))}
+    />
+    {@render amount("blur", (layer.blur ?? 0) * 100, (n) => n / 100, 0, 100, "%")}
+  </label>
+  <!-- Same two controls a shape's border has, and the same units — a frame is
+       a frame whether it goes round a rectangle or round a portrait. Drawn
+       inside the edge, so it never changes the space the layer occupies. -->
+  <label class="field">
+    <span>Border</span>
+    <input
+      type="range"
+      min="0"
+      max="0.05"
+      step="0.002"
+      value={layer.borderWidth ?? 0}
+      oninput={(e) => set("borderWidth", num(e))}
+    />
+    {@render amount("borderWidth", (layer.borderWidth ?? 0) * TILE_W, (n) => n / TILE_W, 0)}
+    <input
+      type="color"
+      value={layer.borderColor ?? "#000000"}
+      oninput={(e) => set("borderColor", e.currentTarget.value)}
+    />
+  </label>
+  <label class="field">
+    <span>Corners</span>
+    <!-- Per cent of the picture's short side, and half is the most a rounded
+         rectangle can express — past it there is no rectangle left. -->
+    <input
+      type="range"
+      min="0"
+      max="0.5"
+      step="0.02"
+      value={layer.cornerRadius ?? 0}
+      oninput={(e) => set("cornerRadius", num(e))}
+    />
+    {@render amount("cornerRadius", (layer.cornerRadius ?? 0) * 100, (n) => n / 100, 0, 50, "%")}
+  </label>
+  {@render shadowField()}
 {:else}
-  <p class="empty">A group has no properties of its own.</p>
+  <!-- Opacity is real on a group — it is multiplied into the children on the
+       way down. Rotation is not: layoutObjects passes a group's shift, lock and
+       fade to its members and nothing else, so the slider used to write an
+       angle nobody drew. Saying "no properties of its own" three lines above
+       two working sliders was the other half of the same lie. -->
+  <p class="empty">A group carries its children — only the fade below is its own.</p>
 {/if}
 
 {#if inLayout && layer.kind !== "group"}
@@ -392,7 +494,10 @@
 {/if}
 
 <!-- Rotation is on the canvas handle too, but a handle cannot be told "exactly
-     ninety" — and the number it left behind was nowhere to be read. -->
+     ninety" — and the number it left behind was nowhere to be read.
+     Not for groups: the renderer flattens a group into a shift and never turns
+     it, so the control would promise something no pixel follows. -->
+{#if layer.kind !== "group"}
 <label class="field">
   <span>Rotation</span>
   <input
@@ -418,7 +523,9 @@
       set("rotation", deg);
     }}
   />
+  <span class="unit">°</span>
 </label>
+{/if}
 
 <label class="field">
   <span>Opacity</span>
@@ -430,7 +537,7 @@
     value={layer.opacity}
     oninput={(e) => set("opacity", num(e))}
   />
-  {@render amount("opacity", layer.opacity * 100, (n) => n / 100, 0, 100)}
+  {@render amount("opacity", layer.opacity * 100, (n) => n / 100, 0, 100, "%")}
 </label>
 
 <!-- The typed twin of a slider.
@@ -457,6 +564,10 @@
   store: (n: number) => unknown,
   min: number,
   max?: number,
+  /* What the box counts in. Seven identical boxes on one shape held pixels,
+     per cent and degrees with nothing to tell them apart — the comment above
+     promised the distinction, the markup never showed it. */
+  unit = "px",
 )}
   <input
     class="num"
@@ -475,6 +586,31 @@
       set(key, store(held));
     }}
   />
+  <span class="unit">{unit}</span>
+{/snippet}
+
+<!-- The halo every kind can cast, offset zero — a glow when the colour is
+     bright, a drop shadow's soft edge when it is dark. One snippet because it
+     is the same three controls on text, shape and picture, and the fields live
+     on the common layer type. -->
+{#snippet shadowField()}
+  <label class="field">
+    <span>Shadow</span>
+    <input
+      type="range"
+      min="0"
+      max="0.1"
+      step="0.002"
+      value={layer.shadow ?? 0}
+      oninput={(e) => set("shadow", num(e))}
+    />
+    {@render amount("shadow", (layer.shadow ?? 0) * TILE_W, (n) => n / TILE_W, 0)}
+    <input
+      type="color"
+      value={layer.shadowColor ?? "#000000"}
+      oninput={(e) => set("shadowColor", e.currentTarget.value)}
+    />
+  </label>
 {/snippet}
 
 <!-- A colour, or the fade between two.
@@ -514,13 +650,15 @@
     ></button>
   </label>
   {#if isGradient(p)}
-    <label class="check" title="Out from the centre instead of across in one direction">
+    <!-- Shaped like the fields around it — name in the label column, control
+         where the sliders start — so the checkbox lines up with them. -->
+    <label class="field check" title="Out from the centre instead of across in one direction">
+      <span>Radial</span>
       <input
         type="checkbox"
         checked={p.radial}
         onchange={(e) => set(key, { ...p, radial: e.currentTarget.checked })}
       />
-      Radial
     </label>
     {#if p.radial}
       <label class="field">
@@ -536,7 +674,7 @@
           value={p.radius ?? 1}
           oninput={(e) => set(key, { ...p, radius: num(e) })}
         />
-        {@render amount(key, (p.radius ?? 1) * 100, (n) => ({ ...p, radius: n / 100 }), 20, 300)}
+        {@render amount(key, (p.radius ?? 1) * 100, (n) => ({ ...p, radius: n / 100 }), 20, 300, "%")}
       </label>
     {:else}
       <label class="field">
@@ -562,8 +700,21 @@
             set(key, { ...p, angle: deg });
           }}
         />
+        <span class="unit">°</span>
       </label>
     {/if}
+    <label class="field" title="Slide toward a colour to give the other one more room">
+      <span>Balance</span>
+      <input
+        type="range"
+        min="0"
+        max="1"
+        step="0.01"
+        value={p.mid ?? 0.5}
+        oninput={(e) => set(key, { ...p, mid: num(e) })}
+      />
+      {@render amount(key, (p.mid ?? 0.5) * 100, (n) => ({ ...p, mid: n / 100 }), 0, 100, "%")}
+    </label>
   {/if}
 {/snippet}
 
@@ -605,7 +756,7 @@
     font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: #8b979f;
+    color: #8f88a8;
   }
   .field {
     display: flex;
@@ -616,13 +767,16 @@
   .field > span:first-child {
     flex: none;
     width: 62px;
-    color: #8b979f;
+    color: #8f88a8;
     font-size: 11px;
   }
   .row {
     display: flex;
     gap: 3px;
     margin-bottom: 4px;
+    /* Same column as the checkboxes above: every control in this panel starts
+       where the sliders start, and a button row is no exception. */
+    margin-left: 68px;
   }
   /* Lined up under the sliders: the empty label slot supplies the indent, so
      the block starts exactly where every control above it starts. */
@@ -637,7 +791,7 @@
     justify-items: center;
   }
   .cap {
-    color: #8b979f;
+    color: #8f88a8;
     font-size: 10px;
     letter-spacing: 0.04em;
   }
@@ -660,7 +814,7 @@
     padding: 4px;
     border: 1px solid #3a444c;
     border-radius: 3px;
-    background: #0d1114;
+    background: #0e0b16;
     color: inherit;
   }
   /* The margin is the browser's own, and only range inputs carry it: it left
@@ -669,12 +823,22 @@
   input[type="range"] {
     padding: 0;
     margin: 0;
+    accent-color: #a685ff;
   }
   /* Every slider's typed twin. Named for what it holds rather than for one
      unit — pixels, per cent, degrees and plain counts all sit in it. */
   .num {
     flex: none;
     width: 48px;
+  }
+  /* Sits against its box rather than in it: a suffix inside the field would be
+     text the user has to delete before typing. Fixed width so the boxes of a
+     row still line up when one counts degrees and the next per cent. */
+  .unit {
+    flex: none;
+    width: 10px;
+    color: #8b84a3;
+    font-size: 11px;
   }
   /* A checkbox is a fixed little square, not a field that grows — the shared
      `input` rule above would stretch it across the panel. */
@@ -683,15 +847,24 @@
     align-items: center;
     gap: 6px;
     margin-bottom: 6px;
-    color: #8b979f;
+    color: #8f88a8;
     font-size: 11px;
+  }
+  /* Indented into the control column the sliders start in — the label column
+     is 62px plus the 6px gap. Not the .field.check rows: those put their name
+     in the label column and are already aligned by it. */
+  .check:not(.field) {
+    margin-left: 68px;
   }
   .check input {
     flex: none;
     width: 13px;
     height: 13px;
     padding: 0;
-    accent-color: #4d8fbd;
+    /* The browser's own 3px/4px around a checkbox, which would push it out of
+       the column every slider beside it starts in. */
+    margin: 0;
+    accent-color: #8f6bff;
   }
   /* Swatch and control heights match the toolbar's 32px, so a properties row
      and a tool button are the same target. */
@@ -713,24 +886,24 @@
     width: 32px;
     height: 32px;
     padding: 0;
-    background: linear-gradient(90deg, #cdd6dc, #10161a);
+    background: linear-gradient(90deg, #8f6bff, #ff5fa8);
   }
   button.ramp.on {
-    border-color: #78dcff;
+    border-color: #a685ff;
   }
   button {
     font: inherit;
     padding: 2px 8px;
     border: 1px solid #3a444c;
     border-radius: 3px;
-    background: #1b2228;
+    background: #1d1832;
     color: inherit;
     cursor: pointer;
   }
   button.on {
-    border-color: #78dcff;
-    background: #223039;
-    color: #cdeeff;
+    border-color: #a685ff;
+    background: #2a2244;
+    color: #e3dbff;
   }
   .row button {
     display: inline-flex;
@@ -750,6 +923,6 @@
   }
   .empty {
     margin: 0;
-    color: #6c777e;
+    color: #6f688a;
   }
 </style>
