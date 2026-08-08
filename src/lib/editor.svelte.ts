@@ -723,7 +723,12 @@ export async function openFolder(dir?: string) {
   });
 }
 
-const IMAGE_FILTER = { name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "bmp"] };
+/* SVG is here for the same reason the blob in project.ts spells its type out:
+ * a class icon arrives as one, and the render path is an <img> behind an object
+ * URL, which draws it without a decoder of our own. An SVG with no width/height
+ * on its root tag has no intrinsic size and lands at the browser's 300x150 —
+ * scalable from there, but not the size the file meant. */
+const IMAGE_FILTER = { name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "bmp", "svg"] };
 
 /** Adds a picture spanning the whole wall — what used to be "the mosaic", now
  *  an ordinary layer that happens to live in grid space.
