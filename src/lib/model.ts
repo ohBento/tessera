@@ -133,8 +133,6 @@ export type ShapeKind = "rect" | "ellipse" | "polygon";
  *  what every rect drawn before this did. */
 export type Corners = { tl: boolean; tr: boolean; bl: boolean; br: boolean };
 
-export const CORNER_KEYS = ["tl", "tr", "bl", "br"] as const;
-
 export type ShapeLayer = Common & {
   kind: "shape";
   shape: ShapeKind;

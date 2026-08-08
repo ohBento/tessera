@@ -3,15 +3,16 @@
      in: position, rotation and size are on the canvas handles, so they are not
      repeated here. A caption whose words cannot be typed is useless, which is
      why this exists at all rather than waiting for the full panel system. */
-  import { TILE_W } from "./lib/bmp";
+  import { TILE_H, TILE_W } from "./lib/bmp";
   import { openLayout, resetCrop, setLayerField, type LayerField } from "./lib/editor.svelte";
   import {
-    CORNER_KEYS,
     isGradient,
     layerLabel,
     maskChoices,
+    type Corners,
     type Layer,
     type Paint,
+    type ShapeLayer,
   } from "./lib/model";
   import { systemFonts } from "./lib/platform";
 
@@ -101,18 +102,7 @@
       value={layer.size}
       oninput={(e) => set("size", num(e))}
     />
-    <!-- Pixels, because that is what a font size means to a person; the model
-         keeps its fraction of the tile so a layout survives a change of tile
-         resolution. On change rather than on input: typing "64" over "8"
-         passes through "6", and the caption should not jump there and back. -->
-    <input
-      class="px"
-      type="number"
-      min="1"
-      step="1"
-      value={Math.round(layer.size * TILE_W)}
-      onchange={(e) => set("size", Math.max(1, num(e)) / TILE_W)}
-    />
+    {@render amount("size", layer.size * TILE_W, (n) => n / TILE_W, 1)}
   </label>
   {#if inLayout}
     <!-- A state, not an action: the rest of this panel's little buttons all do
@@ -183,6 +173,7 @@
       value={layer.strokeWidth}
       oninput={(e) => set("strokeWidth", num(e))}
     />
+    {@render amount("strokeWidth", layer.strokeWidth * TILE_W, (n) => n / TILE_W, 0)}
     <input
       type="color"
       value={layer.strokeColor}
@@ -199,6 +190,7 @@
       value={layer.shadow}
       oninput={(e) => set("shadow", num(e))}
     />
+    {@render amount("shadow", layer.shadow * TILE_W, (n) => n / TILE_W, 0)}
     <input
       type="color"
       value={layer.shadowColor}
@@ -218,6 +210,7 @@
       value={layer.w}
       oninput={(e) => set("w", num(e))}
     />
+    {@render amount("w", layer.w * TILE_W, (n) => n / TILE_W, 1)}
   </label>
   <label class="field">
     <span>Height</span>
@@ -229,6 +222,9 @@
       value={layer.h}
       oninput={(e) => set("h", num(e))}
     />
+    <!-- Off the tile's height, not its width: `h` is a fraction of the tile's
+         other side, and 624 here would read a square as oblong. -->
+    {@render amount("h", layer.h * TILE_H, (n) => n / TILE_H, 1)}
   </label>
   <label class="field">
     <span>Fill</span>
@@ -244,6 +240,7 @@
       value={layer.borderWidth}
       oninput={(e) => set("borderWidth", num(e))}
     />
+    {@render amount("borderWidth", layer.borderWidth * TILE_W, (n) => n / TILE_W, 0)}
     <input
       type="color"
       value={layer.borderColor}
@@ -263,39 +260,34 @@
         value={layer.cornerRadius}
         oninput={(e) => set("cornerRadius", num(e))}
       />
+      <!-- Per cent of the shape's short side, which is what the number means —
+           it is not a length, and half is the most a rounded rect can express. -->
+      {@render amount("cornerRadius", layer.cornerRadius * 100, (n) => n / 100, 0, 50)}
     </label>
     <!-- Which corners the radius reaches. A tab, a speech bubble and a
          half-round bar are all the same rect with two of these off, so one
-         radius and four switches covers them without four more sliders. -->
-    <div class="row">
-      {#each CORNER_KEYS as corner (corner)}
-        {@const on = layer.corners ? layer.corners[corner] : true}
-        <button
-          class:on
-          title={`Round the ${{ tl: "top-left", tr: "top-right", bl: "bottom-left", br: "bottom-right" }[corner]} corner`}
-          onclick={() =>
-            set("corners", {
-              ...{ tl: true, tr: true, bl: true, br: true },
-              ...layer.corners,
-              [corner]: !on,
-            })}
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-            <!-- The square drawn with one corner cut, turned to whichever one
-                 this button owns. -->
-            <g
-              transform={`rotate(${{ tl: 0, tr: 90, br: 180, bl: 270 }[corner]} 8 8)`}
-            >
-              <path
-                d={on ? "M3 8a5 5 0 0 1 5-5h5v10H3z" : "M3 3h10v10H3z"}
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.3"
-              />
-            </g>
-          </svg>
-        </button>
-      {/each}
+         radius and four switches covers them without four more sliders.
+
+         Laid out as the corners themselves lie, under the slider that feeds
+         them and flush with its right edge. A row of four had no relation to
+         the shape it edits — which button was the bottom-left one could only
+         be learnt from the tooltip — where a 2x2 block with its sides named
+         needs no reading at all. -->
+    <div class="field corners">
+      <!-- Empty label slot: the indent then comes from the same rule that puts
+           every slider where it is, rather than from a copy of its width. -->
+      <span></span>
+      <div class="quad">
+        <span></span>
+        <span class="cap">L</span>
+        <span class="cap">R</span>
+        <span class="cap">T</span>
+        {@render cornerToggle(layer, "tl")}
+        {@render cornerToggle(layer, "tr")}
+        <span class="cap">B</span>
+        {@render cornerToggle(layer, "bl")}
+        {@render cornerToggle(layer, "br")}
+      </div>
     </div>
   {/if}
   {#if layer.shape === "polygon"}
@@ -309,7 +301,9 @@
         value={layer.sides}
         oninput={(e) => set("sides", num(e))}
       />
-      <span class="value">{layer.sides}</span>
+      <!-- Three is a triangle and the floor; the ceiling is where more corners
+           stop being visible and the shape is just a slow circle. -->
+      {@render amount("sides", layer.sides, (n) => n, 3, 64)}
     </label>
   {/if}
 {:else if layer.kind === "image"}
@@ -414,12 +408,20 @@
     value={turn(layer.rotation)}
     oninput={(e) => set("rotation", num(e))}
   />
+  <!-- Not the shared snippet: a turn wraps rather than clamps, so -10 is 350
+       and 370 is 10, and there is nothing to hold it between. -->
   <input
-    class="px"
+    class="num"
     type="number"
     step="1"
     value={Math.round(turn(layer.rotation))}
-    onchange={(e) => set("rotation", turn(num(e)))}
+    onchange={(e) => {
+      // Same reason as the shared snippet: 370 over a layer already at 10 is
+      // no change at all, and the box would keep showing 370.
+      const deg = turn(num(e));
+      e.currentTarget.value = String(Math.round(deg));
+      set("rotation", deg);
+    }}
   />
 </label>
 
@@ -433,7 +435,81 @@
     value={layer.opacity}
     oninput={(e) => set("opacity", num(e))}
   />
+  {@render amount("opacity", layer.opacity * 100, (n) => n / 100, 0, 100)}
 </label>
+
+<!-- The typed twin of a slider.
+
+     A slider is for finding a value, not for hitting one, and every one of
+     these had a number behind it that could only be reached by dragging. The
+     box shows what the thing actually is — pixels for a length, per cent for
+     a proportion, degrees for a turn — while the model keeps its fraction of
+     the tile, so a layout still survives a change of tile resolution.
+
+     `onchange`, never `oninput`: typing "64" over "8" passes through "6", and
+     the layer must not visit that size on the way.
+
+     `max` is left off where the renderer has no ceiling of its own — a shape
+     wider than the tile is a legitimate thing to want, and the slider already
+     stretches to follow one. It is given where exceeding it draws nothing at
+     all (a corner radius past half the short side) or means nothing (opacity
+     past opaque). -->
+{#snippet amount(
+  key: LayerField,
+  shown: number,
+  store: (n: number) => number,
+  min: number,
+  max?: number,
+)}
+  <input
+    class="num"
+    type="number"
+    {min}
+    {max}
+    step="1"
+    value={Math.round(shown)}
+    onchange={(e) => {
+      const held = Math.min(Math.max(num(e), min), max ?? Infinity);
+      /* Written straight back into the box, not left to the rebuild. Typing
+         past a ceiling that the layer already sits at stores the same value it
+         had, setLayerField sees no change and nothing re-renders — so "500"
+         stayed on screen over an opacity of 1. */
+      e.currentTarget.value = String(Math.round(held));
+      set(key, store(held));
+    }}
+  />
+{/snippet}
+
+<!-- One switch of the 2x2 block. Takes the shape as a parameter because the
+     block sits inside a branch that narrowed `layer`, and a snippet is written
+     out here where that narrowing does not reach. -->
+{#snippet cornerToggle(shape: ShapeLayer, corner: keyof Corners)}
+  {@const on = shape.corners ? shape.corners[corner] : true}
+  <button
+    class="quad-toggle"
+    class:on
+    title={`Round the ${{ tl: "top-left", tr: "top-right", bl: "bottom-left", br: "bottom-right" }[corner]} corner`}
+    onclick={() =>
+      set("corners", {
+        ...{ tl: true, tr: true, bl: true, br: true },
+        ...shape.corners,
+        [corner]: !on,
+      })}
+  >
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+      <!-- The square drawn with one corner cut, turned to whichever one this
+           button owns. -->
+      <g transform={`rotate(${{ tl: 0, tr: 90, br: 180, bl: 270 }[corner]} 8 8)`}>
+        <path
+          d={on ? "M3 8a5 5 0 0 1 5-5h5v10H3z" : "M3 3h10v10H3z"}
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.3"
+        />
+      </g>
+    </svg>
+  </button>
+{/snippet}
 
 <style>
   h2 {
@@ -461,6 +537,33 @@
     gap: 3px;
     margin-bottom: 4px;
   }
+  /* Lined up under the sliders: the empty label slot supplies the indent, so
+     the block starts exactly where every control above it starts. */
+  .corners {
+    margin-bottom: 6px;
+  }
+  .quad {
+    display: grid;
+    grid-template-columns: repeat(3, auto);
+    gap: 3px;
+    align-items: center;
+    justify-items: center;
+  }
+  .cap {
+    color: #8b979f;
+    font-size: 10px;
+    letter-spacing: 0.04em;
+  }
+  /* Same 32px target as every other icon button; .row does this for the ones
+     that live in a row, and these do not. */
+  .quad-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+  }
   input,
   textarea,
   select {
@@ -473,10 +576,16 @@
     background: #0d1114;
     color: inherit;
   }
+  /* The margin is the browser's own, and only range inputs carry it: it left
+     every slider ending 2px short of the selects and number fields beside
+     them. One right edge down the whole panel. */
   input[type="range"] {
     padding: 0;
+    margin: 0;
   }
-  .px {
+  /* Every slider's typed twin. Named for what it holds rather than for one
+     unit — pixels, per cent, degrees and plain counts all sit in it. */
+  .num {
     flex: none;
     width: 48px;
   }
@@ -537,12 +646,6 @@
   button.i {
     font-style: italic;
     font-family: Georgia, "Times New Roman", serif;
-  }
-  .value {
-    flex: none;
-    width: 18px;
-    color: #8b979f;
-    font-size: 11px;
   }
   .empty {
     margin: 0;
