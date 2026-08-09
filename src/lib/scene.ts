@@ -992,8 +992,13 @@ export async function buildGrid(
   m: Manifest,
   deps: SceneDeps,
   interactive = false,
+  /* Called as each portrait arrives, so the wall can say how far it has got
+   * instead of showing an empty frame. Optional: the export and the golden
+   * tests have nobody to tell. */
+  onStep?: (done: number, total: number) => void,
 ): Promise<void> {
   canvas.remove(...canvas.getObjects());
+  let done = 0;
 
   const ids = wall.ids;
   const grid = gridSize(ids.length);
@@ -1001,10 +1006,21 @@ export async function buildGrid(
   /* Three passes, because the wall picture belongs between them: every tile's
    * background, then anything spread across the wall, then what the tiles
    * themselves carry. Tiles never overlap — each is clipped to its own cell —
-   * so splitting the per-tile work in two changes nothing about them. */
-  for (const [index, id] of ids.entries()) {
-    canvas.add(await background(m.tiles[id]?.base ?? null, id, deps, cellAt(index)));
-  }
+   * so splitting the per-tile work in two changes nothing about them.
+   *
+   * Started together rather than one after the next. Each background reads a
+   * two-megabyte BMP and decodes it, and awaiting them in turn made a wall of
+   * forty-four sit black for as long as forty-four disk reads take — in a row.
+   * They are added in id order once they are all in, because the order they
+   * finish in is not the order they are stacked in. */
+  const backgrounds = await Promise.all(
+    ids.map((id, index) => {
+      const drawn = background(m.tiles[id]?.base ?? null, id, deps, cellAt(index));
+      if (onStep) void drawn.then(() => onStep(++done, ids.length));
+      return drawn;
+    }),
+  );
+  for (const obj of backgrounds) canvas.add(obj);
 
   /* The picture spread across this wall. Once, not per tile — drawing it per
    * cell would paint the same pixels COLS*rows times over.

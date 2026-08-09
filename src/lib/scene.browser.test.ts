@@ -840,3 +840,39 @@ describe("a caption held to a height", () => {
     expect(await rowsFor(undefined)).toBe(await rowsFor(undefined));
   });
 });
+
+describe("the wall says how far it has got", () => {
+  /* A wall of forty-four reads two-megabyte files off the disk, and until they
+   * arrive every tile is black. The bar over the canvas needs a number, and
+   * this is where it comes from — reported per portrait, in the order they
+   * finish rather than the order they are stacked. */
+  it("reports every tile once, ending at the total", async () => {
+    const m = manifest(6);
+    const steps: Array<[number, number]> = [];
+    const canvas = new fabric.StaticCanvas(undefined, { width: 100, height: 100 });
+    try {
+      await buildGrid(canvas, view(m), m, testDeps, false, (done, total) =>
+        steps.push([done, total]),
+      );
+    } finally {
+      await canvas.dispose();
+    }
+
+    expect(steps).toHaveLength(6);
+    // Counted up, never past the end, and the total is the same all the way.
+    expect(steps.map(([done]) => done)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(steps.every(([, total]) => total === 6)).toBe(true);
+  });
+
+  it("says nothing when nobody asked", async () => {
+    // The export and the golden tests have no one to tell; the callback is
+    // optional and its absence must not be a special case anywhere.
+    const m = manifest(3);
+    const canvas = new fabric.StaticCanvas(undefined, { width: 100, height: 100 });
+    try {
+      await expect(buildGrid(canvas, view(m), m, testDeps)).resolves.toBeUndefined();
+    } finally {
+      await canvas.dispose();
+    }
+  });
+});
