@@ -71,7 +71,7 @@ import {
   type ShapeLayer,
   type TextLayer,
 } from "./lib/model";
-import { maskChoices } from "./lib/model";
+import { maskChoices, maskOffers } from "./lib/model";
 import { textWidth } from "./lib/scene";
 import { queuePick, resetMockFiles, stashPickedFile } from "./lib/platform";
 
@@ -689,6 +689,32 @@ describe("the wall", () => {
     expect(now(block.id).perTile).toBe(true);
     // And the cutter is still on offer for it, which is the same fact stated
     // by the control the user actually looks at.
+    expect(maskChoices(openLayout()!.layers, block.id).map((l) => l.id)).toContain(icon.id);
+  });
+
+  it("choosing a mask that lives on the tiles takes the layer along", async () => {
+    /* The other half of the same rule. A per-tile cutter may only cut a
+     * per-tile layer, so a plain rectangle could not be cut by a class icon
+     * that names a class per tile — and the dropdown answered by leaving the
+     * icon out entirely, with nothing said. It is offered now, and picking it
+     * sends the rectangle to the tiles as well, which is the only way the pair
+     * can exist at all. */
+    await newLayoutDoc("Maske folgt");
+    await addLayoutShape("icon", "Ranger");
+    const icon = openLayout()!.layers[0];
+    await setLayerField(icon.id, "perTile", true);
+    await addLayoutShape("rect");
+    const block = openLayout()!.layers.find((l) => l.id !== icon.id)!;
+    expect(block.perTile).toBeFalsy();
+
+    // The icon is on offer even though today's rule would refuse it.
+    expect(maskOffers(openLayout()!.layers, block.id).map((l) => l.id)).toContain(icon.id);
+
+    await setLayerField(block.id, "maskId", icon.id);
+
+    const now = openLayout()!.layers.find((l) => l.id === block.id)!;
+    expect(now.perTile).toBe(true);
+    // And the cut is legal, so it will actually render.
     expect(maskChoices(openLayout()!.layers, block.id).map((l) => l.id)).toContain(icon.id);
   });
 

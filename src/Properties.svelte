@@ -17,6 +17,7 @@
     findLayer,
     layerLabel,
     maskChoices,
+    maskOffers,
     type Corners,
     type Layer,
     type Paint,
@@ -52,6 +53,11 @@
    *  in one that holds no shape but this — which is what hides the control
    *  rather than offering a list with nothing in it. */
   const masks = $derived(inLayout ? maskChoices(openLayout()?.layers ?? [], layer.id) : []);
+
+  /** What the dropdown lists. Wider than `masks`: a cutter that lives on the
+   *  tiles is offered to a layer that does not yet, because picking it takes
+   *  the layer along rather than doing nothing. */
+  const offers = $derived(inLayout ? maskOffers(openLayout()?.layers ?? [], layer.id) : []);
 
   /** How many tiles the open wall holds — the span a grid-space layer's x and y
    *  are fractions of. A layer on a tile is measured against the tile. */
@@ -575,7 +581,7 @@
        and there is nothing there to cut with. -->
   <label
     class="field"
-    title={masks.length || stale
+    title={offers.length || stale
       ? "Clips this layer to another one in this Layout"
       : "Add another layer to this Layout first — there is nothing to cut with"}
   >
@@ -586,12 +592,18 @@
          looked missing. -->
     <select
       value={layer.maskId ?? ""}
-      disabled={!masks.length && !stale}
+      disabled={!offers.length && !stale}
       onchange={(e) => set("maskId", e.currentTarget.value)}
     >
       <option value="">none</option>
-      {#each masks as shape (shape.id)}
-        <option value={shape.id}>{layerLabel(shape)}</option>
+      {#each offers as shape (shape.id)}
+        <!-- A cutter that lives on the tiles says so, because picking it takes
+             this layer there too: the rule is that a per-tile cutter can only
+             cut a per-tile layer, and the alternative was leaving it out of the
+             list with nothing said. -->
+        <option value={shape.id}>
+          {layerLabel(shape)}{shape.perTile && !layer.perTile ? " — also sends this to the tiles" : ""}
+        </option>
       {/each}
       <!-- A mask the list can no longer offer stays on the layer — switching
            "Editable in grid" is enough to make one — and the row used to go

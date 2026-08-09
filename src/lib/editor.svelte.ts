@@ -1310,9 +1310,19 @@ export async function setLayerField(id: string, key: LayerField, value: unknown)
    * pair can exist at all. */
   const travellers =
     key === "perTile" && value === true ? cutBy(openLayout()?.layers ?? [], id) : [];
+  /* And the other direction: choosing a cutter that lives on the tiles takes
+   * this layer there too. The rule only lets a per-tile cutter cut a per-tile
+   * layer, so without this the dropdown would offer a mask that does nothing —
+   * the silence that made the feature look broken in the first place. */
+  const cutter =
+    key === "maskId" && typeof value === "string"
+      ? findLayer(openLayout()?.layers ?? [], value)
+      : undefined;
+  const follow = !!cutter?.perTile && !(layer as unknown as Layer).perTile;
   await mutate(
     () => {
       layer[key] = value;
+      if (follow) layer.perTile = true;
       for (const l of travellers) l.perTile = true;
       if (!anchored) return;
       const grew = textWidth(caption as TextLayer) - was;

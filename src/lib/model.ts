@@ -973,7 +973,26 @@ export const stencilIds = (layers: Layer[]): Set<string> => {
  *  their own words is a rule that will disagree with itself — and it did: the
  *  stencil rule was the one that had never heard of `perTile`. */
 export const cutApplies = (l: Layer, cutter: Layer | undefined): boolean =>
-  !!cutter && cutter.kind !== "group" && cutter.id !== l.id && (!cutter.perTile || !!l.perTile);
+  canCut(l, cutter) && (!cutter!.perTile || !!l.perTile);
+
+/** Whether one layer could cut another at all, leaving aside where each of them
+ *  lives. A group draws nothing of its own, and nothing cuts itself. */
+const canCut = (l: Layer, cutter: Layer | undefined): boolean =>
+  !!cutter && cutter.kind !== "group" && cutter.id !== l.id;
+
+/** What the mask dropdown offers — everything that could cut, including a
+ *  per-tile cutter that today's rule would refuse.
+ *
+ *  The rule stands: a cutter that varies per tile can only cut something that
+ *  travels to the tiles as well, because a stamp is one picture shared by
+ *  forty-four portraits and cannot be cut forty-four ways. What changes is who
+ *  has to know it. Leaving those cutters out of the list made the feature look
+ *  broken — the icon was simply not there, with nothing said — so they are
+ *  offered, and choosing one takes the layer along (see setLayerField). */
+export const maskOffers = (layers: Layer[], layerId: string): Layer[] => {
+  const self = findLayer(layers, layerId);
+  return self ? [...walkLayers(layers)].filter((l) => canCut(self, l)) : [];
+};
 
 /** The layers this one cuts — the ones that have to travel wherever it does.
  *
