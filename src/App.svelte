@@ -2101,6 +2101,11 @@
     background: #0e0b16;
     color: #d9d4e8;
     font: 13px/1.4 ui-sans-serif, system-ui, sans-serif;
+    /* The parts of the interface the browser draws itself, not us: the colour
+       picker's own window, scrollbars, the caret. Without this they are drawn
+       for a white page and arrive white in the middle of a dark one. The
+       property inherits, so declaring it here covers every control. */
+    color-scheme: dark;
   }
   /* Nothing styled focus, so keyboard users got the browser's own ring: amber,
      hard against the element, on a dark surface accented in cyan. This is the
