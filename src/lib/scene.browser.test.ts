@@ -743,3 +743,48 @@ describe("a caption's own width", () => {
     expect(narrow).toBeGreaterThan(wide);
   });
 });
+
+describe("a caption's box holds its width against a single long word", () => {
+  /* The case a character name lands in: one word, no spaces to break at.
+   * Fabric widens a Textbox to its longest unbreakable word, which is the very
+   * mechanism that walked a left-aligned caption sideways — so a box that only
+   * held for text with spaces would keep the bug exactly where it is felt. */
+  const leftEdge = (bmp: Uint8Array) => {
+    for (let x = 0; x < TILE_W; x++) {
+      for (let y = 0; y < TILE_H; y += 2) {
+        const [r, g, b] = pixel(bmp, x, y);
+        if (g > r + 40 && g > b + 40) return x;
+      }
+    }
+    return -1;
+  };
+
+  const edgeFor = async (text: string) => {
+    const m = manifest(2);
+    const id = order(m)[0];
+    m.tiles[id].layers.push({
+      ...newTextLayer(),
+      id: "cap",
+      x: 0.5,
+      y: 0.5,
+      size: 0.12,
+      color: "#00ff00",
+      align: "left",
+      live: true,
+      w: 0.3,
+      text,
+    });
+    const [bmp] = [...(await renderTiles(view(m), m, testDeps)).values()];
+    return leftEdge(bmp);
+  };
+
+  it("does not widen for a name that has no spaces in it", async () => {
+    const [short, long] = [await edgeFor("Eli"), await edgeFor("Elanithewanderer")];
+    expect(short).toBeGreaterThan(0);
+    /* Four pixels, not one: the wrapped word puts other letters on the left of
+       the later lines, and glyphs carry different left side bearings. What is
+       being pinned is that the box does not move — without the break inside a
+       word this measured 192. */
+    expect(Math.abs(long - short)).toBeLessThanOrEqual(4);
+  });
+});

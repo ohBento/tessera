@@ -366,7 +366,13 @@ function textObject(l: TextLayer, box: { w: number; h: number; x: number; y: num
     // Stroke centred on the glyph outline eats into the letter shapes; painted
     // behind the fill it reads as an outline, which is what it is for.
     paintFirst: "stroke",
-    splitByGrapheme: false,
+    /* Break inside a word once the box has a width of its own. Fabric only
+       breaks at spaces otherwise, and widens the box to its longest unbreakable
+       word instead — which is how a character name, one word and no spaces,
+       pushed a left-aligned caption 192px sideways with a width set. A box that
+       only held for text with spaces would keep the bug exactly where it is
+       felt. Without a width the old behaviour stands: nothing to hold to. */
+    splitByGrapheme: !!l.w,
     /* Editable only in a Layout, where the raw text is what is on screen and
      * LayoutCanvas writes it back when editing ends. On a tile the caption is
      * a copy showing resolved words, with no path back to the Layout that owns
