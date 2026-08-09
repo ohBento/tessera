@@ -219,10 +219,32 @@
    *  element, because that loader hands back an ImageBitmap and there is no URL
    *  for one — and adding a second IO path for pictures the app already holds
    *  in memory would be a cache to keep in step for no gain. */
+  /** How many card thumbnails are still unread, and how many were asked for.
+   *
+   *  The overview is where the wait is first seen: every card paints four
+   *  portraits, each a two-megabyte BMP off the disk, and until one arrives its
+   *  square is simply black. Counted here rather than guessed at, because this
+   *  is the one place that knows a picture was asked for and the one place that
+   *  knows it came. */
+  let thumbsAsked = $state(0);
+  let thumbsDone = $state(0);
+
   function portrait(el: HTMLCanvasElement, id: string) {
     let live = true;
+    thumbsAsked += 1;
     void (async () => {
       const bmp = await app.deps?.original(id);
+      /* Counted even when the node is gone or the read failed: the tally is
+         "how many are still outstanding", and a picture nobody is waiting for
+         any more is not outstanding. Anything else leaves the bar stuck. */
+      thumbsDone += 1;
+      /* Back to nought once the burst is through, or the numbers would be a
+         running total of the session — "96 of 100 portraits" on an overview
+         showing eight. Each visit counts its own. */
+      if (thumbsDone === thumbsAsked) {
+        thumbsAsked = 0;
+        thumbsDone = 0;
+      }
       if (!live || !bmp) return;
       const ctx = el.getContext("2d");
       if (!ctx) return;
@@ -1362,6 +1384,19 @@
              character has to be visible the moment it turns up — so the way in
              is a choice of wall rather than a guess at one. -->
         <div class="home">
+          <!-- Only while pictures are still on their way, and only past the
+               first few: a folder that paints in a blink should not flash a bar
+               at you. Above the cards rather than over them, because the cards
+               are what is filling in and covering them would hide the very
+               thing being waited for. -->
+          {#if thumbsAsked > 4 && thumbsDone < thumbsAsked}
+            <div class="loading" role="status" aria-live="polite">
+              <div class="track">
+                <div class="fill" style:width="{(thumbsDone / thumbsAsked) * 100}%"></div>
+              </div>
+              <span>{thumbsDone} of {thumbsAsked} portraits</span>
+            </div>
+          {/if}
           <div class="cards">
             <button class="card inbox" onclick={() => enter("")}>
               <span class="cardname">
@@ -2078,6 +2113,31 @@
      the promise, and here there is nothing behind a single press. */
   .inert-name {
     cursor: default;
+  }
+  /* Sits in the flow above the cards, centred on them. */
+  .loading {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0 auto 14px;
+    padding: 8px 14px;
+    border-radius: 6px;
+    background: #17122b;
+    border: 1px solid #3a444c;
+    color: #8f88a8;
+    font-size: 12px;
+  }
+  .track {
+    width: 160px;
+    height: 4px;
+    border-radius: 2px;
+    background: #2a2244;
+    overflow: hidden;
+  }
+  .fill {
+    height: 100%;
+    background: linear-gradient(90deg, #8f6bff, #ff5fa8);
+    transition: width 80ms linear;
   }
   .status {
     margin-left: auto;
