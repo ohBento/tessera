@@ -8,6 +8,7 @@
 import * as fabric from "fabric";
 
 import { TILE_H, TILE_W } from "./bmp";
+import { iconArt } from "./icons";
 import {
   cropSpan,
   cutApplies,
@@ -431,7 +432,11 @@ function textObject(l: TextLayer, box: { w: number; h: number; x: number; y: num
 }
 
 /** A rectangle, ellipse or regular polygon. */
-function shapeObject(l: ShapeLayer, box: { w: number; h: number; x: number; y: number }) {
+function shapeObject(
+  l: ShapeLayer,
+  box: { w: number; h: number; x: number; y: number },
+  stencilOnly = false,
+) {
   const w = l.w * box.w;
   const h = l.h * box.h;
   const common = {
@@ -452,6 +457,7 @@ function shapeObject(l: ShapeLayer, box: { w: number; h: number; x: number; y: n
         })
       : undefined,
   };
+  if (l.shape === "icon") return iconShape(l, common, w, h, stencilOnly);
   if (l.shape === "ellipse") return new fabric.Ellipse({ ...common, rx: w / 2, ry: h / 2 });
   if (l.shape === "polygon")
     return new fabric.Polygon(polygonPoints(l.sides, w, h), { ...common, objectCaching: false });
@@ -467,6 +473,66 @@ function shapeObject(l: ShapeLayer, box: { w: number; h: number; x: number; y: n
     return new fabric.Rect({ ...common, width: w, height: h, rx: r, ry: r });
   }
   return new fabric.Path(cornerPath(w, h, r, corners), { ...common, objectCaching: false });
+}
+
+/** A class icon in whatever paint the layer carries.
+ *
+ *  The colour is a plain rectangle and the icon is its clipPath, rather than
+ *  the icon's paths being filled one by one. Two things fall out of that for
+ *  free: a gradient runs across the whole icon instead of restarting inside
+ *  every stroke of it, and Fabric masks by alpha, so the fill-opacity the
+ *  artwork uses for shading survives as a softer part of the same colour.
+ *
+ *  A name no build knows draws nothing — an empty group clips everything away
+ *  — which is the honest outcome for a layout made by a newer version. */
+function iconShape(
+  l: ShapeLayer,
+  common: Record<string, unknown>,
+  w: number,
+  h: number,
+  stencilOnly: boolean,
+): fabric.Object {
+  const art = l.icon ? iconArt(l.icon) : null;
+  const paths = (art?.paths ?? []).map(
+    (p) =>
+      new fabric.Path(p.d, {
+        fill: "#ffffff",
+        opacity: p.opacity,
+        // The artwork is drawn with holes — a ring is one path, not two — and
+        // the nonzero rule fills them in.
+        fillRule: "evenodd",
+        objectCaching: false,
+      }),
+  );
+  const stencil = new fabric.Group(paths, { objectCaching: false });
+  if (art) {
+    /* Fitted to the box the layer asked for, by the ink rather than by the
+     * 1024 square it was drawn on: the icons do not all reach their edges, and
+     * fitting the canvas would make some classes visibly smaller than others
+     * at the same width. */
+    const scale = Math.min(w / (stencil.width || 1), h / (stencil.height || 1));
+    stencil.set({ scaleX: scale, scaleY: scale });
+  }
+  /* The stroke would trace the rectangle rather than the icon, and the clip
+   * then cuts every visible part of it away, so the paint keeps the placement
+   * and drops the outline. The properties panel hides the border rows for an
+   * icon for the same reason. */
+  const { stroke: _stroke, strokeWidth: _strokeWidth, ...paint } = common;
+
+  /* Cutting with an icon hands back the outline itself, not a rectangle wearing
+   * it. Fabric uses a cutter as its own clipPath, and a clipPath inside a
+   * clipPath does not survive the absolute positioning that puts a mask where
+   * the layer is — measured, the cut layer came back entirely blank. The
+   * outline is all a cut needs anyway: a mask is a form, not a paint. */
+  if (stencilOnly) {
+    const { fill: _fill, shadow: _shadow, ...where } = paint;
+    stencil.set({ ...where, originX: "center", originY: "center" });
+    return stencil;
+  }
+  // A clipPath is placed from the centre of what it clips, so the group sits at
+  // the origin rather than where its paths happened to be drawn.
+  stencil.set({ originX: "center", originY: "center", left: 0, top: 0 });
+  return new fabric.Rect({ ...paint, width: w, height: h, clipPath: stencil });
 }
 
 /** A rectangle rounded only where `corners` says so, drawn around its centre.
@@ -502,10 +568,13 @@ async function layerObject(
   box: { w: number; h: number; x: number; y: number },
   tileId: string,
   texts: Record<string, string>,
+  /* Set by the two paths that want a cutter rather than a drawing. Only the
+   * class icon reads it — every other kind is already its own outline. */
+  stencilOnly = false,
 ): Promise<fabric.Object | undefined> {
   if (l.kind === "image") return imageObject(l, deps, box);
   if (l.kind === "text") return textObject(l, box, tileId, texts);
-  if (l.kind === "shape") return shapeObject(l, box);
+  if (l.kind === "shape") return shapeObject(l, box, stencilOnly);
   return undefined;
 }
 
@@ -953,6 +1022,7 @@ async function cutToShape(
     { w: TILE_W, h: TILE_H, x: 0, y: 0 },
     tileId,
     texts,
+    true,
   );
   if (!shape) return undefined;
 
@@ -1191,7 +1261,7 @@ async function maskFor(l: Layer, deps: SceneDeps, m: Masking): Promise<fabric.Ob
   if (!cutter || cutter.hidden || !cutApplies(l, cutter)) return undefined;
   const shift = nestingShift(m.root, cutter.id) ?? { dx: 0, dy: 0 };
   const placed = { ...cutter, x: cutter.x + shift.dx, y: cutter.y + shift.dy } as Layer;
-  const obj = await layerObject(placed, deps, { w: TILE_W, h: TILE_H, x: 0, y: 0 }, "", {});
+  const obj = await layerObject(placed, deps, { w: TILE_W, h: TILE_H, x: 0, y: 0 }, "", {}, true);
   if (!obj) return undefined;
   obj.absolutePositioned = true;
   obj.inverted = !!l.maskInvert;
@@ -1244,7 +1314,7 @@ async function layoutObjects(
       continue;
     }
     const placed = { ...l, x: l.x + shift.dx, y: l.y + shift.dy, opacity: l.opacity * fade } as Layer;
-    const obj = await layerObject(placed, deps, { w: TILE_W, h: TILE_H, x: 0, y: 0 }, "", {});
+    const obj = await layerObject(placed, deps, { w: TILE_W, h: TILE_H, x: 0, y: 0 }, "", {}, true);
     if (!obj) continue;
     const mask = await maskFor(l, deps, masking);
     if (mask) {

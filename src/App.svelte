@@ -123,6 +123,7 @@
     undoable,
   } from "./lib/editor.svelte";
   import { isTyping } from "./lib/geometry";
+  import { ICON_NAMES, iconArt } from "./lib/icons";
   import { savePending } from "./lib/project";
   import { findLayer, isLiveCopy, layerLabel, layoutNeedsRestamp, type Layer } from "./lib/model";
 
@@ -141,6 +142,11 @@
        Escape, or opening it inside an editor would shut the document instead. */
     if (keysOpen && key === "escape") {
       keysOpen = false;
+      e.preventDefault();
+      return;
+    }
+    if (iconsOpen && key === "escape") {
+      iconsOpen = false;
       e.preventDefault();
       return;
     }
@@ -172,6 +178,7 @@
    *  bound to Ctrl+D. Undo and Redo carry theirs in a tooltip, but a gesture
    *  has no button to hang one on. */
   let keysOpen = $state(false);
+  let iconsOpen = $state(false);
 
   /** What the sheet lists. Written out rather than derived from the handler:
    *  half of these are canvas gestures that no handler declares, and a list
@@ -1443,7 +1450,9 @@
       {@render tool("Rectangle", "▭", () => void addLayoutShape("rect"), !editing)}
       {@render tool("Ellipse", "◯", () => void addLayoutShape("ellipse"), !editing)}
       {@render tool("Polygon", "⬡", () => void addLayoutShape("polygon"), !editing)}
-      <span></span>
+      <!-- The fourth shape. A picker rather than a straight insert, because
+           which class it is is the whole question. -->
+      {@render tool("Class icon", "✦", () => (iconsOpen = true), !editing)}
       <span class="gap"></span>
       {@render tool("Align left", "⇤", () => sheet?.alignTo("left"), noPick)}
       {@render tool("Align right", "⇥", () => sheet?.alignTo("right"), noPick)}
@@ -2095,6 +2104,51 @@
   </div>
 {/if}
 
+<!-- The class icons, as a grid of the artwork itself: at 32 classes a list of
+     names is a reading exercise, and the shape is what anyone recognises. The
+     artwork is white, so each sits on its own lighter tile — on the sheet's own
+     background a white icon on nothing is a white icon on black. -->
+{#if iconsOpen}
+  <div
+    class="sheetback"
+    role="button"
+    tabindex="-1"
+    aria-label="Close"
+    onclick={() => (iconsOpen = false)}
+    onkeydown={(e) => e.key === "Enter" && (iconsOpen = false)}
+  ></div>
+  <div class="sheet" role="dialog" aria-label="Class icons">
+    <h2>Class icon</h2>
+    <div class="icongrid">
+      {#each ICON_NAMES as name (name)}
+        <button
+          title={name}
+          onclick={() => {
+            iconsOpen = false;
+            void addLayoutShape("icon", name);
+          }}
+        >
+          <!-- Drawn from the same parsed paths the layer is drawn from, so the
+               preview cannot drift from the thing it previews — and with a
+               viewBox this time. All but one of the files carry a pixel size
+               and no viewBox, which is a drawing that does not scale: the tile
+               then shows the empty top-left corner of a 1024px square. -->
+          {#if iconArt(name)}
+            {@const art = iconArt(name)!}
+            <svg class="art" viewBox="0 0 {art.w} {art.h}" aria-hidden="true">
+              {#each art.paths as p, i (i)}
+                <path d={p.d} fill="#ffffff" fill-opacity={p.opacity} fill-rule="evenodd" />
+              {/each}
+            </svg>
+          {/if}
+          <span class="name">{name}</span>
+        </button>
+      {/each}
+    </div>
+    <button onclick={() => (iconsOpen = false)}>Close</button>
+  </div>
+{/if}
+
 <style>
   :global(body) {
     margin: 0;
@@ -2347,6 +2401,35 @@
     border-radius: 8px;
     background: #17122b;
     box-shadow: 0 10px 40px rgb(0 0 0 / 0.5);
+  }
+  /* Six across fits the 32 classes in six rows without a scroll on a 1280
+     window, and 72px leaves the thinner icons — a bow, a pair of daggers —
+     readable rather than merely present. */
+  .icongrid {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  .icongrid button {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 4px;
+    background: #241d3f;
+  }
+  .icongrid button:hover {
+    background: #2f2652;
+  }
+  .icongrid .art {
+    display: block;
+    width: 72px;
+    height: 72px;
+  }
+  .icongrid .name {
+    font-size: 11px;
+    color: #b9b2d4;
   }
   .sheet h2 {
     margin: 0 0 12px;

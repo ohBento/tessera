@@ -517,6 +517,49 @@ describe("a mask on a tile", () => {
     expect(right[3]).toBe(255);
   });
 
+  it("cuts a picture to a class icon", async () => {
+    /* An icon is not drawn like the other shapes — it is a rectangle of paint
+     * clipped to the artwork — so being a cutter is the one place that could
+     * quietly fail: the mask path rasterises the cutter on its own offscreen
+     * canvas, and a clip that only survives on the live canvas would come back
+     * blank there and take the whole layer with it. Blank is the failure this
+     * pins: something has to be left, and something has to be gone. */
+    const m = manifest(2);
+    const id = order(m)[0];
+
+    const icon = newShapeLayer("icon", "Ranger");
+    icon.id = "cut";
+    icon.x = 0.5;
+    icon.y = 0.5;
+    icon.w = 1;
+    icon.h = 1;
+    icon.live = true;
+    icon.layoutId = "L1";
+
+    const live = newImageLayer("block:#00ff00");
+    live.x = 0.5;
+    live.y = 0.5;
+    live.scale = 1;
+    live.live = true;
+    live.layoutId = "L1";
+    live.maskId = "cut";
+    m.tiles[id].layers.push(icon, live);
+
+    const tiles = [...(await renderTiles(view(m), m, testDeps)).values()];
+    let kept = 0;
+    for (let y = 0; y < TILE_H; y += 4) {
+      for (let x = 0; x < TILE_W; x += 4) {
+        const [r, g, b] = pixel(tiles[0], x, y);
+        if (r === 0 && g === 255 && b === 0) kept++;
+      }
+    }
+    const sampled = Math.ceil(TILE_H / 4) * Math.ceil(TILE_W / 4);
+    // Some of the picture survives — the icon is not an empty stencil.
+    expect(kept).toBeGreaterThan(0);
+    // And most of it does not: a class icon is line art, not a full tile.
+    expect(kept).toBeLessThan(sampled / 2);
+  });
+
   it("cuts a picture to this tile's own wording", async () => {
     /* The pay-off of letting a per-tile caption be a cutter: one picture, cut
      * by the letters each portrait carries. Two tiles with different words have

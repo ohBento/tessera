@@ -327,6 +327,34 @@ describe("masks", () => {
     expect(px(0.1, 0.5)[3]).toBe(0);
   });
 
+  it("cuts with a class icon", async () => {
+    /* The editor cuts by handing Fabric the cutter as a clipPath, and an icon
+     * is the one shape that is not simply its own outline — it is paint clipped
+     * to the artwork. Handed over as-is, that is a clipPath inside a clipPath,
+     * which does not survive the absolute positioning a mask needs: the cut
+     * layer came back completely blank while the baked wall was correct, so
+     * only a test on this path has any teeth.
+     *
+     * The picture covers the sheet, so anything missing is the cut's doing. */
+    const layout = newLayout("Icon");
+    const pic = newImageLayer("block:#ff00ff");
+    pic.x = 0.5;
+    pic.y = 0.5;
+    pic.scale = 1;
+    const icon = newShapeLayer("icon", "Ranger");
+    icon.x = 0.5;
+    icon.y = 0.5;
+    icon.w = 0.9;
+    icon.h = 0.9;
+    pic.maskId = icon.id;
+    layout.layers.push(icon, pic);
+
+    const px = await decodeProbe(layout);
+    // The icon's own centre line is solid artwork; the sheet's corner is not.
+    expect(px(0.5, 0.5)).toEqual([255, 0, 255, 255]);
+    expect(px(0.04, 0.04)[3]).toBe(0);
+  });
+
   it("turns it round when inverted", async () => {
     const { layout, pic, hole } = sheet();
     pic.maskId = hole.id;

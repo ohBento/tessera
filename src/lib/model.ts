@@ -147,7 +147,7 @@ export type ImageLayer = Common & {
   cornerRadius?: number;
 };
 
-export type ShapeKind = "rect" | "ellipse" | "polygon";
+export type ShapeKind = "rect" | "ellipse" | "polygon" | "icon";
 
 /** Which corners of a rect the radius reaches. Absent means all four, which is
  *  what every rect drawn before this did. */
@@ -161,6 +161,11 @@ export type ShapeLayer = Common & {
   cornerRadius: number; // 0..0.5 of min(w,h); rect only
   corners?: Corners; // rect only; absent means all four
   sides: number; // polygon only; rotation reuses the common field
+  /* icon only: which class icon this is, by name. The artwork ships with the
+   * application, so the manifest stores the name and nothing else — a layout
+   * copied to another machine draws the same icon without carrying it. A name
+   * no build knows draws nothing rather than guessing at a neighbour. */
+  icon?: string;
   fill: Paint;
   borderColor: string;
   borderWidth: number; // fraction of tile width, 0 = no border
@@ -830,10 +835,11 @@ export const newImageLayer = (asset: string): ImageLayer => ({
   flipY: false,
 });
 
-export const newShapeLayer = (shape: ShapeKind): ShapeLayer => ({
+export const newShapeLayer = (shape: ShapeKind, icon?: string): ShapeLayer => ({
   ...common(),
   kind: "shape",
   shape,
+  ...(icon ? { icon } : {}),
   w: DEFAULT_SHAPE_SIZE,
   h: DEFAULT_SHAPE_SIZE,
   cornerRadius: 0,
@@ -877,7 +883,16 @@ const LAYER_PREFIX: Record<Layer["kind"], string> = {
   group: "group",
 };
 
-const prefixOf = (l: Layer) => (l.kind === "shape" ? l.shape : LAYER_PREFIX[l.kind]);
+/* A shape is named after what it is, and for an icon that is the class rather
+ * than the word "icon": a stack of Ranger01, Witch01, Witch02 says what is in
+ * it at a glance. Spaces go, so "Dark Knight" numbers as DarkKnight01 and reads
+ * like every other layer name. */
+const prefixOf = (l: Layer) =>
+  l.kind !== "shape"
+    ? LAYER_PREFIX[l.kind]
+    : l.shape === "icon"
+      ? (l.icon ?? "icon").replace(/\s+/g, "")
+      : l.shape;
 
 /** Names a layer for the stack it is about to join: img01, text01, img02.
  *

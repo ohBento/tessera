@@ -1253,11 +1253,11 @@ export async function addLayoutText() {
   });
 }
 
-export async function addLayoutShape(shape: ShapeKind) {
+export async function addLayoutShape(shape: ShapeKind, icon?: string) {
   const layout = openLayout();
   if (!layout) return;
   await mutate(() => {
-    const l = newShapeLayer(shape);
+    const l = newShapeLayer(shape, icon);
     nameInStack(l, layout.layers);
     layout.layers.push(l);
     selectLayoutLayer(l.id);

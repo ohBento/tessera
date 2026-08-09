@@ -319,23 +319,28 @@
     {@render amount("h", layer.h * TILE_H, (n) => n / TILE_H, 1)}
   </label>
   {@render paint("Fill", "fill", layer.fill)}
-  <label class="field">
-    <span>Border</span>
-    <input
-      type="range"
-      min="0"
-      max="0.05"
-      step="0.002"
-      value={layer.borderWidth}
-      oninput={(e) => set("borderWidth", num(e))}
-    />
-    {@render amount("borderWidth", layer.borderWidth * TILE_W, (n) => n / TILE_W, 0)}
-    <input
-      type="color"
-      value={layer.borderColor}
-      oninput={(e) => set("borderColor", e.currentTarget.value)}
-    />
-  </label>
+  <!-- An icon is a colour cut to the artwork's outline, so a border would trace
+       the rectangle behind it and then be cut away with everything else outside
+       the icon. A row that cannot do anything is worse than no row. -->
+  {#if layer.shape !== "icon"}
+    <label class="field">
+      <span>Border</span>
+      <input
+        type="range"
+        min="0"
+        max="0.05"
+        step="0.002"
+        value={layer.borderWidth}
+        oninput={(e) => set("borderWidth", num(e))}
+      />
+      {@render amount("borderWidth", layer.borderWidth * TILE_W, (n) => n / TILE_W, 0)}
+      <input
+        type="color"
+        value={layer.borderColor}
+        oninput={(e) => set("borderColor", e.currentTarget.value)}
+      />
+    </label>
+  {/if}
   {#if layer.shape === "rect"}
     <label class="field">
       <span>Corners</span>
