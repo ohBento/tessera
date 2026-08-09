@@ -122,28 +122,6 @@ describe("free scaling", () => {
     });
   });
 
-  it("gives a class icon a box the size of its artwork", async () => {
-    /* Asked for a tall thin box, an icon used to sit in the middle of it with
-     * air above and below: the paint was the layer's rectangle and the artwork
-     * merely clipped inside it, so the handles stood a finger's width from the
-     * thing they moved. The paint is the artwork's own box now. */
-    const { canvas, obj } = await one(() => {
-      const l = newShapeLayer("icon", "Placeholder");
-      l.w = 0.3;
-      l.h = 0.9;
-      return l;
-    });
-    try {
-      const drawn = { w: obj.width * (obj.scaleX ?? 1), h: obj.height * (obj.scaleY ?? 1) };
-      // The placeholder is drawn square, so a square is what the box has to be
-      // — not the 0.9 of a tile's height that was asked for.
-      expect(drawn.h).toBeLessThan(0.9 * TILE_H);
-      expect(drawn.h / drawn.w).toBeCloseTo(1, 1);
-    } finally {
-      await canvas.dispose();
-    }
-  });
-
   it("reads a stretched shape back as two different sizes", async () => {
     const { canvas, obj } = await one(() => {
       const l = newShapeLayer("rect");

@@ -531,7 +531,7 @@ function iconShape(
      * 1024 square it was drawn on: the icons do not all reach their edges, and
      * fitting the canvas would make some classes visibly smaller than others
      * at the same width. */
-    const scale = w / (stencil.width || 1);
+    const scale = Math.min(w / (stencil.width || 1), h / (stencil.height || 1));
     stencil.set({ scaleX: scale, scaleY: scale });
   }
   /* The stroke would trace the rectangle rather than the icon, and the clip
@@ -553,17 +553,7 @@ function iconShape(
   // A clipPath is placed from the centre of what it clips, so the group sits at
   // the origin rather than where its paths happened to be drawn.
   stencil.set({ originX: "center", originY: "center", left: 0, top: 0 });
-  /* The paint is exactly the artwork's box, not the layer's. Everything outside
-   * it is cut away in any case, and a rectangle wider than what it shows is a
-   * selection frame with air in it — which is what put the handles a finger's
-   * width away from the icon they belonged to. */
-  const ink = art
-    ? {
-        w: (stencil.width || 1) * (stencil.scaleX ?? 1),
-        h: (stencil.height || 1) * (stencil.scaleY ?? 1),
-      }
-    : { w, h };
-  return new fabric.Rect({ ...paint, width: ink.w, height: ink.h, clipPath: stencil });
+  return new fabric.Rect({ ...paint, width: w, height: h, clipPath: stencil });
 }
 
 /** A rectangle rounded only where `corners` says so, drawn around its centre.
