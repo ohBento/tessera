@@ -1375,10 +1375,25 @@ async function layoutObjects(
       continue;
     }
     const placed = { ...l, x: l.x + shift.dx, y: l.y + shift.dy, opacity: l.opacity * fade } as Layer;
-    const obj = await layerObject(placed, deps, { w: TILE_W, h: TILE_H, x: 0, y: 0 }, "", {});
+    let obj = await layerObject(placed, deps, { w: TILE_W, h: TILE_H, x: 0, y: 0 }, "", {});
     if (!obj) continue;
     const mask = await maskFor(l, deps, masking);
     if (mask) {
+      /* A class icon already wears a clipPath of its own — the artwork is what
+       * makes it an icon — and Fabric allows exactly one. Assigning the mask
+       * over it left a plain rectangle of paint being cut by the other layer,
+       * which is what "the icon went huge" looks like from the outside. Baked
+       * to pixels first, the artwork is in the picture rather than in a clip,
+       * and the mask has the one slot to itself. The tile path does the same
+       * thing for the same reason. */
+      if (obj.clipPath) {
+        obj = new fabric.FabricImage(await toTileCanvas(obj), {
+          originX: "left",
+          originY: "top",
+          left: 0,
+          top: 0,
+        });
+      }
       obj.clipPath = mask;
       /* A cached object is painted from a bitmap rendered before the clip
        * applied, which shows up as the mask simply not working — the same trap
