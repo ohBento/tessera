@@ -10,27 +10,44 @@
  * zero width — the editor fits the sheet to its window, so no window means a
  * zoom of 0 and a render path that never runs. The mask fault appears at the
  * first mousemove and only here. */
+import type { Canvas, FabricObject } from "fabric";
 import { mount, unmount } from "svelte";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import App from "./App.svelte";
 import {
+  addLayoutImage,
   addLayoutShape,
   app,
+  assignTileLayout,
+  closeLayoutDoc,
   newLayoutDoc,
   openLayout,
   setLayerField,
+  visibleIds,
 } from "./lib/editor.svelte";
 import { emptyManifest } from "./lib/model";
-import { resetMockFiles } from "./lib/platform";
-import { countColour, dragObject, scaleObject } from "./test/gestures";
+import { queuePick, resetMockFiles, stashPickedFile } from "./lib/platform";
+import { cellAt } from "./lib/scene";
+import { TILE_H, TILE_W } from "./lib/bmp";
+import { clickScene, countColour, dragObject, scaleObject } from "./test/gestures";
 
 const GREEN: [number, number, number] = [0, 255, 0];
 
-async function until(what: () => boolean, ms = 8000) {
+/** A picture to put on a tile. */
+async function magentaSquare(name: string) {
+  const c = new OffscreenCanvas(200, 200);
+  const ctx = c.getContext("2d")!;
+  ctx.fillStyle = "#ff00ff";
+  ctx.fillRect(0, 0, 200, 200);
+  const blob = await c.convertToBlob({ type: "image/png" });
+  return stashPickedFile(`${name}.png`, new Uint8Array(await blob.arrayBuffer()));
+}
+
+async function until(what: () => boolean, ms = 8000, what_for = "the app") {
   const deadline = Date.now() + ms;
   while (!what()) {
-    if (Date.now() > deadline) throw new Error("timed out waiting for the app");
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what_for}`);
     await new Promise((r) => setTimeout(r, 25));
   }
 }
@@ -59,7 +76,32 @@ async function editor() {
 
   await newLayoutDoc("Gesten");
   await until(() => !!(window as { tesseraLayout?: unknown }).tesseraLayout);
-  return (window as unknown as { tesseraLayout: import("fabric").Canvas }).tesseraLayout;
+  return (window as unknown as { tesseraLayout: Canvas }).tesseraLayout;
+}
+
+/** The same, but standing on a wall: the overview has no canvas, and closing a
+ *  Layout from there goes back to the overview rather than to a project. */
+async function wall() {
+  app.manifest = emptyManifest();
+  app.dir = "";
+  app.selectedTiles = [];
+  app.openLayoutId = "";
+  app.layoutSelection = [];
+
+  host = document.createElement("div");
+  host.id = "app";
+  host.style.cssText = "width:1400px;height:900px;position:fixed;left:0;top:0";
+  document.body.append(host);
+  ui = mount(App, { target: host });
+  await until(() => !!app.dir && app.folderIds.length > 0 && !app.busy);
+
+  const card = [...document.querySelectorAll("button")].find((b) =>
+    b.textContent!.includes("Unsorted"),
+  ) as HTMLButtonElement | undefined;
+  if (!card) throw new Error("no way into Unsorted from the overview");
+  card.click();
+  await until(() => !!(window as { tesseraWall?: unknown }).tesseraWall, 8000, "the wall canvas");
+  return (window as unknown as { tesseraWall: Canvas }).tesseraWall;
 }
 
 async function teardown() {
@@ -77,10 +119,72 @@ async function blockCutToIcon() {
   const block = openLayout()!.layers.find((l) => l.id !== icon.id)!;
   await setLayerField(block.id, "fill", "#00ff00");
   await setLayerField(block.id, "maskId", icon.id);
-  await until(() => canvas.getObjects().some((o) => !!o.clipPath?.absolutePositioned));
-  const obj = canvas.getObjects().find((o) => !!o.clipPath?.absolutePositioned)!;
+  await until(() => canvas.getObjects().some((o: FabricObject) => !!o.clipPath?.absolutePositioned));
+  const obj = canvas.getObjects().find((o: FabricObject) => !!o.clipPath?.absolutePositioned)!;
   return { canvas, obj };
 }
+
+describe("framing a picture on the wall", () => {
+  beforeEach(() => resetMockFiles());
+
+  it("writes what was dragged onto the tile, not onto the layer", async () => {
+    /* The tile owns which picture and which part of it; the Layout owns where
+     * the frame is and how big. So a drag with the framing tool has to land in
+     * the tile's own map and leave the shared layer exactly as it was —
+     * otherwise framing one portrait would move all forty-four. */
+    try {
+      await wall();
+
+      queuePick(await magentaSquare("bild"));
+      await newLayoutDoc("Bild");
+      await addLayoutImage();
+      const layout = openLayout()!;
+      const pic = layout.layers[0];
+      if (pic.kind !== "image") throw new Error("addLayoutImage made something else");
+      const before = { x: pic.x, y: pic.y, scale: pic.scale };
+      await setLayerField(pic.id, "perTile", true);
+
+      const tile = app.folderIds[0];
+      await assignTileLayout(tile, layout.id);
+      await closeLayoutDoc();
+      /* After the round trip, not before it: opening a Layout takes the wall's
+         canvas down and coming back builds a new one, so a reference taken
+         earlier points at a disposed canvas with nothing on it. */
+      await until(
+        () => ((window as { tesseraWall?: Canvas }).tesseraWall?.getObjects().length ?? 0) > 0,
+        8000,
+        "the wall to come back with its tiles",
+      );
+      const wallCanvas = (window as unknown as { tesseraWall: Canvas }).tesseraWall;
+
+      const button = [...document.querySelectorAll("button")].find(
+        (b) => b.textContent!.trim() === "Frame pictures",
+      ) as HTMLButtonElement;
+      button.click();
+      await until(() => button.getAttribute("aria-pressed") === "true", 8000, "the framing tool to switch on");
+
+      // Click the tile the picture is on, then drag what the tool framed.
+      const cell = cellAt(visibleIds().indexOf(tile));
+      await clickScene(wallCanvas, cell.x + TILE_W / 2, cell.y + TILE_H / 2);
+      await until(() => !!wallCanvas.getActiveObject(), 8000, "the stand-in to appear");
+      await dragObject(wallCanvas, wallCanvas.getActiveObject()!, 60, 40);
+      await until(() => !!app.manifest.tiles[tile].frame?.[pic.id], 5000, "the frame to be written");
+
+      const f = app.manifest.tiles[tile].frame![pic.id];
+      expect(Math.abs(f.x)).toBeGreaterThan(0);
+      expect(Math.abs(f.y)).toBeGreaterThan(0);
+
+      // The shared layer is where it was: every other tile keeps its framing.
+      const shared = app.manifest.layouts.find((l) => l.id === layout.id)!.layers[0];
+      expect(shared.x).toBeCloseTo(before.x, 6);
+      expect(shared.y).toBeCloseTo(before.y, 6);
+      if (shared.kind !== "image") throw new Error("the layer stopped being a picture");
+      expect(shared.scale).toBeCloseTo(before.scale, 6);
+    } finally {
+      await teardown();
+    }
+  });
+});
 
 describe("what a gesture does to a mask", () => {
   beforeEach(() => resetMockFiles());

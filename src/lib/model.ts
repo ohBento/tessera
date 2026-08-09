@@ -365,6 +365,14 @@ export type Tile = {
    *  shows none. Optional so manifests written before per-tile pictures existed
    *  still load unchanged. */
   swap?: Record<string, string>;
+  /** How this tile frames its own picture, per shared image layer.
+   *
+   *  The completion of the same bargain rather than a break with it. Masking a
+   *  picture is how you show one part of it, and which part is right depends on
+   *  the picture: a face sits centre in one portrait and left in the next. The
+   *  Layout still owns where the frame is and how big — the mask defines that —
+   *  and what moves is the picture inside it, which is the tile's own. */
+  frame?: Record<string, Frame>;
   /** Put away: out of Unsorted, into the archive, still on disk and still
    *  carrying whatever was made for it. Absent is the ordinary state — see
    *  archivedIds, and setArchived for why it is only ever true on a tile no
@@ -1045,6 +1053,19 @@ export const layerText = (texts: Record<string, string>, layer: TextLayer, tileI
  *  "none". */
 export const layerAsset = (swaps: Record<string, string>, layer: ImageLayer) =>
   swaps[layer.id] ?? layer.asset;
+
+/** A tile's own framing of a shared picture: a nudge, a zoom and a turn, all
+ *  relative to what the Layout asked for. Absent is the ordinary state and
+ *  means "as the Layout placed it". */
+export type Frame = { x: number; y: number; z: number; a: number };
+
+export const NO_FRAME: Frame = { x: 0, y: 0, z: 1, a: 0 };
+
+/** The layer as this tile frames it. Relative rather than absolute, so moving
+ *  the layer in the Layout still moves every tile's picture with it and only
+ *  the difference each tile chose stays its own. */
+export const framed = (l: ImageLayer, f: Frame | undefined): ImageLayer =>
+  f ? { ...l, x: l.x + f.x, y: l.y + f.y, scale: l.scale * f.z, rotation: l.rotation + f.a } : l;
 
 /** Which class one tile shows for a live icon layer, or "" for none.
  *

@@ -587,6 +587,35 @@ describe("a mask on a tile", () => {
     expect(Math.abs(a - b)).toBeLessThanOrEqual(1);
   });
 
+  it("shows each tile its own part of the picture", async () => {
+    /* Masking a picture is how you show one part of it, and which part is right
+     * depends on the picture — a face sits centre in one portrait and left in
+     * the next. The Layout owns the frame, the tile owns what sits inside it.
+     *
+     * Two tiles, same layer, same picture, one of them nudged: the pixels
+     * cannot match. Measured through the export path, so what is asserted is
+     * what the game would get. */
+    const m = manifest(2);
+    const [first, second] = order(m);
+
+    for (const id of [first, second]) {
+      const pic = { ...newImageLayer("probe"), id: "pic", live: true, layoutId: "L1" };
+      pic.x = 0.5;
+      pic.y = 0.5;
+      pic.scale = 0.4;
+      m.tiles[id].layers.push(pic);
+    }
+    m.tiles[second].frame = { pic: { x: 0.2, y: 0, z: 1, a: 0 } };
+
+    const tiles = [...(await renderTiles(view(m), m, testDeps)).values()];
+    const strip = (t: (typeof tiles)[number]) => {
+      const out: number[] = [];
+      for (let x = 0; x < TILE_W; x += 8) out.push(pixel(t, x, Math.round(TILE_H / 2))[0]);
+      return out;
+    };
+    expect(strip(tiles[0])).not.toEqual(strip(tiles[1]));
+  });
+
   it("gives each tile its own class", async () => {
     /* The reason the icons exist: one layer, placed and coloured once, and
      * every portrait naming its own class. Two tiles carrying the same layer

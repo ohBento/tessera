@@ -78,6 +78,26 @@ async function gesture(
   await frame();
 }
 
+/** One click at a point in scene coordinates — what a hand does to choose
+ *  something. Separate from dragObject because a tool that picks on mouse:down
+ *  has nothing to grab yet. */
+export async function clickScene(canvas: fabric.Canvas, x: number, y: number) {
+  const el = canvas.upperCanvasEl;
+  const p = clientAt(canvas, x, y);
+  for (const type of ["mousedown", "mouseup"] as const)
+    el.dispatchEvent(
+      new MouseEvent(type, {
+        clientX: p.x,
+        clientY: p.y,
+        bubbles: true,
+        buttons: type === "mousedown" ? 1 : 0,
+        button: 0,
+      }),
+    );
+  canvas.renderAll();
+  await frame();
+}
+
 /** Picks the object and drags it by (dx, dy) in scene units.
  *
  *  `during` is called after every move with the gesture still open — the state

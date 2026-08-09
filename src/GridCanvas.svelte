@@ -14,6 +14,8 @@
     clearTiles,
     refreshCoverPreview,
     selectLayer,
+    setTileFrame,
+    tileFrame,
     swapTilePlaces,
     wall,
     toggleTile,
@@ -22,6 +24,11 @@
   import { TILE_H, TILE_W } from "./lib/bmp";
   import { cellIndexAt, cellsIn, isTyping, snapBox, type Guide } from "./lib/geometry";
   import { buildGrid, cellAt, gridSize, readBack, snapScale, type Tagged } from "./lib/scene";
+  import { framed, layerAsset, type ImageLayer } from "./lib/model";
+
+  /* On while the framing tool is chosen in App's toolbar. The wall has no other
+     mode, and that is deliberate — see the note on frameAt below. */
+  let { framing = false }: { framing?: boolean } = $props();
 
   let host: HTMLDivElement;
   let el: HTMLCanvasElement;
@@ -42,6 +49,135 @@
   /** How close in screen pixels the pull reaches. Converted to scene units per
    *  drag, so it feels the same at any zoom. */
   const SNAP_PX = 8;
+
+  /* ---- The framing tool -------------------------------------------------
+   *
+   * Masking a picture is how you show one part of it, and which part is right
+   * depends on the picture. The Layout owns the frame; the tile owns what sits
+   * inside it. This is the only mode the wall has, so it says so: the button
+   * stays pressed, Escape leaves, and while it is on a drag frames instead of
+   * sweeping a selection.
+   *
+   * Fabric supplies the frame and its handles, but not on the picture itself —
+   * a masked tile layer is baked to pixels before the cell clips it, so
+   * dragging that object would take the mask along with it. What is dragged is
+   * a transparent stand-in at the picture's place, and what the eye follows is
+   * the ghost: the whole picture, faintly, including the parts the mask cuts
+   * away. Without it you would be nudging an invisible thing until something
+   * happened to appear. */
+  let target: { tileId: string; layerId: string } | null = null;
+  let stand: fabric.Object | undefined;
+  let ghost: fabric.Object | undefined;
+
+  /** The live pictures drawn on a tile, newest last — the ones a tile frames. */
+  const picturesOn = (tileId: string) =>
+    (app.manifest.tiles[tileId]?.layers ?? []).filter(
+      (l): l is ImageLayer => l.kind === "image" && !!l.live && !!l.asset,
+    );
+
+  function dropFrameTools() {
+    if (stand) canvas?.remove(stand);
+    if (ghost) canvas?.remove(ghost);
+    stand = ghost = undefined;
+  }
+
+  /** Puts the stand-in and the ghost on the picture this tile shows. */
+  async function frameAt(tileId: string, layerId: string) {
+    if (!canvas || !app.deps) return;
+    const layer = picturesOn(tileId).find((l) => l.id === layerId);
+    if (!layer) return;
+    const ids = visibleIds();
+    const index = ids.indexOf(tileId);
+    if (index < 0) return;
+
+    const shown = framed(
+      { ...layer, asset: layerAsset(app.manifest.tiles[tileId]?.swap ?? {}, layer) },
+      tileFrame(tileId, layerId),
+    );
+    if (!shown.asset) return;
+
+    const cell = cellAt(index);
+    const img = await fabric.FabricImage.fromURL(await app.deps.asset(shown.asset));
+    const width = shown.scale * TILE_W;
+    const height = width * ((img.height || 1) / (img.width || 1));
+    const place = {
+      originX: "center" as const,
+      originY: "center" as const,
+      left: cell.x + shown.x * TILE_W,
+      top: cell.y + shown.y * TILE_H,
+      angle: shown.rotation,
+    };
+
+    dropFrameTools();
+    img.set({ ...place, opacity: 0.28, selectable: false, evented: false });
+    img.scaleToWidth(width);
+    ghost = img;
+    canvas.add(img);
+
+    stand = new fabric.Rect({
+      ...place,
+      width,
+      height,
+      fill: "rgba(0,0,0,0.001)",
+      stroke: "#a685ff",
+      strokeWidth: 1,
+      strokeUniform: true,
+      selectable: true,
+      evented: true,
+      hasBorders: true,
+      objectCaching: false,
+    });
+    Object.assign(stand, { framing: true });
+    canvas.add(stand);
+    canvas.setActiveObject(stand);
+    target = { tileId, layerId };
+    canvas.requestRenderAll();
+  }
+
+  /** The ghost follows the stand-in while a gesture is open. */
+  function syncGhost() {
+    if (!stand || !ghost) return;
+    ghost.set({
+      left: stand.left,
+      top: stand.top,
+      angle: stand.angle,
+      scaleX: (stand.getScaledWidth() || 1) / (ghost.width || 1),
+      scaleY: (stand.getScaledWidth() || 1) / (ghost.width || 1),
+    });
+    ghost.setCoords();
+  }
+
+  /** What the tile chose, as a difference from what the Layout asked for. */
+  async function writeFrame() {
+    if (!stand || !target) return;
+    const layer = picturesOn(target.tileId).find((l) => l.id === target!.layerId);
+    if (!layer) return;
+    const ids = visibleIds();
+    const back = readBack(stand as Tagged, ids.length, ids.indexOf(target.tileId));
+    await setTileFrame(target.tileId, target.layerId, {
+      x: back.x - layer.x,
+      y: back.y - layer.y,
+      z: layer.scale ? back.scale / layer.scale : 1,
+      a: back.rotation - layer.rotation,
+    });
+  }
+
+  /* Leaving the mode takes its furniture with it, and a rebuild wipes every
+     object off the canvas — so the pair is put back once the wall is up
+     again, on the same picture, or the frame would vanish under your hand the
+     moment you moved it. */
+  $effect(() => {
+    if (!framing) {
+      target = null;
+      dropFrameTools();
+      canvas?.requestRenderAll();
+      return;
+    }
+    const want = target;
+    void app.version;
+    if (want && canvas && !canvas.getObjects().includes(stand as fabric.Object))
+      void frameAt(want.tileId, want.layerId);
+  });
 
   /** Every visible tile the band touches. */
   function tilesIn(r: { x: number; y: number; w: number; h: number }): string[] {
@@ -278,6 +414,26 @@
         opt.e.preventDefault();
         return;
       }
+      /* The framing tool takes the drag and nothing else: panning, the wheel
+         and the right-click menu all still answer, because framing a picture
+         means zooming in and reaching for "another picture" constantly. What
+         it does swallow is the selection band and the swap drag. */
+      if (framing && opt.e.button === 0) {
+        // `stand &&` and not just the comparison: both are undefined on bare
+        // canvas before anything has been framed, and undefined === undefined
+        // sent every first click straight back out.
+        if (stand && opt.target === stand) return;
+        const over = tileAt(opt.e);
+        if (!over) return;
+        const pics = picturesOn(over);
+        if (!pics.length) return;
+        /* Clicking the same tile again walks to its next picture — rare, but a
+           tile with two of them would otherwise have one that cannot be
+           reached at all. */
+        const at = target?.tileId === over ? pics.findIndex((p) => p.id === target!.layerId) : -1;
+        void frameAt(over, pics[(at + 1) % pics.length].id);
+        return;
+      }
       // A layer object swallows the click only when it is the chosen one; every
       // other object is inert, so "no target" means bare wall.
       if (opt.e.button !== 0 || opt.target) return;
@@ -493,6 +649,17 @@
      *  Grid-space objects only. A tile layer lives inside one cell; pulling it
      *  onto the far edge of the wall would be a snap to something it has no
      *  relationship with. */
+    for (const ev of ["object:moving", "object:scaling", "object:rotating"] as const)
+      canvas.on(ev, (opt) => {
+        if (!stand || opt.target !== stand) return;
+        /* One zoom, both axes. A frame stores a single number, so a corner
+           pulled sideways would show a stretch that the release cannot keep —
+           the preview would be lying, which is the fault this app has already
+           shipped twice. */
+        if (ev === "object:scaling") stand.set({ scaleY: stand.scaleX });
+        syncGhost();
+      });
+
     canvas.on("object:moving", (opt) => {
       guides = [];
       const target = opt.target as Tagged | undefined;
@@ -546,6 +713,10 @@
     canvas.on("selection:cleared", dropGuides);
 
     canvas.on("object:modified", (opt) => {
+      if (opt.target === stand) {
+        void writeFrame();
+        return;
+      }
       const obj = opt.target as Tagged | undefined;
       if (!obj?.layerId) return;
       const ids = visibleIds();

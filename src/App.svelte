@@ -38,6 +38,7 @@
     coverCounts,
     coverTheWall,
     clearTileAsset,
+    clearTileFrame,
     clearTileText,
     clearTiles,
     closeLayoutDoc,
@@ -106,6 +107,7 @@
     tileAsset,
     tileCaptions,
     tileImageChoices,
+    tileFrame,
     tileIcons,
     tileImages,
     tileLayers,
@@ -157,6 +159,11 @@
       e.preventDefault();
       return;
     }
+    if (key === "escape" && framing) {
+      framing = false;
+      e.preventDefault();
+      return;
+    }
     if (key === "escape" && editing && !e.ctrlKey) {
       closeLayoutDoc();
       e.preventDefault();
@@ -199,6 +206,10 @@
   let keysOpen = $state(false);
   let iconsOpen = $state(false);
   let iconFilter = $state("");
+  /* The wall's one mode: while it is on, a drag frames a tile's picture inside
+     its mask instead of sweeping a selection. Pressed-looking on purpose — a
+     mode nobody can see is a trap. */
+  let framing = $state(false);
   const closeIconSheet = () => {
     iconsOpen = false;
     iconTarget = null;
@@ -228,6 +239,7 @@
     ["Ctrl + Y  ·  Ctrl + Shift + Z", "Redo"],
     ["Ctrl + D", "Duplicate the picked layers (in a Layout)"],
     ["Delete  ·  Backspace", "Delete the picked layers (in a Layout)"],
+    ["Escape", "Leave the framing tool"],
     ["Escape", "Close the Layout, or the menu over it"],
     ["?", "This sheet"],
     ["Wheel", "Zoom"],
@@ -1235,6 +1247,16 @@
             disabled={chosen === undefined}
             onclick={() => void clearTileAsset(id, pic.id)}>↺</button
           >
+          <!-- The way back from a framing that went wrong. No numbers beside
+               it: the frame on the wall is where framing is done, and a row of
+               fields here would ask why moving has them and everything else
+               does not. -->
+          <button
+            class="swatch"
+            title="Show this picture where the Layout put it"
+            disabled={!tileFrame(id, pic.id)}
+            onclick={() => void clearTileFrame(id, pic.id)}>⤢</button
+          >
         </div>
       {/each}
 
@@ -1432,6 +1454,21 @@
           : "Open a project first — a wall picture belongs to a wall"}
       >
         Image across the wall…
+      </button>
+      <!-- The wall's one mode, and the only button here that stays pressed.
+           Framing is per tile and per picture: the Layout put the frame there,
+           this decides what sits inside it. Disabled on Home, where there is no
+           wall to frame anything on. -->
+      <button
+        class:on={framing}
+        aria-pressed={framing}
+        onclick={() => (framing = !framing)}
+        disabled={home || !!editing}
+        title={framing
+          ? "Framing: drag a tile's picture inside its mask. Escape leaves"
+          : "Frame a tile's picture inside its mask — drag it, corners resize, the top handle turns"}
+      >
+        Frame pictures
       </button>
       <!-- The count is the point. Baking skips any tile the picture does not
            cover completely — a tile's base is a full-bleed crop, so half of one
@@ -1751,7 +1788,7 @@
           {/if}
         </div>
       {:else}
-        <GridCanvas bind:this={grid} />
+        <GridCanvas bind:this={grid} {framing} />
       {/if}
     </div>
 

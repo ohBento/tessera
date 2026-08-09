@@ -15,6 +15,7 @@ import {
   findLayer,
   groupShift,
   isGradient,
+  framed,
   layerAsset,
   layerIcon,
   layerText,
@@ -1161,6 +1162,8 @@ export async function buildGrid(
     const box = { w: TILE_W, h: TILE_H, x: at.x, y: at.y };
     const texts = m.tiles[id]?.text ?? {};
     const swaps = m.tiles[id]?.swap ?? {};
+    // Which part of its picture this tile shows — see framed().
+    const frames = m.tiles[id]?.frame ?? {};
     /* A tile can carry a cutter now: a per-tile layer that is masked brings the
      * shape along, because the Layout it came from is not there to look it up
      * in. Same rule as in a Layout — a shape that is cutting something has
@@ -1177,7 +1180,7 @@ export async function buildGrid(
        * whether a key exists. */
       const l =
         raw.kind === "image" && raw.live
-          ? { ...raw, asset: layerAsset(swaps, raw) }
+          ? framed({ ...raw, asset: layerAsset(swaps, raw) }, frames[raw.id])
           : /* And this tile's own class, where it names one. Same map, same
              * bargain: the Layout places and colours the icon once, each
              * portrait says which class it is. */
