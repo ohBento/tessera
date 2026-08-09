@@ -90,6 +90,7 @@ import {
   type SnapshotRef,
   tauriDeps,
 } from "./project";
+import { TILE_H } from "./bmp";
 import { textWidth, type SceneDeps, type Tagged } from "./scene";
 
 export const app = $state({
@@ -1275,6 +1276,8 @@ type Transform = {
   scaleH: number;
   fx: number;
   fy: number;
+  /** Only a caption has one, and only once a height handle was dragged. */
+  boxH?: number;
   /** Only a picture has one, and only once its side handles were used. */
   crop?: Inset;
 };
@@ -1307,6 +1310,8 @@ function resize(layer: Layer, patch: Transform) {
     if (dragged && (layer.w !== undefined || Math.abs(patch.scale - textWidth(layer)) > 0.002)) {
       layer.w = patch.scale;
     }
+    // Only ever present when a top or bottom handle was actually dragged.
+    if (patch.boxH !== undefined) layer.h = patch.boxH / TILE_H;
   } else if (layer.kind === "shape") {
     /* Multiplied by what Fabric actually scaled, not set from the object's
      * measured width. A shape is built at exactly w×h with scaleX 1, so a

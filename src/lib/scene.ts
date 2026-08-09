@@ -406,6 +406,11 @@ function textObject(l: TextLayer, box: { w: number; h: number; x: number; y: num
      never in competition: the mask is baked into pixels long before this. */
   const held = captionBox(l, box);
   if (held) {
+    /* Stamped onto the object, because the handles and the snap have no other
+     * way to know it: a Textbox's own height is the height of its lines, which
+     * is what the box is there to disagree with. Without this the first drag
+     * measured the text and jumped. */
+    (obj as fabric.Object & { boxH?: number }).boxH = held.height;
     obj.clipPath = new fabric.Rect({
       ...held,
       originX: "left",
@@ -580,15 +585,18 @@ export const sideHandles = (l: Layer) => freeScale(l) || l.kind === "image";
 export const scaleControls = (l: Layer) => {
   const corners = l.kind !== "text";
   const sides = sideHandles(l);
+  const text = l.kind === "text";
   return {
     tl: corners,
     tr: corners,
     bl: corners,
     br: corners,
-    ml: sides || l.kind === "text",
-    mr: sides || l.kind === "text",
-    mt: sides,
-    mb: sides,
+    ml: sides || text,
+    mr: sides || text,
+    // A caption's top and bottom set the height its lines are cut at — see
+    // heightControls. They are not a scale either; nothing here is.
+    mt: sides || text,
+    mb: sides || text,
   };
 };
 
@@ -668,6 +676,55 @@ const cropControl = (side: CropSide, x: number, y: number) =>
     actionHandler: (_e, transform, px, py) =>
       trimTo(transform.target as fabric.FabricImage, side, px, py),
   });
+
+/** The box a caption is held to, read off the live object mid-drag.
+ *
+ *  `boxH` is scratch: the height the handle has dragged to, in scene pixels,
+ *  before it is written back to the model as a fraction. Absent means the box
+ *  is still whatever the words need, which is the height the first drag starts
+ *  from. */
+type Boxed = fabric.Object & { boxH?: number };
+
+const boxHeightOf = (t: Boxed) => t.boxH ?? (t.height ?? 0) * (t.scaleY ?? 1);
+
+/** Drags a caption's box taller or shorter, holding the opposite edge.
+ *
+ *  The box is centred on the layer, so growing it downwards means moving the
+ *  centre down by half — the same bookkeeping trimTo does for a picture, with
+ *  the height living on the object rather than in a crop. The clipPath is
+ *  moved with it so the cut follows the pointer instead of appearing when the
+ *  drag ends. */
+export function holdTo(t: Boxed, side: "t" | "b", _x: number, y: number): boolean {
+  if ((t.angle ?? 0) % 360 !== 0) return false;
+  const was = boxHeightOf(t);
+  const centre = t.top ?? 0;
+  // The edge nobody is dragging.
+  const fixed = side === "b" ? centre - was / 2 : centre + was / 2;
+  const next = Math.max(8, side === "b" ? y - fixed : fixed - y);
+  if (Math.abs(next - was) < 0.5) return false;
+
+  t.boxH = next;
+  t.top = side === "b" ? fixed + next / 2 : fixed - next / 2;
+  const clip = t.clipPath as fabric.Rect | undefined;
+  if (clip) clip.set({ top: (t.top ?? 0) - next / 2, height: next });
+  t.setCoords();
+  return true;
+}
+
+const heightControl = (side: "t" | "b", y: number) =>
+  new fabric.Control({
+    x: 0,
+    y,
+    /* Named for what Fabric already calls a width drag on a Textbox, so both
+       ends of the box arrive at one listener and get one snap. */
+    actionName: "resizing",
+    cursorStyle: "ns-resize",
+    actionHandler: (_e, transform, px, py) => holdTo(transform.target as Boxed, side, px, py),
+  });
+
+/** Top and bottom handles that set a caption's box height. Built per object
+ *  for the same reason the crop handles are. */
+const heightControls = () => ({ mt: heightControl("t", -0.5), mb: heightControl("b", 0.5) });
 
 /** Side handles that trim rather than scale. Built per object: a Control
  *  carries no state, but assigning to `obj.controls` must not reach the
@@ -757,11 +814,15 @@ export function snapScale(
  *  never heard about it, which is why the caption was the one layer that did
  *  not snap to anything.
  *
- *  Same bargain as snapScale: the opposite edge must not move, so the width
- *  change is answered with half of it on `left` — the box is centred, so it
+ *  Both axes, because a caption's height handle is the same kind of action one
+ *  field over: `holdTo` writes `boxH`, not a scale, and reports itself as
+ *  `resizing` too.
+ *
+ *  Same bargain as snapScale: the opposite edge must not move, so the change is
+ *  answered with half of it on `left` or `top` — the box is centred, so it
  *  grows both ways unless told otherwise. */
 export function snapWidth(
-  target: fabric.Object,
+  target: Boxed,
   corner: string,
   targets: Box[],
   threshold: number,
@@ -770,19 +831,41 @@ export function snapWidth(
   if (!edges || (target.angle ?? 0) % 360 !== 0) return [];
 
   target.setCoords();
-  const box = target.getBoundingRect();
-  if (!box.width) return [];
+  const drawn = target.getBoundingRect();
+  if (!drawn.width) return [];
+  /* Vertically the object's own rect is the text, not the box — a clipped
+   * caption is drawn shorter than the lines it holds, and taller than the box
+   * when they overflow it. The box is what the handle drags and what the guide
+   * has to meet, so the height comes from there. */
+  const height = boxHeightOf(target);
+  const box = {
+    left: drawn.left,
+    width: drawn.width,
+    top: (target.top ?? 0) - height / 2,
+    height,
+  };
   const snap = snapEdges(box, edges, targets, threshold);
-  if (!snap.dx) return [];
+  if (!snap.dx && !snap.dy) return [];
 
-  const grew = edges.includes("right") ? snap.dx : -snap.dx;
-  const width = (target.width ?? 0) + grew / (target.scaleX || 1);
-  if (width <= 0) return [];
-  target.set({ width });
-  // The edge the pointer is not holding stays where it was.
-  target.left = (target.left ?? 0) + (edges.includes("right") ? grew / 2 : -grew / 2);
+  if (snap.dx) {
+    const grew = edges.includes("right") ? snap.dx : -snap.dx;
+    const width = (target.width ?? 0) + grew / (target.scaleX || 1);
+    if (width <= 0) return [];
+    target.set({ width });
+    // The edge the pointer is not holding stays where it was.
+    target.left = (target.left ?? 0) + (edges.includes("right") ? grew / 2 : -grew / 2);
+  }
+  if (snap.dy) {
+    const grew = edges.includes("bottom") ? snap.dy : -snap.dy;
+    const next = height + grew;
+    if (next <= 8) return [];
+    target.boxH = next;
+    target.top = (target.top ?? 0) + (edges.includes("bottom") ? grew / 2 : -grew / 2);
+    const clip = target.clipPath as fabric.Rect | undefined;
+    if (clip) clip.set({ top: (target.top ?? 0) - next / 2, height: next });
+  }
   target.setCoords();
-  return snap.guides.filter((g) => g.axis === "x");
+  return snap.guides.filter((g) => (g.axis === "x" ? !!snap.dx : !!snap.dy));
 }
 
 /** `allowRotate` is false for a grid-space image: it gets baked into every
@@ -803,6 +886,7 @@ function makeInteractive(obj: fabric.Object, l: Layer, allowRotate = true) {
   obj.cornerStrokeColor = "#cbb8ff";
   obj.transparentCorners = false;
   if (l.kind === "image") obj.controls = { ...obj.controls, ...cropControls() };
+  if (l.kind === "text") obj.controls = { ...obj.controls, ...heightControls() };
   obj.setControlsVisibility({ ...scaleControls(l), mtr: allowRotate });
 }
 
@@ -1265,6 +1349,9 @@ export function readBackLayout(obj: fabric.Object) {
     fy,
     /** What the side handles trimmed off the picture, if anything. */
     crop: cropOff(obj),
+    /** What a caption's top or bottom handle dragged its box to, if either
+     *  was used. Scene pixels; the model keeps a fraction. */
+    boxH: (obj as { boxH?: number }).boxH,
     rotation: (((angle - turn) % 360) + 360) % 360,
   };
 }

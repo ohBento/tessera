@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import { TILE_H, TILE_W } from "./bmp";
 import { newImageLayer, newLayout, newShapeLayer, newTextLayer, type Layer } from "./model";
-import { buildLayout, readBackLayout, scaleControls, snapWidth, trimTo } from "./scene";
+import { buildLayout, holdTo, readBackLayout, scaleControls, snapWidth, trimTo } from "./scene";
 import { testDeps } from "../test/images";
 
 /** A Layout with two blocks at known spots, built onto a real interactive
@@ -75,16 +75,19 @@ describe("free scaling", () => {
       await picture.canvas.dispose();
     }
 
-    /* A caption's sides set the width its words wrap at — a field of its own
-     * now, so the handle has somewhere honest to land. Top and bottom stay
-     * off: the height is however many lines the words need, and a handle that
-     * springs back is worse than no handle. */
+    /* A caption has all four, and not one of them is a scale: the sides set the
+     * width its words wrap at, the top and bottom the height they are cut at.
+     * Asserting the action as well as the handle, for the same reason the
+     * picture above does — a side control that scaled a caption would look
+     * identical here and would spring back on the next rebuild. */
     const text = await one(() => newTextLayer());
     try {
       expect(text.obj.isControlVisible("ml")).toBe(true);
       expect(text.obj.isControlVisible("mr")).toBe(true);
-      expect(text.obj.isControlVisible("mt")).toBe(false);
-      expect(text.obj.isControlVisible("mb")).toBe(false);
+      expect(text.obj.isControlVisible("mt")).toBe(true);
+      expect(text.obj.isControlVisible("mb")).toBe(true);
+      expect(text.obj.controls.mt.actionName).toBe("resizing");
+      expect(text.obj.controls.mb.actionName).toBe("resizing");
     } finally {
       await text.canvas.dispose();
     }
@@ -98,7 +101,7 @@ describe("free scaling", () => {
      * stayed green. Pinned here on the function both of them call. */
     expect(scaleControls(newTextLayer())).toEqual({
       tl: false, tr: false, bl: false, br: false,
-      ml: true, mr: true, mt: false, mb: false,
+      ml: true, mr: true, mt: true, mb: true,
     });
     expect(scaleControls(newShapeLayer("rect"))).toEqual({
       tl: true, tr: true, bl: true, br: true,
@@ -574,6 +577,71 @@ describe("a caption's width handle snaps", () => {
       const before = obj.getBoundingRect();
       const guides = snapWidth(obj, "mr", [{ left: before.left + before.width + 4, top: 0, width: 0, height: TILE_H }], 8);
       expect(guides).toEqual([]);
+    } finally {
+      await canvas.dispose();
+    }
+  });
+});
+
+describe("a caption's height handle", () => {
+  async function one(make: () => Layer) {
+    const el = document.createElement("canvas");
+    document.body.append(el);
+    const canvas = new fabric.Canvas(el, { width: TILE_W, height: TILE_H });
+    const layout = newLayout("H");
+    layout.layers.push(make());
+    await buildLayout(canvas, layout, testDeps, true);
+    return { canvas, obj: canvas.getObjects()[0] as fabric.Object & { boxH?: number } };
+  }
+
+  const held = () =>
+    Object.assign(newTextLayer(), { x: 0.5, y: 0.5, w: 0.4, h: 0.2, text: "Text" });
+
+  it("drags the bottom edge and leaves the top one where it was", async () => {
+    /* The box is centred on the layer, so growing it downwards has to move the
+     * centre down by half — the same bookkeeping a picture's crop does. */
+    const { canvas, obj } = await one(held);
+    try {
+      const was = 0.2 * TILE_H;
+      const topEdge = (obj.top ?? 0) - was / 2;
+
+      expect(holdTo(obj, "b", 0, topEdge + 300)).toBe(true);
+
+      expect(obj.boxH).toBeCloseTo(300, 0);
+      expect((obj.top ?? 0) - (obj.boxH ?? 0) / 2).toBeCloseTo(topEdge, 0);
+      // The clip follows the pointer rather than appearing when the drag ends.
+      expect((obj.clipPath as fabric.Rect).height).toBeCloseTo(300, 0);
+    } finally {
+      await canvas.dispose();
+    }
+  });
+
+  it("never lets the box collapse to nothing", async () => {
+    const { canvas, obj } = await one(held);
+    try {
+      const topEdge = (obj.top ?? 0) - (0.2 * TILE_H) / 2;
+      holdTo(obj, "b", 0, topEdge - 500);
+      expect(obj.boxH).toBeGreaterThanOrEqual(8);
+    } finally {
+      await canvas.dispose();
+    }
+  });
+
+  it("snaps the dragged edge onto a nearby line", async () => {
+    /* The height handle reports itself as `resizing`, like the width one, so
+     * both ends of the box arrive at the same listener and get the same pull —
+     * which is the whole reason snapWidth measures the box vertically rather
+     * than the text. */
+    const { canvas, obj } = await one(held);
+    try {
+      const was = 0.2 * TILE_H;
+      const bottom = (obj.top ?? 0) + was / 2;
+      const line = { left: 0, top: bottom + 4, width: TILE_W, height: 0 };
+
+      const guides = snapWidth(obj, "mb", [line], 8);
+
+      expect(guides.length).toBe(1);
+      expect((obj.top ?? 0) + (obj.boxH ?? 0) / 2).toBeCloseTo(line.top, 0);
     } finally {
       await canvas.dispose();
     }
