@@ -1484,34 +1484,43 @@
              Deliberately still pictures: rendering the Layout into forty-four
              of them on every slider drag would cost more than the answer is
              worth, and the big one shows it already. -->
-        {#if bedStrip && bedChoices().length > 1}
-          <div class="bedstrip" style:padding-top="34px">
-            {#each bedChoices() as id (id)}
-              {@const wearing = tileLayers(id).some((l) => l.layoutId === editing.id)}
-              <button
-                class="bed"
-                class:on={bedFor(editing.id) === id}
-                class:wearing
-                title={wearing ? `${id} — already wearing this layout` : id}
-                onclick={() => setBedTile(id)}
-              >
-                <canvas
-                  class="thumb"
-                  width="31"
-                  height="40"
-                  use:portrait={{ id, ready: !!app.deps }}
-                ></canvas>
-              </button>
-            {/each}
+        {#if bedChoices().length > 1}
+          <!-- A column of its own beside the tools, not a panel laid over the
+               sheet: the faces are for picking from, and something that covers
+               what it is meant to help with is not a help. Big enough to
+               recognise a character at a glance — at thumbnail size the point
+               of the strip was lost. -->
+          <div class="bedcol">
+            <button
+              class="bedtoggle"
+              title={bedStrip ? "Hide the tile strip" : "Show the tile strip"}
+              onclick={() => (bedStrip = !bedStrip)}
+            >
+              {bedStrip ? "‹" : "›"}
+            </button>
+            {#if bedStrip}
+              <div class="bedstrip">
+                {#each bedChoices() as id (id)}
+                  {@const wearing = tileLayers(id).some((l) => l.layoutId === editing.id)}
+                  <button
+                    class="bed"
+                    class:on={bedFor(editing.id) === id}
+                    class:wearing
+                    title={wearing ? `${id} — already wearing this layout` : id}
+                    onclick={() => setBedTile(id)}
+                  >
+                    <canvas
+                      class="thumb"
+                      width="62"
+                      height="80"
+                      use:portrait={{ id, ready: !!app.deps }}
+                    ></canvas>
+                  </button>
+                {/each}
+              </div>
+            {/if}
           </div>
         {/if}
-        <button
-          class="bedtoggle"
-          title={bedStrip ? "Hide the tile strip" : "Show the tile strip"}
-          onclick={() => (bedStrip = !bedStrip)}
-        >
-          {bedStrip ? "‹" : "›"}
-        </button>
         <LayoutCanvas bind:this={sheet} />
       {:else if home}
         <!-- The start view, always. With several accounts sharing one folder
@@ -2271,25 +2280,28 @@
   .inert-name {
     cursor: default;
   }
-  /* Against the left edge of the stage, over the sheet's margin rather than
-     beside it: the sheet is centred and has room to spare there. */
+  /* Its own column in the row, so the sheet keeps the space it had. */
+  .bedcol {
+    display: flex;
+    flex: none;
+    flex-direction: column;
+    align-items: stretch;
+    min-height: 0;
+    border-right: 1px solid #241e3a;
+    background: #140f24;
+  }
   .bedstrip {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    z-index: 5;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 6px;
     padding: 6px;
     overflow-y: auto;
-    background: rgb(0 0 0 / 0.35);
+    min-height: 0;
   }
   .bed {
-    padding: 2px;
+    padding: 3px;
     border: 1px solid transparent;
-    border-radius: 3px;
+    border-radius: 4px;
     background: none;
     line-height: 0;
   }
@@ -2301,15 +2313,12 @@
     box-shadow: inset 0 0 0 2px #3a2b5e;
   }
   .bedtoggle {
-    position: absolute;
-    top: 6px;
-    left: 0;
-    z-index: 6;
+    flex: none;
     padding: 2px 5px;
-    opacity: 0.6;
-  }
-  .bedtoggle:hover {
-    opacity: 1;
+    border: 0;
+    border-bottom: 1px solid #241e3a;
+    border-radius: 0;
+    background: none;
   }
   .sheetback {
     position: fixed;
