@@ -1455,21 +1455,6 @@
       >
         Image across the wall…
       </button>
-      <!-- The wall's one mode, and the only button here that stays pressed.
-           Framing is per tile and per picture: the Layout put the frame there,
-           this decides what sits inside it. Disabled on Home, where there is no
-           wall to frame anything on. -->
-      <button
-        class:on={framing}
-        aria-pressed={framing}
-        onclick={() => (framing = !framing)}
-        disabled={home || !!editing}
-        title={framing
-          ? "Framing: drag a tile's picture inside its mask. Escape leaves"
-          : "Frame a tile's picture inside its mask — drag it, corners resize, the top handle turns"}
-      >
-        Frame pictures
-      </button>
       <!-- The count is the point. Baking skips any tile the picture does not
            cover completely — a tile's base is a full-bleed crop, so half of one
            cannot be stored — and that rule used to be invisible until the wall
@@ -1576,6 +1561,28 @@
       {/snippet}
       {@render tool("Undo (Ctrl+Z)", "↶", () => void undoEdit(), !undoable())}
       {@render tool("Redo (Ctrl+Y)", "↷", () => void redoEdit(), !redoable())}
+      <span class="gap"></span>
+      <!-- The wall's one mode, and the only button in this rail that stays
+           pressed. Its own group under the undo pair, away from the insert
+           tools: those add a layer to a Layout, this changes what a drag on the
+           wall means. A crop frame with a picture's diagonal inside it — the
+           mark every editor uses for "which part of this shows". -->
+      <button
+        class="mode"
+        class:on={framing}
+        aria-pressed={framing}
+        onclick={() => (framing = !framing)}
+        disabled={home || !!editing || !!app.busy}
+        title={framing
+          ? "Framing a tile's picture: drag to move it, corners zoom, the top handle turns. Escape leaves"
+          : "Frame a tile's picture inside its mask"}
+      >
+        <svg width="17" height="17" viewBox="0 0 17 17" aria-hidden="true">
+          <path d="M4.5 1 V12.5 H16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+          <path d="M1 4.5 H12.5 V16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+          <path d="M6.5 10.5 L8.8 7.6 L10.4 9.4 L12 7.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" opacity="0.8" />
+        </svg>
+      </button>
       <span class="gap"></span>
       <!-- Framed mountain and sun, the icon every editor uses for a picture —
            no Unicode glyph reads as one at this size. -->
@@ -2666,6 +2673,15 @@
   .tools .gap {
     grid-column: 1 / -1;
     height: 6px;
+  }
+  /* A mode reads as pressed, not as hovered: filled, outlined in the accent,
+     and it stays that way with the pointer somewhere else entirely. The tool
+     buttons beside it do something and are done; this one is a state. */
+  .tools button.mode.on {
+    background: #3a2f68;
+    border-color: #a685ff;
+    box-shadow: inset 0 0 0 1px #a685ff;
+    color: #efeaff;
   }
   /* A glyph, not a word: it sits inside the document group but is not a
      document, and the tabs beside it are the ones that should carry the reading

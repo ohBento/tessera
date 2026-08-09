@@ -157,8 +157,10 @@ describe("framing a picture on the wall", () => {
       );
       const wallCanvas = (window as unknown as { tesseraWall: Canvas }).tesseraWall;
 
-      const button = [...document.querySelectorAll("button")].find(
-        (b) => b.textContent!.trim() === "Frame pictures",
+      // By its title: the tool is an icon in the rail, so there is no text to
+      // match, and the title is what a hand hovers to find it too.
+      const button = [...document.querySelectorAll("button")].find((b) =>
+        b.title.startsWith("Frame a tile's picture"),
       ) as HTMLButtonElement;
       button.click();
       await until(() => button.getAttribute("aria-pressed") === "true", 8000, "the framing tool to switch on");

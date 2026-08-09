@@ -634,6 +634,18 @@
     /* Clearing during a rebuild is Fabric dropping its active object, not the
      * user letting go of the layer — letting that through would silently
      * deselect on every structural edit. */
+    /* The frame belongs to the mode, not to the click. Fabric drops the
+       selection whenever a press lands on bare canvas, which in this mode is
+       most presses — so the violet box and its handles vanished under the hand
+       and had to be fetched back by clicking the tile again. It stays until the
+       mode is left. */
+    canvas.on("selection:cleared", () => {
+      if (framing && stand && canvas!.getObjects().includes(stand)) {
+        canvas!.setActiveObject(stand);
+        canvas!.requestRenderAll();
+      }
+    });
+
     canvas.on("selection:cleared", () => {
       if (!rebuilding) selectLayer("");
     });
