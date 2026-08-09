@@ -556,6 +556,11 @@
       if (e.code !== "Space") return;
       // Not while typing into a field, or the space bar stops producing spaces.
       if (isTyping(document.activeElement)) return;
+      /* Held, not pressed: space arms panning and the left button still does
+         the dragging. The HUD used to read "space or middle-drag = pan", which
+         put the two on a level and had people pressing space alone. Middle-drag
+         needs no explanation and no second hand, so it is the one named; space
+         keeps working for anyone who reaches for it out of habit. */
       spaceHeld = down;
       host.style.cursor = down ? "grab" : "";
       if (down) e.preventDefault();
@@ -584,7 +589,7 @@
          them speaking German read as a half-finished build. -->
     {Math.round(zoom * 100)}% &middot; {TILE_W}&times;{TILE_H} &middot; {zoomLocked
       ? "wheel locked"
-      : "wheel = zoom"} &middot; space or middle-drag = pan
+      : "wheel = zoom"} &middot; middle-drag = pan
     <!-- Written out rather than drawn as 🔒/🔓: an emoji is painted by the
          system font in its own colours, which fights the theme and changes
          shape between machines — the rule App.svelte states beside its own
