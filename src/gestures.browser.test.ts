@@ -172,6 +172,13 @@ describe("framing a picture on the wall", () => {
       await dragObject(wallCanvas, wallCanvas.getActiveObject()!, 60, 40);
       await until(() => !!app.manifest.tiles[tile].frame?.[pic.id], 5000, "the frame to be written");
 
+      /* The frame is still standing after the release. A rebuild follows the
+       * write immediately, and it used to take the frame with it: it blinked
+       * out at the end of every drag and came back a moment later, which on a
+       * few nudges in a row is all one sees. */
+      expect(wallCanvas.getObjects().some((o: FabricObject) => (o as { framing?: boolean }).framing)).toBe(true);
+      expect(wallCanvas.getActiveObject()).toBeTruthy();
+
       const f = app.manifest.tiles[tile].frame![pic.id];
       expect(Math.abs(f.x)).toBeGreaterThan(0);
       expect(Math.abs(f.y)).toBeGreaterThan(0);

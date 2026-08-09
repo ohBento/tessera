@@ -109,7 +109,13 @@
     };
 
     dropFrameTools();
+    /* `keep` so a rebuild leaves them standing. The wall is rebuilt the moment
+       a frame is written, which is the moment the mouse comes up — and the
+       frame used to be swept away with everything else and fetched back
+       asynchronously, so it blinked out under the hand at the end of every
+       drag. buildGrid clears its own objects only. */
     img.set({ ...place, opacity: 0.28, selectable: false, evented: false });
+    Object.assign(img, { keep: true });
     img.scaleToWidth(width);
     ghost = img;
     canvas.add(img);
@@ -127,7 +133,7 @@
       hasBorders: true,
       objectCaching: false,
     });
-    Object.assign(stand, { framing: true });
+    Object.assign(stand, { framing: true, keep: true });
     canvas.add(stand);
     canvas.setActiveObject(stand);
     target = { tileId, layerId };
@@ -162,10 +168,9 @@
     });
   }
 
-  /* Leaving the mode takes its furniture with it, and a rebuild wipes every
-     object off the canvas — so the pair is put back once the wall is up
-     again, on the same picture, or the frame would vanish under your hand the
-     moment you moved it. */
+  /* Leaving the mode takes its furniture with it. Rebuilds no longer do — the
+     pair is marked `keep` — so this only has to put the frame back if something
+     else removed it, which is the case when the tile it framed stops existing. */
   $effect(() => {
     if (!framing) {
       target = null;
@@ -175,7 +180,7 @@
     }
     const want = target;
     void app.version;
-    if (want && canvas && !canvas.getObjects().includes(stand as fabric.Object))
+    if (want && canvas && stand && !canvas.getObjects().includes(stand))
       void frameAt(want.tileId, want.layerId);
   });
 

@@ -1107,7 +1107,19 @@ export async function buildGrid(
   deps: SceneDeps,
   interactive = false,
 ): Promise<void> {
-  canvas.remove(...canvas.getObjects());
+  /* Collected, then swapped in one pass at the end.
+   *
+   * Clearing first and filling as the pictures arrive meant the wall flashed
+   * on every rebuild — and a rebuild runs on every edit, so nudging a picture
+   * a few times made the whole grid blink under the hand. Held back, the old
+   * wall simply stays up until the new one is ready; at 63ms a rebuild nobody
+   * sees a pause, and on the first open the tiles arrive together instead of
+   * filling in one black square at a time.
+   *
+   * Objects someone else put here are left alone — the framing tool keeps its
+   * frame and its ghost on this canvas, and they are not this function's to
+   * throw away. */
+  const out: fabric.Object[] = [];
 
   const ids = wall.ids;
   const grid = gridSize(ids.length);
@@ -1137,7 +1149,7 @@ export async function buildGrid(
   const backgrounds = await Promise.all(
     ids.map((id, index) => background(m.tiles[id]?.base ?? null, id, deps, cellAt(index))),
   );
-  for (const obj of backgrounds) canvas.add(obj);
+  out.push(...backgrounds);
 
   /* The picture spread across this wall. Once, not per tile — drawing it per
    * cell would paint the same pixels COLS*rows times over.
@@ -1154,7 +1166,7 @@ export async function buildGrid(
     if (interactive) makeInteractive(obj, l, false);
     else obj.selectable = obj.evented = false;
     Object.assign(obj, { layerId: l.id, tileId: "", space: "grid", locked: !!l.locked });
-    canvas.add(obj);
+    out.push(obj);
   }
 
   for (const [index, id] of ids.entries()) {
@@ -1271,10 +1283,12 @@ export async function buildGrid(
       if (interactive) makeInteractive(obj, locked ? { ...l, locked: true } : l);
       else obj.selectable = obj.evented = false;
       Object.assign(obj, { layerId: l.id, tileId: id, space: "tile", locked });
-      canvas.add(obj);
+      out.push(obj);
     }
   }
 
+  canvas.remove(...canvas.getObjects().filter((o) => !(o as { keep?: boolean }).keep));
+  for (const obj of out) canvas.add(obj);
   canvas.renderAll();
 }
 
