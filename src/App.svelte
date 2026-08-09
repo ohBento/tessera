@@ -2280,7 +2280,10 @@
   .inert-name {
     cursor: default;
   }
-  /* Its own column in the row, so the sheet keeps the space it had. */
+  /* Its own column in the row, so the sheet keeps the space it had — and no
+     surface of its own: the tools column beside it is separated by one hairline
+     and nothing else, and a second shade here would invent a panel the app does
+     not otherwise have. */
   .bedcol {
     display: flex;
     flex: none;
@@ -2288,7 +2291,6 @@
     align-items: stretch;
     min-height: 0;
     border-right: 1px solid #241e3a;
-    background: #140f24;
   }
   .bedstrip {
     display: flex;
