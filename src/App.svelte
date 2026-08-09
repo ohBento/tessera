@@ -101,6 +101,7 @@
     stripSelectedTiles,
     setTileText,
     pickTileImage,
+    setLayerField,
     setTileAsset,
     tileAsset,
     tileCaptions,
@@ -147,8 +148,7 @@
       return;
     }
     if (iconsOpen && key === "escape") {
-      iconsOpen = false;
-      iconTarget = null;
+      closeIconSheet();
       e.preventDefault();
       return;
     }
@@ -181,9 +181,27 @@
    *  has no button to hang one on. */
   let keysOpen = $state(false);
   let iconsOpen = $state(false);
-  /* Who the icon grid is answering for: a tile naming its class, or nobody —
-     in which case picking one inserts a new layer in the Layout. */
-  let iconTarget = $state<{ tile: string; layer: string } | null>(null);
+  let iconFilter = $state("");
+  const closeIconSheet = () => {
+    iconsOpen = false;
+    iconTarget = null;
+    iconFilter = "";
+  };
+  /* What the grid is answering, in the words of the thing that asked. */
+  const iconHeading = () =>
+    !iconTarget ? "Class icon" : iconTarget.tile ? "Class for this tile" : "Class for this layer";
+  /* The class already in force, so the grid can mark it: the tile's own where a
+     tile asked, otherwise the layer's. */
+  const iconInForce = () => {
+    if (!iconTarget) return undefined;
+    const layer = findLayer(openLayout()?.layers ?? [], iconTarget.layer);
+    const own = layer?.kind === "shape" ? layer.icon : undefined;
+    return iconTarget.tile ? (tileAsset(iconTarget.tile, iconTarget.layer) ?? own) : own;
+  };
+  /* Who the icon grid is answering for: a tile naming its class, a Layout
+     layer changing the class it is, or nobody — in which case picking one
+     inserts a new layer. */
+  let iconTarget = $state<{ tile?: string; layer: string } | null>(null);
 
   /** What the sheet lists. Written out rather than derived from the handler:
    *  half of these are canvas gestures that no handler declares, and a list
@@ -1206,11 +1224,20 @@
       {#each tileIcons(id) as badge (badge.id)}
         {@const chosen = tileAsset(id, badge.id)}
         {@const showing = chosen ?? badge.icon}
-        <p class="sub">{layerLabel(badge)}</p>
+        <!-- "Class", not the layer's name. An icon layer is auto-named after
+             the class it was made with — Witch01 — so the layer's name over a
+             tile showing Ranger asserted a class the tile does not have, forty
+             times down the list. The name is still reachable in the Layout;
+             here the question is which class this portrait is. -->
+        <p class="sub">Class</p>
         <div class="gallery indent">
           <button
-            class="swatch"
-            title={showing ? `${showing} — pick another class` : "Pick a class"}
+            class="swatch art"
+            title={chosen
+              ? `${chosen} — pick another class`
+              : showing
+                ? `${showing}, from the layer — pick a class for this tile`
+                : "Pick a class"}
             onclick={() => {
               iconTarget = { tile: id, layer: badge.id };
               iconsOpen = true;
@@ -1715,7 +1742,14 @@
         {@render layerRows(layoutLayers, false, null)}
         <p class="empty">Right-click a layer to group, duplicate, rename or delete.</p>
         {#if selectedLayoutLayer}
-          <Properties layer={selectedLayoutLayer} inLayout />
+          <Properties
+            layer={selectedLayoutLayer}
+            inLayout
+            onPickClass={(layerId) => {
+              iconTarget = { layer: layerId };
+              iconsOpen = true;
+            }}
+          />
         {/if}
       {:else}
         {#if wallLayers.length}
@@ -2168,28 +2202,25 @@
     role="button"
     tabindex="-1"
     aria-label="Close"
-    onclick={() => {
-      iconsOpen = false;
-      iconTarget = null;
-    }}
-    onkeydown={(e) => {
-      if (e.key === "Enter") {
-        iconsOpen = false;
-        iconTarget = null;
-      }
-    }}
+    onclick={closeIconSheet}
+    onkeydown={(e) => e.key === "Enter" && closeIconSheet()}
   ></div>
   <div class="sheet" role="dialog" aria-label="Class icons">
-    <h2>{iconTarget ? "Class for this tile" : "Class icon"}</h2>
+    <h2>{iconHeading()}</h2>
+    <!-- Thirty-three silhouettes, and the one being replaced is somewhere among
+         them. Typing narrows; the class in force is outlined, the same way the
+         picture gallery marks the picture in force. -->
+    <input class="filter" placeholder="Filter…" bind:value={iconFilter} />
     <div class="icongrid">
-      {#each ICON_NAMES as name (name)}
+      {#each ICON_NAMES.filter( (n) => n.toLowerCase().includes(iconFilter.trim().toLowerCase()), ) as name (name)}
         <button
+          class:on={name === iconInForce()}
           title={name}
           onclick={() => {
             const target = iconTarget;
-            iconsOpen = false;
-            iconTarget = null;
-            if (target) void setTileAsset(target.tile, target.layer, name);
+            closeIconSheet();
+            if (target?.tile) void setTileAsset(target.tile, target.layer, name);
+            else if (target) void setLayerField(target.layer, "icon", name);
             else void addLayoutShape("icon", name);
           }}
         >
@@ -2210,12 +2241,7 @@
         </button>
       {/each}
     </div>
-    <button
-      onclick={() => {
-        iconsOpen = false;
-        iconTarget = null;
-      }}>Close</button
-    >
+    <button onclick={closeIconSheet}>Close</button>
   </div>
 {/if}
 
@@ -2491,6 +2517,16 @@
   }
   .icongrid button:hover {
     background: #2f2652;
+  }
+  /* The class in force, marked the way the picture gallery marks the picture in
+     force — the same sign for the same fact. */
+  .icongrid button.on {
+    border-color: #a685ff;
+    box-shadow: inset 0 0 0 1px #a685ff;
+  }
+  .sheet .filter {
+    width: 100%;
+    margin-bottom: 8px;
   }
   .icongrid .art {
     display: block;
@@ -2804,9 +2840,10 @@
     max-height: 100%;
     object-fit: contain;
   }
-  /* A class icon on a swatch: white artwork, so it needs the same chequer
-     behind it that a picture with transparency gets. */
-  .swatch svg {
+  /* A class icon fills its swatch the way a picture does. Scoped to the icon
+     swatch and not to `.swatch svg`: that also matched the "no picture" glyph
+     in the gallery above, which carries its own 18px size and arrived at 34. */
+  .swatch.art svg {
     width: 100%;
     height: 100%;
   }

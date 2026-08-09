@@ -38,7 +38,13 @@
 
   /** Some fields only mean something in a Layout — "editable in grid" is about what
    *  happens at stamp time, and a layer already on a tile is past that. */
-  let { layer, inLayout = false }: { layer: Layer; inLayout?: boolean } = $props();
+  let {
+    layer,
+    inLayout = false,
+    /* Opens the class grid on this layer. The grid lives in App, beside the one
+       the toolbar opens, so this is a callback rather than a second copy. */
+    onPickClass,
+  }: { layer: Layer; inLayout?: boolean; onPickClass?: (layerId: string) => void } = $props();
 
   const set = (key: LayerField, value: unknown) => void setLayerField(layer.id, key, value);
 
@@ -278,16 +284,35 @@
          character's class icon needs the block to travel with the icon — the
          rule says a per-tile cutter may only cut a per-tile layer, and until
          the checkbox existed here a shape could never say yes to it. -->
+    <!-- An icon says what it is for. The switch is the same one, but for a
+         class icon it is not an option: without it the icon bakes into the
+         stamp and forty-four portraits wear the class the layer was made with,
+         with no error and no row in the tile panel to say otherwise. The label
+         that hides that is the reason the feature looked broken. -->
     <label
       class="check"
-      title="Makes this layer travel to the tiles — so a per-tile mask can cut it"
+      title={layer.shape === "icon"
+        ? "Each tile picks its own class. Without this, every tile wears this layer's class."
+        : "Makes this layer travel to the tiles — so a per-tile mask can cut it"}
     >
       <input
         type="checkbox"
         checked={layer.perTile}
         onchange={(e) => set("perTile", e.currentTarget.checked)}
       />
-      Editable in grid
+      {layer.shape === "icon" ? "A class per tile" : "Editable in grid"}
+    </label>
+  {/if}
+  <!-- The class the layer itself is. Until this row existed the only writer of
+       it was the moment of insertion, so a wrong pick meant delete and insert
+       again — which mints a new layer id and leaves every class already chosen
+       on a tile pointing at a layer that is gone. -->
+  {#if layer.shape === "icon" && onPickClass}
+    <label class="field">
+      <span>Class</span>
+      <button class="wide" onclick={() => onPickClass(layer.id)}>
+        {layer.icon || "Pick a class…"}
+      </button>
     </label>
   {/if}
   <!-- Width and height are the one size the canvas handles cannot give you
@@ -1050,6 +1075,12 @@
      glyph of the thing it turns on — one colour fading out — rather than being
      a painted ramp itself, so "on" is said once, by the border, instead of
      twice. */
+  /* Fills the column the sliders start in, so the class reads as this layer's
+     value rather than as a button someone parked in the row. */
+  button.wide {
+    flex: 1;
+    text-align: left;
+  }
   button.ramp {
     flex: none;
     display: inline-flex;

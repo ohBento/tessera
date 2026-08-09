@@ -1034,8 +1034,18 @@ async function cutToShape(
    * none, so there is nothing to cut with and the layer draws whole, exactly
    * as it does when the cutter cannot be resolved at all. */
   const stencilLayer =
-    cutter.kind === "image" ? { ...cutter, asset: layerAsset(swaps, cutter) } : cutter;
+    cutter.kind === "image"
+      ? { ...cutter, asset: layerAsset(swaps, cutter) }
+      : /* And the tile's own class, where a class icon is the one cutting. The
+         * whole point of the pair — a block of colour cut to each character's
+         * class — lives here, and it read the Layout's class for every tile
+         * while the tile row went on offering a picker that moved nothing. */
+        cutter.kind === "shape" && cutter.shape === "icon"
+        ? { ...cutter, icon: layerIcon(swaps, cutter) }
+        : cutter;
   if (stencilLayer.kind === "image" && !stencilLayer.asset) return undefined;
+  if (stencilLayer.kind === "shape" && stencilLayer.shape === "icon" && !stencilLayer.icon)
+    return undefined;
 
   const shape = await layerObject(
     silhouette(stencilLayer),
