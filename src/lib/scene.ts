@@ -1037,9 +1037,14 @@ async function cutToShape(
   /* The cutter's own per-tile picture, where the tile chose one. It is the
    * same layer either way — it just happens to be cutting rather than drawing,
    * and it used to keep the Layout's picture in that role while honouring the
-   * tile's in the other. "" is a real answer: this tile deliberately shows
-   * none, so there is nothing to cut with and the layer draws whole, exactly
-   * as it does when the cutter cannot be resolved at all. */
+   * tile's in the other.
+   *
+   * "" is a real answer, and it means this tile shows nothing: no picture to
+   * cut with is not the same as no mask, so the layer does not fall back to
+   * drawing whole — the caller drops it. Chosen deliberately on 2026-08-09
+   * over the other reading, because a tile that was told "no icon here" asking
+   * for a bare rectangle of paint instead is the louder surprise. The comment
+   * used to promise the opposite of what the code did. */
   const stencilLayer =
     cutter.kind === "image"
       ? { ...cutter, asset: layerAsset(swaps, cutter) }
