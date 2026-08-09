@@ -259,7 +259,15 @@
       const picked = new Set(ids ? ids.split(" ") : []);
       for (const o of canvas.getObjects()) {
         if (!(o as { stencil?: boolean }).stencil) continue;
-        o.evented = picked.has((o as { layerId?: string }).layerId ?? "");
+        const mine = picked.has((o as { layerId?: string }).layerId ?? "");
+        o.evented = mine;
+        /* Awake is not enough: Fabric hands a click to the topmost object that
+         * hears, and what a stencil cuts is drawn above it. So the row woke it
+         * and the pointer still grabbed the picture instead — the mask could
+         * only be moved by locking the layer it cuts. Brought to the front
+         * while it is picked, which costs nothing to look at because it paints
+         * nothing, and the next rebuild puts the order back from the model. */
+        if (mine) canvas.bringObjectToFront(o);
       }
 
       const objs = objectsFor(ids ? ids.split(" ") : []);
