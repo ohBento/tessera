@@ -166,7 +166,15 @@
        stamp off a portrait with one press, and a stamp is the work of a whole
        design rather than one layer. Typing is already excluded above, so a
        caption being edited keeps its own Delete. */
-    if ((key === "delete" || key === "backspace") && editing && app.layoutSelection.length) {
+    if (
+      (key === "delete" || key === "backspace") &&
+      editing &&
+      app.layoutSelection.length &&
+      // Not while a sheet is up: the layer underneath is not what is being
+      // looked at, and Escape is the key that sheet answers to.
+      !keysOpen &&
+      !iconsOpen
+    ) {
       void deleteLayoutLayers([...app.layoutSelection]);
       e.preventDefault();
       return;
@@ -219,7 +227,7 @@
     ["Ctrl + Z", "Undo"],
     ["Ctrl + Y  ·  Ctrl + Shift + Z", "Redo"],
     ["Ctrl + D", "Duplicate the picked layers (in a Layout)"],
-    ["Delete", "Delete the picked layers (in a Layout)"],
+    ["Delete  ·  Backspace", "Delete the picked layers (in a Layout)"],
     ["Escape", "Close the Layout, or the menu over it"],
     ["?", "This sheet"],
     ["Wheel", "Zoom"],
