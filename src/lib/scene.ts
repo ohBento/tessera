@@ -1218,15 +1218,18 @@ export async function buildLayout(
    * the design and nothing under it. */
   under?: { id: string; base: Base },
 ): Promise<void> {
-  canvas.remove(...canvas.getObjects());
-  if (under) {
-    const bed = await background(under.base, under.id, deps, { x: 0, y: 0 });
-    canvas.add(bed);
-  }
+  /* Everything is built before anything is cleared. Emptying the canvas first
+   * and then awaiting the pictures leaves it blank for as long as the loading
+   * takes, and Fabric paints that gap — which is the flicker on every slider
+   * drag, one blank frame per edit. Held this way the old frame stays up until
+   * the new one is ready to replace it in a single pass. */
+  const bed = under ? await background(under.base, under.id, deps, { x: 0, y: 0 }) : undefined;
   const objs = await layoutObjects(layout.layers, deps, interactive, { dx: 0, dy: 0 }, false, 1, {
     root: layout.layers,
     stencils,
   });
+  canvas.remove(...canvas.getObjects());
+  if (bed) canvas.add(bed);
   for (const obj of objs) canvas.add(obj);
   canvas.renderAll();
 }
@@ -1314,7 +1317,7 @@ async function layoutObjects(
       continue;
     }
     const placed = { ...l, x: l.x + shift.dx, y: l.y + shift.dy, opacity: l.opacity * fade } as Layer;
-    const obj = await layerObject(placed, deps, { w: TILE_W, h: TILE_H, x: 0, y: 0 }, "", {}, true);
+    const obj = await layerObject(placed, deps, { w: TILE_W, h: TILE_H, x: 0, y: 0 }, "", {});
     if (!obj) continue;
     const mask = await maskFor(l, deps, masking);
     if (mask) {

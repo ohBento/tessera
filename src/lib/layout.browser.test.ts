@@ -327,6 +327,26 @@ describe("masks", () => {
     expect(px(0.1, 0.5)[3]).toBe(0);
   });
 
+  it("paints a class icon in its own fill", async () => {
+    /* The icon is drawn as paint cut to the artwork, and the cut half of that
+     * pair is also what a mask asks for — so the two roles are one function
+     * with a flag. Get the flag wrong on the drawing path and every icon comes
+     * out white whatever its fill says, which is exactly what shipped in
+     * 0.8.0. The colour is the thing to assert; the outline was already
+     * covered by the mask tests. */
+    const layout = newLayout("Icon");
+    const icon = newShapeLayer("icon", "Ranger");
+    icon.x = 0.5;
+    icon.y = 0.5;
+    icon.w = 0.9;
+    icon.h = 0.9;
+    icon.fill = "#00ff00";
+    layout.layers.push(icon);
+
+    const px = await decodeProbe(layout);
+    expect(px(0.5, 0.5)).toEqual([0, 255, 0, 255]);
+  });
+
   it("cuts with a class icon", async () => {
     /* The editor cuts by handing Fabric the cutter as a clipPath, and an icon
      * is the one shape that is not simply its own outline — it is paint clipped
