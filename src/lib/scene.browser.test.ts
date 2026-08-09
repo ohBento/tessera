@@ -834,6 +834,42 @@ describe("the Layout editor and the wall agree about a mask", () => {
    *  and a 1px band around a 312x402 rectangle is about 1400 pixels. */
   const close = (a: number, b: number) => Math.abs(a - b) < Math.max(a, b) * 0.05;
 
+  it("survives the transform Fabric resets on a clipPath", async () => {
+    /* Fabric owns the transform of whatever it is handed as a clipPath and
+     * resets it the moment a drag starts. Measured in the running app: a class
+     * icon's stencil sat at scale 0.22 at rest and was 1 after the first
+     * mousemove, so the mask covered the whole sheet and the layer it was
+     * cutting came out whole — reported as "the icon is zoomed" and as masks
+     * that stopped working at all.
+     *
+     * The stencil is wrapped in a group of its own now, so the reset lands on
+     * the wrapper and the fitted scale inside survives. This does to the mask
+     * exactly what Fabric does, and then asks what is left on screen. */
+    const cutter = { ...newShapeLayer("icon", "Placeholder"), id: "cut" };
+    cutter.x = 0.5;
+    cutter.y = 0.5;
+    cutter.w = 0.3;
+    cutter.h = 0.3;
+    const pic = { ...newImageLayer("block:#00ff00"), id: "pic" };
+    pic.x = 0.5;
+    pic.y = 0.5;
+    pic.scale = 1;
+    pic.maskId = "cut";
+
+    const canvas = await layoutCanvas({ id: "L1", name: "L", layers: [cutter, pic] });
+    const before = coverInLayout(canvas);
+
+    const masked = canvas.getObjects().find((o) => o.clipPath?.absolutePositioned)!;
+    masked.clipPath!.set({ scaleX: 1, scaleY: 1 });
+    canvas.renderAll();
+    const afterReset = coverInLayout(canvas);
+
+    // A class icon is line art: it can never cover most of a tile.
+    expect(before).toBeGreaterThan(0);
+    expect(before).toBeLessThan(TILE_W * TILE_H * 0.25);
+    expect(afterReset).toBeLessThan(TILE_W * TILE_H * 0.25);
+  });
+
   it("cuts the same piece out, plain", async () => {
     const { layout, tile } = await bothWays(() => {});
     expect(layout).toBeGreaterThan(0);

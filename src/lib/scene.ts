@@ -1321,12 +1321,24 @@ async function maskFor(l: Layer, deps: SceneDeps, m: Masking): Promise<fabric.Ob
    * offer behaves the same in both places. */
   if (!cutter || cutter.hidden || !cutApplies(l, cutter)) return undefined;
   const shift = nestingShift(m.root, cutter.id) ?? { dx: 0, dy: 0 };
-  const placed = { ...cutter, x: cutter.x + shift.dx, y: cutter.y + shift.dy } as Layer;
+  /* Through silhouette, because the mask is about to become a picture and a
+   * picture carries what the shape itself does not mean: a half-transparent
+   * cutter would cut half-way, and an outline would widen the hole. The wall
+   * has always cut through this; the editor used to get the same effect from
+   * Fabric ignoring both in a clipPath. */
+  const placed = silhouette({ ...cutter, x: cutter.x + shift.dx, y: cutter.y + shift.dy } as Layer);
   const obj = await layerObject(placed, deps, { w: TILE_W, h: TILE_H, x: 0, y: 0 }, "", {}, true);
   if (!obj) return undefined;
-  obj.absolutePositioned = true;
-  obj.inverted = !!l.maskInvert;
-  return obj;
+  /* Wrapped in a group of its own, and that is not decoration. Fabric resets
+   * the transform of whatever it is handed as a clipPath — measured: a class
+   * icon's stencil sat at scale 0.22 at rest and jumped to 1 on the first
+   * mousemove of a drag, so the mask went four and a half times too big and the
+   * layer it was cutting came out whole. The reset lands on the wrapper now,
+   * and the fitted scale inside it survives. */
+  const mask = new fabric.Group([obj], { objectCaching: false });
+  mask.absolutePositioned = true;
+  mask.inverted = !!l.maskInvert;
+  return mask;
 }
 
 /** One Layout's layers as Fabric objects, groups flattened into their members.
