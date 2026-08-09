@@ -229,10 +229,21 @@
   let thumbsAsked = $state(0);
   let thumbsDone = $state(0);
 
-  function portrait(el: HTMLCanvasElement, id: string) {
+  function portrait(el: HTMLCanvasElement, arg: { id: string; ready: boolean }) {
     let live = true;
-    thumbsAsked += 1;
-    void (async () => {
+    let asked = "";
+
+    /* Waits for the pixel source instead of shrugging at it. The overview is
+       drawn from the manifest, which lands well before `app.deps` — the reader
+       that knows how to fetch a portrait — so on a cold start every card asked
+       a null and got nothing back. The action ran once per canvas and nothing
+       ever tried again, which is why the squares stayed black for as long as
+       you cared to wait. `ready` flips when the deps arrive and Svelte calls
+       `update`, which is the retry. */
+    const draw = async ({ id, ready }: { id: string; ready: boolean }) => {
+      if (!ready || asked === id) return;
+      asked = id;
+      thumbsAsked += 1;
       const bmp = await app.deps?.original(id);
       /* Counted even when the node is gone or the read failed: the tally is
          "how many are still outstanding", and a picture nobody is waiting for
@@ -250,8 +261,13 @@
       if (!ctx) return;
       ctx.clearRect(0, 0, el.width, el.height);
       ctx.drawImage(bmp, 0, 0, el.width, el.height);
-    })();
-    return { destroy: () => (live = false) };
+    };
+
+    void draw(arg);
+    return {
+      update: (next: { id: string; ready: boolean }) => void draw(next),
+      destroy: () => (live = false),
+    };
   }
 
   /** The never-seen-before ids that are still sitting in the inbox. Ones
@@ -734,7 +750,7 @@
 {#snippet thumbs(ids: string[])}
   <span class="strip">
     {#each ids.slice(0, 4) as id (id)}
-      <canvas class="thumb" width="39" height="50" use:portrait={id}></canvas>
+      <canvas class="thumb" width="39" height="50" use:portrait={{ id, ready: !!app.deps }}></canvas>
     {/each}
     {#if ids.length > 4}<span class="more">+{ids.length - 4}</span>{/if}
   </span>
@@ -1472,7 +1488,7 @@
               <ul>
                 {#each app.changedTiles as id (id)}
                   <li>
-                    <canvas class="thumb" width="31" height="40" use:portrait={id}></canvas>
+                    <canvas class="thumb" width="31" height="40" use:portrait={{ id, ready: !!app.deps }}></canvas>
                     <button class="name">
                       {id}
                       <span class="usage">
@@ -1775,7 +1791,7 @@
                 }}
                 ondragend={() => (dragTile = "")}
               >
-                <canvas class="thumb" width="31" height="40" use:portrait={id}></canvas>
+                <canvas class="thumb" width="31" height="40" use:portrait={{ id, ready: !!app.deps }}></canvas>
                 <button
                   class="name"
                   onclick={(e) => toggleTile(id, { ctrl: e.ctrlKey, shift: e.shiftKey })}>{id}</button
