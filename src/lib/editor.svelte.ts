@@ -14,6 +14,7 @@ import {
   duplicateLayout,
   emptyManifest,
   emptyTile,
+  cutBy,
   findLayer,
   findList,
   groupShift,
@@ -1301,9 +1302,18 @@ export async function setLayerField(id: string, key: LayerField, value: unknown)
   const anchored =
     caption.kind === "text" && WIDTH_FIELDS.has(key) && (caption.align ?? "center") !== "center";
   const was = anchored ? textWidth(caption as TextLayer) : 0;
+  /* Saying "a class per tile" on a cutter says it for whatever it cuts. The
+   * rule only lets a per-tile cutter cut a per-tile layer, so the switch used
+   * to void the mask instead of extending it: the gradient block kept a maskId
+   * that had stopped applying, the dropdown stopped listing the icon, and the
+   * block drew whole with nothing said. Travelling together is the only way the
+   * pair can exist at all. */
+  const travellers =
+    key === "perTile" && value === true ? cutBy(openLayout()?.layers ?? [], id) : [];
   await mutate(
     () => {
       layer[key] = value;
+      for (const l of travellers) l.perTile = true;
       if (!anchored) return;
       const grew = textWidth(caption as TextLayer) - was;
       caption.x += ((caption as TextLayer).align === "right" ? -grew : grew) / 2;

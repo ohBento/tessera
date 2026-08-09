@@ -884,16 +884,13 @@ const LAYER_PREFIX: Record<Layer["kind"], string> = {
   group: "group",
 };
 
-/* A shape is named after what it is, and for an icon that is the class rather
- * than the word "icon": a stack of Ranger01, Witch01, Witch02 says what is in
- * it at a glance. Spaces go, so "Dark Knight" numbers as DarkKnight01 and reads
- * like every other layer name. */
+/* A shape is named after what it is. An icon was named after its class —
+ * Ranger01 — which read well until the class became something a layer can
+ * change: the name stayed Ranger01 over a Witch, and a name that has to be
+ * corrected by hand every time is worse than a name that never claimed to
+ * know. What it is, is a class icon. Which class it is, the Class row says. */
 const prefixOf = (l: Layer) =>
-  l.kind !== "shape"
-    ? LAYER_PREFIX[l.kind]
-    : l.shape === "icon"
-      ? (l.icon ?? "icon").replace(/\s+/g, "")
-      : l.shape;
+  l.kind !== "shape" ? LAYER_PREFIX[l.kind] : l.shape === "icon" ? "classIcon" : l.shape;
 
 /** Names a layer for the stack it is about to join: img01, text01, img02.
  *
@@ -977,6 +974,16 @@ export const stencilIds = (layers: Layer[]): Set<string> => {
  *  stencil rule was the one that had never heard of `perTile`. */
 export const cutApplies = (l: Layer, cutter: Layer | undefined): boolean =>
   !!cutter && cutter.kind !== "group" && cutter.id !== l.id && (!cutter.perTile || !!l.perTile);
+
+/** The layers this one cuts — the ones that have to travel wherever it does.
+ *
+ *  A per-tile cutter may only cut a per-tile layer (see cutApplies), so the
+ *  moment an icon starts naming a class per tile, everything it was already
+ *  cutting has to travel too. Without this the switch quietly voids masks that
+ *  were set before it: the id stays on the layer, the dropdown stops listing
+ *  the cutter, and the shape simply draws whole with nothing said. */
+export const cutBy = (layers: Layer[], cutterId: string): Layer[] =>
+  [...walkLayers(layers)].filter((l) => l.maskId === cutterId);
 
 export const maskChoices = (layers: Layer[], layerId: string): Layer[] => {
   const self = findLayer(layers, layerId);
