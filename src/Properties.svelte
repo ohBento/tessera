@@ -316,9 +316,11 @@
     </label>
   {/if}
   <!-- Width and height are the one size the canvas handles cannot give you
-       exactly, and a shape is the only kind that keeps them apart. -->
+       exactly, and a shape is the only kind that keeps them apart — except an
+       icon, which has one size because its artwork keeps its own proportions.
+       A second field there would have been a second answer to one question. -->
   <label class="field">
-    <span>Width</span>
+    <span>{layer.shape === "icon" ? "Size" : "Width"}</span>
     <input
       type="range"
       min="0.02"
@@ -329,20 +331,22 @@
     />
     {@render amount("w", layer.w * TILE_W, (n) => n / TILE_W, 1)}
   </label>
-  <label class="field">
-    <span>Height</span>
-    <input
-      type="range"
-      min="0.02"
-      max={Math.max(1.5, layer.h)}
-      step="any"
-      value={layer.h}
-      oninput={(e) => set("h", num(e))}
-    />
-    <!-- Off the tile's height, not its width: `h` is a fraction of the tile's
-         other side, and 624 here would read a square as oblong. -->
-    {@render amount("h", layer.h * TILE_H, (n) => n / TILE_H, 1)}
-  </label>
+  {#if layer.shape !== "icon"}
+    <label class="field">
+      <span>Height</span>
+      <input
+        type="range"
+        min="0.02"
+        max={Math.max(1.5, layer.h)}
+        step="any"
+        value={layer.h}
+        oninput={(e) => set("h", num(e))}
+      />
+      <!-- Off the tile's height, not its width: `h` is a fraction of the tile's
+           other side, and 624 here would read a square as oblong. -->
+      {@render amount("h", layer.h * TILE_H, (n) => n / TILE_H, 1)}
+    </label>
+  {/if}
   {@render paint("Fill", "fill", layer.fill)}
   <!-- An icon is a colour cut to the artwork's outline, so a border would trace
        the rectangle behind it and then be cut away with everything else outside
