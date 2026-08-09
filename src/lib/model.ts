@@ -359,10 +359,11 @@ export type Tile = {
   layers: Layer[];
   /** Text content per shared layer — style syncs across tiles, wording does not. */
   text: Record<string, string>;
-  /** Picture per shared image layer, the same idea one kind over: the layout
-   *  owns where and how big, the tile owns which picture. "" means this tile
-   *  deliberately shows none. Optional so manifests written before per-tile
-   *  pictures existed still load unchanged. */
+  /** Picture per shared image layer — and class per shared icon layer, which is
+   *  the same idea and shares the map: the layout owns where and how big, the
+   *  tile owns which picture or which class. "" means this tile deliberately
+   *  shows none. Optional so manifests written before per-tile pictures existed
+   *  still load unchanged. */
   swap?: Record<string, string>;
   /** Put away: out of Unsorted, into the archive, still on disk and still
    *  carrying whatever was made for it. Absent is the ordinary state — see
@@ -1018,6 +1019,16 @@ export const layerText = (texts: Record<string, string>, layer: TextLayer, tileI
  *  "none". */
 export const layerAsset = (swaps: Record<string, string>, layer: ImageLayer) =>
   swaps[layer.id] ?? layer.asset;
+
+/** Which class one tile shows for a live icon layer, or "" for none.
+ *
+ *  The same map as a picture's, one kind over. A wall of characters is the
+ *  reason the icons exist at all: one layer, placed and coloured once in the
+ *  Layout, and each portrait naming its own class. Stored by name — the
+ *  artwork ships with the application, so there is nothing to import and
+ *  nothing to carry. */
+export const layerIcon = (swaps: Record<string, string>, layer: ShapeLayer) =>
+  swaps[layer.id] ?? layer.icon;
 
 /** A layer a Layout keeps live on the tiles instead of baking into its stamp.
  *  Text carries its own wording per tile, an image its own picture — the same

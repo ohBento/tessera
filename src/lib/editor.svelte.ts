@@ -535,8 +535,17 @@ export const tileCaptions = (tileId: string): TextLayer[] =>
 export const tileImages = (tileId: string): ImageLayer[] =>
   drawnOn(tileId).filter((l): l is ImageLayer => l.kind === "image" && !!l.live);
 
-/** This tile's picture for a live image layer, or undefined when it shows the
- *  layer's own. "" is a choice, not an absence: no picture here. */
+/** The live class icons on one tile. Same bargain again: the Layout owns where
+ *  it sits and what colour it is, the tile owns which class — which is the
+ *  whole point of a wall of characters. */
+export const tileIcons = (tileId: string): ShapeLayer[] =>
+  drawnOn(tileId).filter(
+    (l): l is ShapeLayer => l.kind === "shape" && l.shape === "icon" && !!l.live,
+  );
+
+/** This tile's picture for a live image layer — or its class for a live icon
+ *  layer, which shares the map — or undefined when it shows the layer's own.
+ *  "" is a choice, not an absence: nothing here. */
 export const tileAsset = (tileId: string, layerId: string): string | undefined =>
   app.manifest.tiles[tileId]?.swap?.[layerId];
 

@@ -517,6 +517,75 @@ describe("a mask on a tile", () => {
     expect(right[3]).toBe(255);
   });
 
+  it("keeps a class icon an icon on a tile", async () => {
+    /* A tile layer is clipped to its own cell, and Fabric allows one clipPath —
+     * so the cell's replaced the icon's, and an icon opted into the grid came
+     * out on the wall as the plain rectangle of paint behind it. What makes it
+     * an icon has to survive the trip.
+     *
+     * Measured at a corner of the layer's box, which is inside the rectangle
+     * and outside the artwork: paint there means the icon is gone. */
+    const m = manifest(2);
+    const id = order(m)[0];
+
+    const icon = newShapeLayer("icon", "Ranger");
+    icon.x = 0.5;
+    icon.y = 0.5;
+    icon.w = 0.5;
+    icon.h = 0.5;
+    icon.fill = "#00ff00";
+    m.tiles[id].layers.push(icon);
+
+    const tiles = [...(await renderTiles(view(m), m, testDeps)).values()];
+    const corner = pixel(
+      tiles[0],
+      Math.round(TILE_W * 0.5 - (TILE_W * 0.5) / 2) + 4,
+      Math.round(TILE_H * 0.5 - (TILE_H * 0.5) / 2) + 4,
+    );
+    expect(corner).not.toEqual([0, 255, 0, 255]);
+    // And the artwork itself is still drawn, in its own colour.
+    expect(pixel(tiles[0], Math.round(TILE_W * 0.5), Math.round(TILE_H * 0.5))).toEqual([
+      0, 255, 0, 255,
+    ]);
+  });
+
+  it("gives each tile its own class", async () => {
+    /* The reason the icons exist: one layer, placed and coloured once, and
+     * every portrait naming its own class. Two tiles carrying the same layer
+     * have to come out differently — if they matched, the per-tile choice
+     * would be decorative and the wall would wear one class throughout. */
+    const m = manifest(2);
+    const [first, second] = order(m);
+
+    for (const id of [first, second]) {
+      const icon = { ...newShapeLayer("icon", "Ranger"), id: "badge", live: true, layoutId: "L1" };
+      icon.x = 0.5;
+      icon.y = 0.5;
+      icon.w = 0.8;
+      icon.h = 0.8;
+      icon.fill = "#00ff00";
+      m.tiles[id].layers.push(icon);
+    }
+    // The first tile keeps the layer's own class, the second names another.
+    m.tiles[second].swap = { badge: "Witch" };
+
+    const tiles = [...(await renderTiles(view(m), m, testDeps)).values()];
+    const ink = (t: (typeof tiles)[number]) => {
+      let n = 0;
+      for (let y = 0; y < TILE_H; y += 4)
+        for (let x = 0; x < TILE_W; x += 4) {
+          const [r, g, b] = pixel(t, x, y);
+          if (r === 0 && g === 255 && b === 0) n++;
+        }
+      return n;
+    };
+    const [a, b] = [ink(tiles[0]), ink(tiles[1])];
+    expect(a).toBeGreaterThan(0);
+    expect(b).toBeGreaterThan(0);
+    // Different artwork covers a different amount of the tile.
+    expect(a).not.toBe(b);
+  });
+
   it("cuts a picture to a class icon", async () => {
     /* An icon is not drawn like the other shapes — it is a rectangle of paint
      * clipped to the artwork — so being a cutter is the one place that could

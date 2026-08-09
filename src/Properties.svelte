@@ -772,15 +772,13 @@
         set(key, isGradient(p) ? { ...p, from: e.currentTarget.value } : e.currentTarget.value)}
     />
     {@render hex(flat(p), (v) => set(key, isGradient(p) ? { ...p, from: v } : v))}
-    {#if isGradient(p)}
-      <input
-        type="color"
-        value={p.to}
-        oninput={(e) => set(key, { ...p, to: e.currentTarget.value })}
-      />
-      {@render hex(p.to, (v) => set(key, { ...p, to: v }))}
-    {/if}
-    <!-- Inside the label, and safe there: a label hands its click on to its
+    <!-- Before the second colour, not after it. Turning a gradient on inserts a
+         swatch and a hex box, and with the button behind them it jumped 122px
+         to the right — the second click landed on the new swatch and opened a
+         colour picker, so the gradient looked like it could not be switched
+         off. A toggle has to stay under the finger that toggled it.
+
+         Inside the label, and safe there: a label hands its click on to its
          first control only when the click did not land on an interactive
          descendant, which a button is. -->
     <button
@@ -790,6 +788,14 @@
       onclick={() => set(key, isGradient(p) ? p.from : { from: flat(p), to: "#000000", angle: 0 })}
       aria-label={isGradient(p) ? "Back to one colour" : "Fade into a second colour"}
     ></button>
+    {#if isGradient(p)}
+      <input
+        type="color"
+        value={p.to}
+        oninput={(e) => set(key, { ...p, to: e.currentTarget.value })}
+      />
+      {@render hex(p.to, (v) => set(key, { ...p, to: v }))}
+    {/if}
   </label>
   {#if isGradient(p)}
     <!-- Shaped like the fields around it — name in the label column, control

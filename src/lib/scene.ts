@@ -16,6 +16,7 @@ import {
   groupShift,
   isGradient,
   layerAsset,
+  layerIcon,
   layerText,
   nestingShift,
   resolveLayers,
@@ -1121,7 +1122,14 @@ export async function buildGrid(
        * render, which is why the check is on the resolved value and not on
        * whether a key exists. */
       const l =
-        raw.kind === "image" && raw.live ? { ...raw, asset: layerAsset(swaps, raw) } : raw;
+        raw.kind === "image" && raw.live
+          ? { ...raw, asset: layerAsset(swaps, raw) }
+          : /* And this tile's own class, where it names one. Same map, same
+             * bargain: the Layout places and colours the icon once, each
+             * portrait says which class it is. */
+            raw.kind === "shape" && raw.shape === "icon" && raw.live
+            ? { ...raw, icon: layerIcon(swaps, raw) }
+            : raw;
       if (l.kind === "image" && !l.asset) continue;
       // Groups are a wall-side concept only in Layouts; on a tile they would
       // need the same flattening layoutObjects does, and nothing creates one
@@ -1136,12 +1144,25 @@ export async function buildGrid(
        * cannot be why half a picture is missing. */
       const cutter = l.maskId ? own.find((x) => x.id === l.maskId) : undefined;
       const cut = cutApplies(l, cutter) && !cutter!.hidden ? cutter : undefined;
-      const local = cut ? { ...box, x: 0, y: 0 } : box;
+      /* A class icon is paint wearing the artwork as its clipPath, and every
+       * tile layer is about to be given the cell as its clipPath — Fabric
+       * allows one, so the cell would replace the artwork and the icon would
+       * reach the wall as the bare rectangle behind it. Flattened to pixels
+       * first, like a cut layer, it arrives as a picture that the cell can clip
+       * like any other. */
+      const flat = !!cut || (l.kind === "shape" && l.shape === "icon");
+      const local = flat ? { ...box, x: 0, y: 0 } : box;
       const drawn = await layerObject(l, deps, local, id, texts);
       if (!drawn) continue;
-      const obj = cut ? await cutToShape(l, drawn, cut, deps, id, texts, swaps) : drawn;
+      let obj = cut ? await cutToShape(l, drawn, cut, deps, id, texts, swaps) : drawn;
       if (!obj) continue;
-      if (cut) {
+      if (flat && !cut) {
+        obj = new fabric.FabricImage(await toTileCanvas(obj), {
+          originX: "left",
+          originY: "top",
+        });
+      }
+      if (flat) {
         obj.left = at.x;
         obj.top = at.y;
       }

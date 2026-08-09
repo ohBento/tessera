@@ -105,6 +105,7 @@
     tileAsset,
     tileCaptions,
     tileImageChoices,
+    tileIcons,
     tileImages,
     tileLayers,
     shelfIds,
@@ -147,6 +148,7 @@
     }
     if (iconsOpen && key === "escape") {
       iconsOpen = false;
+      iconTarget = null;
       e.preventDefault();
       return;
     }
@@ -179,6 +181,9 @@
    *  has no button to hang one on. */
   let keysOpen = $state(false);
   let iconsOpen = $state(false);
+  /* Who the icon grid is answering for: a tile naming its class, or nobody —
+     in which case picking one inserts a new layer in the Layout. */
+  let iconTarget = $state<{ tile: string; layer: string } | null>(null);
 
   /** What the sheet lists. Written out rather than derived from the handler:
    *  half of these are canvas gestures that no handler declares, and a list
@@ -1192,6 +1197,55 @@
           >
         </div>
       {/each}
+
+      <!-- Which class this portrait is. The same map as the pictures above and
+           the same bargain — the Layout placed and coloured the icon once, the
+           tile names the class — but the choices need no importing, so it is
+           the artwork grid rather than a gallery of what happens to be in
+           play. -->
+      {#each tileIcons(id) as badge (badge.id)}
+        {@const chosen = tileAsset(id, badge.id)}
+        {@const showing = chosen ?? badge.icon}
+        <p class="sub">{layerLabel(badge)}</p>
+        <div class="gallery indent">
+          <button
+            class="swatch"
+            title={showing ? `${showing} — pick another class` : "Pick a class"}
+            onclick={() => {
+              iconTarget = { tile: id, layer: badge.id };
+              iconsOpen = true;
+            }}
+          >
+            {#if showing && iconArt(showing)}
+              {@const art = iconArt(showing)!}
+              <svg viewBox="0 0 {art.w} {art.h}" aria-hidden="true">
+                {#each art.paths as p, i (i)}
+                  <path d={p.d} fill="#ffffff" fill-opacity={p.opacity} fill-rule="evenodd" />
+                {/each}
+              </svg>
+            {:else}
+              +
+            {/if}
+          </button>
+          <button
+            class="swatch none"
+            class:on={chosen === ""}
+            title="Show no icon on this tile"
+            onclick={() => void setTileAsset(id, badge.id, "")}
+          >
+            <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+              <circle cx="9" cy="9" r="7" fill="none" stroke="currentColor" stroke-width="1.6" />
+              <line x1="4" y1="14" x2="14" y2="4" stroke="currentColor" stroke-width="1.6" />
+            </svg>
+          </button>
+          <button
+            class="swatch"
+            title="Use the layer's own class again"
+            disabled={chosen === undefined}
+            onclick={() => void clearTileAsset(id, badge.id)}>↺</button
+          >
+        </div>
+      {/each}
     {/if}
   </div>
 {/snippet}
@@ -2114,18 +2168,29 @@
     role="button"
     tabindex="-1"
     aria-label="Close"
-    onclick={() => (iconsOpen = false)}
-    onkeydown={(e) => e.key === "Enter" && (iconsOpen = false)}
+    onclick={() => {
+      iconsOpen = false;
+      iconTarget = null;
+    }}
+    onkeydown={(e) => {
+      if (e.key === "Enter") {
+        iconsOpen = false;
+        iconTarget = null;
+      }
+    }}
   ></div>
   <div class="sheet" role="dialog" aria-label="Class icons">
-    <h2>Class icon</h2>
+    <h2>{iconTarget ? "Class for this tile" : "Class icon"}</h2>
     <div class="icongrid">
       {#each ICON_NAMES as name (name)}
         <button
           title={name}
           onclick={() => {
+            const target = iconTarget;
             iconsOpen = false;
-            void addLayoutShape("icon", name);
+            iconTarget = null;
+            if (target) void setTileAsset(target.tile, target.layer, name);
+            else void addLayoutShape("icon", name);
           }}
         >
           <!-- Drawn from the same parsed paths the layer is drawn from, so the
@@ -2145,7 +2210,12 @@
         </button>
       {/each}
     </div>
-    <button onclick={() => (iconsOpen = false)}>Close</button>
+    <button
+      onclick={() => {
+        iconsOpen = false;
+        iconTarget = null;
+      }}>Close</button
+    >
   </div>
 {/if}
 
@@ -2733,6 +2803,12 @@
     max-width: 100%;
     max-height: 100%;
     object-fit: contain;
+  }
+  /* A class icon on a swatch: white artwork, so it needs the same chequer
+     behind it that a picture with transparency gets. */
+  .swatch svg {
+    width: 100%;
+    height: 100%;
   }
   .swatch.on {
     border-color: #a685ff;
