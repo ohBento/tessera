@@ -75,11 +75,16 @@ describe("free scaling", () => {
       await picture.canvas.dispose();
     }
 
-    // A caption is measured off its own words; there is no size to drag at all.
+    /* A caption's sides set the width its words wrap at — a field of its own
+     * now, so the handle has somewhere honest to land. Top and bottom stay
+     * off: the height is however many lines the words need, and a handle that
+     * springs back is worse than no handle. */
     const text = await one(() => newTextLayer());
     try {
-      expect(text.obj.isControlVisible("ml")).toBe(false);
+      expect(text.obj.isControlVisible("ml")).toBe(true);
+      expect(text.obj.isControlVisible("mr")).toBe(true);
       expect(text.obj.isControlVisible("mt")).toBe(false);
+      expect(text.obj.isControlVisible("mb")).toBe(false);
     } finally {
       await text.canvas.dispose();
     }

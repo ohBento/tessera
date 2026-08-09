@@ -28,7 +28,14 @@
   } from "./lib/geometry";
 
   import { findLayer, walkLayers } from "./lib/model";
-  import { buildLayout, freeScale, readBackLayout, sideHandles, snapScale } from "./lib/scene";
+  import {
+    buildLayout,
+    freeScale,
+    readBackLayout,
+    sideHandles,
+    snapScale,
+    widthHandles,
+  } from "./lib/scene";
 
   let host: HTMLDivElement;
   let el: HTMLCanvasElement;
@@ -151,10 +158,15 @@
      * they crop rather than scale. A multi-selection is not — the handles
      * there belong to the ActiveSelection, which knows nothing about
      * cropping — which is why this asks about the one picked layer. */
-    if (!only || !sideHandles(only)) {
+    /* A caption keeps its left and right handles for the same reason a picture
+       keeps all four: they are its own — they set the width its words wrap at,
+       not a scale. Top and bottom go either way. */
+    if (!only || !(sideHandles(only) || widthHandles(only))) {
       canvas
         .getActiveObject()
         ?.setControlsVisibility({ ml: false, mr: false, mt: false, mb: false });
+    } else if (widthHandles(only) && !sideHandles(only)) {
+      canvas.getActiveObject()?.setControlsVisibility({ mt: false, mb: false });
     }
   }
 

@@ -1287,6 +1287,26 @@ function resize(layer: Layer, patch: Transform) {
      * the picture back at the wrong size on the next rebuild. */
     if (patch.crop) layer.crop = patch.crop;
     else delete layer.crop;
+  } else if (layer.kind === "text") {
+    /* Two gestures, told apart by what Fabric did with them. A side handle on a
+     * Textbox changes `width` and leaves scaleX at 1; a corner scales the whole
+     * object and leaves the width alone. So a factor of one means the width is
+     * the news, and anything else means the letters are.
+     *
+     * The corner takes the box with it, or scaling a caption up would keep the
+     * old wrap width and break the line in a place nobody asked for. */
+    const dragged = Math.abs(patch.fx - 1) < 0.001;
+    /* A corner still says nothing a caption can store: the font size is a
+     * field and only a field, so a corner scale is ignored here exactly as it
+     * always was. Only the side handles have somewhere to land now.
+     *
+     * And only once the width is actually what moved: a plain drag reports the
+     * box's current width, and writing that back would quietly pin a caption
+     * that was still hugging its words while the user only moved it. "Once you
+     * touch it" has to mean the handle, not the layer. */
+    if (dragged && (layer.w !== undefined || Math.abs(patch.scale - textWidth(layer)) > 0.002)) {
+      layer.w = patch.scale;
+    }
   } else if (layer.kind === "shape") {
     /* Multiplied by what Fabric actually scaled, not set from the object's
      * measured width. A shape is built at exactly w×h with scaleX 1, so a

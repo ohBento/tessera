@@ -184,6 +184,18 @@ export type TextLayer = Common & {
   strokeWidth: number;
   shadow: number;
   shadowColor: string;
+  /* How wide the caption's box is, as a fraction of tile width — the width the
+   * words wrap at, independent of the font size: a small font fits many
+   * letters before the first break, a large one few.
+   *
+   * Absent means the old behaviour, a box that hugs its words. That box moved
+   * as you typed: it is centred on `x`, so it grew in both directions, and
+   * Fabric widens a Textbox to its longest unbreakable word behind our back —
+   * which walked a left-aligned caption leftwards by half a letter or two. A
+   * width that does not depend on the text cannot do that. Absent rather than
+   * defaulted so no existing caption moves; dragging the side handle or typing
+   * a width is what settles it. */
+  w?: number;
 };
 
 /** Children keep their own tile-absolute coordinates; the group's x/y is a

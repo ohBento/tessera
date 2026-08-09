@@ -305,6 +305,9 @@ function boxWidth(
 
 /** The width a caption would occupy on a tile, as a fraction of tile width. */
 export function textWidth(l: TextLayer): number {
+  // A caption with a width of its own does not grow with its words, so there
+  // is nothing for the caller to compensate.
+  if (l.w) return l.w;
   const size = l.size * TILE_W;
   return (
     boxWidth(
@@ -351,7 +354,9 @@ function textObject(l: TextLayer, box: { w: number; h: number; x: number; y: num
    * frame mean what it looks like it means. */
   const obj = new fabric.Textbox(words, {
     ...place(l, box),
-    width: boxWidth(words, style, size, box.w),
+    /* A set width wins over measuring: that is the whole point of it. What the
+       words do inside is wrap, which is what a Textbox is for. */
+    width: l.w ? l.w * box.w : boxWidth(words, style, size, box.w),
     ...style,
     textAlign: l.align ?? "center",
     lineHeight: LINE_HEIGHT,
@@ -517,6 +522,13 @@ export const freeScale = (l: Layer) => l.kind === "shape";
  *  time the selection changes. When they disagreed, the second silently undid
  *  the first and pictures shipped with no handle to crop by. */
 export const sideHandles = (l: Layer) => freeScale(l) || l.kind === "image";
+
+/** Left and right only, on a caption: dragging them sets the width its words
+ *  wrap at. Fabric's Textbox already does the right thing with those two — it
+ *  changes `width` rather than `scaleX`, which is exactly the field the model
+ *  wants. Top and bottom stay off: the box's height is however many lines the
+ *  words need, and a handle that springs back is worse than no handle. */
+export const widthHandles = (l: Layer) => l.kind === "text";
 
 /* --- Cropping a picture by its side handles.
  *
@@ -693,8 +705,15 @@ function makeInteractive(obj: fabric.Object, l: Layer, allowRotate = true) {
   obj.cornerStrokeColor = "#cbb8ff";
   obj.transparentCorners = false;
   const sides = sideHandles(l);
+  const wide = widthHandles(l);
   if (l.kind === "image") obj.controls = { ...obj.controls, ...cropControls() };
-  obj.setControlsVisibility({ ml: sides, mr: sides, mt: sides, mb: sides, mtr: allowRotate });
+  obj.setControlsVisibility({
+    ml: sides || wide,
+    mr: sides || wide,
+    mt: sides,
+    mb: sides,
+    mtr: allowRotate,
+  });
 }
 
 /** Draws one object into an offscreen tile-sized canvas and hands back the

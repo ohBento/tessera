@@ -16,6 +16,7 @@
     type ShapeLayer,
   } from "./lib/model";
   import { systemFonts } from "./lib/platform";
+  import { textWidth } from "./lib/scene";
 
   /** What this machine has installed. Fetched once behind the module-level
    *  cache in platform.ts — this panel is rebuilt every time the selection
@@ -109,6 +110,31 @@
          the same field, which the tooltip now says: side by side and
          pre-filled with the same value, the pair read as a contest. -->
     <input value={layer.font} onchange={(e) => set("font", e.currentTarget.value)} />
+  </label>
+  <!-- The width the words wrap at, in tile pixels and independent of the font:
+       a small font fits many letters before the first break, a large one few.
+       Empty until it is set, because a caption that has never been given one
+       still hugs its words — and pinning that on the first drag would move
+       every old layout. The ↺ hands it back. -->
+  <label class="field" title="Where the words wrap. Drag the caption's side handles for the same thing">
+    <span>Width</span>
+    <input
+      type="range"
+      min="0.05"
+      max="1"
+      step="any"
+      value={layer.w ?? textWidth(layer)}
+      oninput={(e) => set("w", num(e))}
+    />
+    {@render amount("w", (layer.w ?? textWidth(layer)) * TILE_W, (n) => n / TILE_W, 30)}
+    <button
+      class="reset"
+      title="Let the box hug its words again"
+      disabled={layer.w === undefined}
+      onclick={() => set("w", undefined)}
+    >
+      ↺
+    </button>
   </label>
   <label class="field">
     <span>Font size</span>

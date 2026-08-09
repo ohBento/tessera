@@ -16,6 +16,7 @@ import {
   newTextLayer,
   type Layout,
   type ShapeLayer,
+  type TextLayer,
   type ImageLayer,
   type Manifest,
 } from "./model";
@@ -664,4 +665,81 @@ describe("the Layout editor and the wall agree about a mask", () => {
      own background no threshold told the two paths apart — the assertion passed
      whatever the code did. A green light that cannot go red is worse than none.
      The opacity-and-outline case above covers the same rule with real teeth. */
+});
+
+describe("a caption's own width", () => {
+  /* The left drift this replaces: the box hugged its words and sat centred on
+   * x, so it grew in both directions — and Fabric widens a Textbox to its
+   * longest unbreakable word behind our back, which walked a left-aligned
+   * caption leftwards by half a letter. A width that does not depend on the
+   * text cannot do that. */
+  const caption = (over: Partial<TextLayer>): TextLayer => ({
+    ...newTextLayer(),
+    id: "cap",
+    x: 0.5,
+    y: 0.5,
+    size: 0.12,
+    color: "#00ff00",
+    align: "left",
+    live: true,
+    ...over,
+  });
+
+  /** The leftmost column carrying the caption's colour. */
+  const leftEdge = (bmp: Uint8Array) => {
+    for (let x = 0; x < TILE_W; x++) {
+      for (let y = 0; y < TILE_H; y += 2) {
+        const [r, g, b] = pixel(bmp, x, y);
+        if (g > r + 40 && g > b + 40) return x;
+      }
+    }
+    return -1;
+  };
+
+  async function edgesFor(w: number | undefined) {
+    const out: number[] = [];
+    for (const words of ["I", "IIII", "IIIIIIII"]) {
+      const m = manifest(2);
+      const id = order(m)[0];
+      m.tiles[id].layers.push({ ...caption({ w }), text: words });
+      const tiles = [...(await renderTiles(view(m), m, testDeps)).values()];
+      out.push(leftEdge(tiles[0]));
+    }
+    return out;
+  }
+
+  it("keeps a left-aligned caption's left edge still as the words grow", async () => {
+    const edges = await edgesFor(0.6);
+    expect(edges.every((x) => x >= 0)).toBe(true);
+    // Same column every time, whatever the words do inside the box.
+    expect(Math.max(...edges) - Math.min(...edges)).toBeLessThanOrEqual(1);
+  });
+
+  it("wraps at the width it was given, not at the tile's edge", async () => {
+    /* The point of the box: a narrow one breaks a long line early, a wide one
+     * does not — at the same font size. Measured as the ink's height, since
+     * a second line is what makes the caption taller. */
+    const inkHeight = async (w: number) => {
+      const m = manifest(2);
+      const id = order(m)[0];
+      m.tiles[id].layers.push({ ...caption({ w }), text: "AAAA AAAA AAAA" });
+      const [bmp] = [...(await renderTiles(view(m), m, testDeps)).values()];
+      let top = -1;
+      let bottom = -1;
+      for (let y = 0; y < TILE_H; y++) {
+        for (let x = 0; x < TILE_W; x += 2) {
+          const [r, g, b] = pixel(bmp, x, y);
+          if (g > r + 40 && g > b + 40) {
+            if (top < 0) top = y;
+            bottom = y;
+            break;
+          }
+        }
+      }
+      return bottom - top;
+    };
+
+    const [narrow, wide] = [await inkHeight(0.25), await inkHeight(0.95)];
+    expect(narrow).toBeGreaterThan(wide);
+  });
 });
