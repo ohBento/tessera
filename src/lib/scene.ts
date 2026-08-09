@@ -1116,6 +1116,18 @@ export async function buildGrid(
    * forty-four sit black for as long as forty-four disk reads take — in a row.
    * They are added in id order once they are all in, because the order they
    * finish in is not the order they are stacked in. */
+  /* One tile's flattened icon is every tile's, when it is the same icon at the
+   * same size in the same colour. A wall of forty-four characters draws maybe
+   * five distinct classes, and each one used to cost its own 624x804 offscreen
+   * render — measured at 44 tiles: 147ms a rebuild, and a rebuild runs on every
+   * property edit anywhere.
+   *
+   * Declared here and dropped when the function returns, deliberately. A cache
+   * that outlives the render it serves needs to know when a layer changed, and
+   * getting that wrong is a stale wall that nothing explains — this one cannot
+   * be stale because it never sees a second state. */
+  const flattened = new Map<string, HTMLCanvasElement>();
+
   const backgrounds = await Promise.all(
     ids.map((id, index) => background(m.tiles[id]?.base ?? null, id, deps, cellAt(index))),
   );
@@ -1194,10 +1206,17 @@ export async function buildGrid(
       let obj = cut ? await cutToShape(l, drawn, cut, deps, id, texts, swaps) : drawn;
       if (!obj) continue;
       if (flat && !cut) {
-        obj = new fabric.FabricImage(await toTileCanvas(obj), {
-          originX: "left",
-          originY: "top",
-        });
+        /* Keyed on the whole resolved layer: everything that changes the
+         * picture is in it, so two tiles share a canvas only when they would
+         * have drawn the same pixels. Over-keying costs a miss, never a wrong
+         * tile. */
+        const key = JSON.stringify(l);
+        let baked = flattened.get(key);
+        if (!baked) {
+          baked = await toTileCanvas(obj);
+          flattened.set(key, baked);
+        }
+        obj = new fabric.FabricImage(baked, { originX: "left", originY: "top" });
       }
       if (flat) {
         obj.left = at.x;

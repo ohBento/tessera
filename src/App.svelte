@@ -162,6 +162,15 @@
       e.preventDefault();
       return;
     }
+    /* Delete, and only inside a Layout. The same key on the wall would take a
+       stamp off a portrait with one press, and a stamp is the work of a whole
+       design rather than one layer. Typing is already excluded above, so a
+       caption being edited keeps its own Delete. */
+    if ((key === "delete" || key === "backspace") && editing && app.layoutSelection.length) {
+      void deleteLayoutLayers([...app.layoutSelection]);
+      e.preventDefault();
+      return;
+    }
     if (!e.ctrlKey) return;
     // Ctrl+Shift+Z as well as Ctrl+Y — both are in wide use and cost one clause.
     if (key === "z" && !e.shiftKey) void undoEdit();
@@ -210,6 +219,7 @@
     ["Ctrl + Z", "Undo"],
     ["Ctrl + Y  ·  Ctrl + Shift + Z", "Redo"],
     ["Ctrl + D", "Duplicate the picked layers (in a Layout)"],
+    ["Delete", "Delete the picked layers (in a Layout)"],
     ["Escape", "Close the Layout, or the menu over it"],
     ["?", "This sheet"],
     ["Wheel", "Zoom"],
@@ -648,14 +658,18 @@
 
   function wallMenu(e: MouseEvent) {
     if (editing) return;
-    /* Right-clicking bare wall with nothing picked used to do nothing at all,
-       while the layer list picks the row under the cursor first. GridCanvas
-       answers which tile is there, since only it knows the viewport. */
-    if (!app.selectedTiles.length) {
-      const under = grid?.tileAtEvent(e);
-      if (!under) return;
-      app.selectedTiles = [under];
-    }
+    /* The tile under the cursor is the one meant, unless it is already part of
+       the selection — then the selection is what was meant, and a right-click
+       on one of several picked tiles still acts on all of them. Exactly the
+       rule layerMenu states for rows, and the one every file manager uses.
+
+       It used to re-target only when nothing at all was picked, so right-
+       clicking tile A while B and C were selected quietly acted on B and C.
+       GridCanvas answers which tile is there, since only it knows the
+       viewport; right-clicking bare wall with a selection leaves it alone. */
+    const under = grid?.tileAtEvent(e);
+    if (under && !app.selectedTiles.includes(under)) app.selectedTiles = [under];
+    if (!app.selectedTiles.length) return;
     e.preventDefault();
     const picked = app.selectedTiles.length;
     const elsewhere = projects().filter((p) => p.id !== app.openProjectId);
@@ -1892,9 +1906,21 @@
                 <button
                   class="name inert-name"
                   ondblclick={() => (renaming = layout.id)}
-                  title="Double-click to rename — the pencil opens it"
+                  title={canSaveLayout(layout.id)
+                    ? "Stamps are older than this Layout — open it and press Update stamps"
+                    : "Double-click to rename — the pencil opens it"}
                 >
-                  {layout.name}
+                  <!-- The same dot the stamp rows carry, one level up. Those
+                       are inside a tile that has to be expanded to be seen, so
+                       closing a Layout after editing left the wall looking
+                       finished while it was showing older art. canSaveLayout
+                       already answers it; this is only where it is asked.
+
+                       Before the name, because the name is what gets
+                       ellipsised and a dot behind "…" is no dot at all. -->{#if canSaveLayout(layout.id)}<span
+                      class="dirty"
+                      title="Stamps are older than this Layout">●&nbsp;</span
+                    >{/if}{layout.name}
                   <!-- Both numbers, because they answer different questions:
                        the stamps are what a refresh or a delete touches, the
                        tiles are how much of the wall wears the design. One
