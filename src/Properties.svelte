@@ -17,6 +17,7 @@
     findLayer,
     layerLabel,
     maskChoices,
+    maskOffers,
     type Corners,
     type Layer,
     type Paint,
@@ -38,7 +39,13 @@
 
   /** Some fields only mean something in a Layout — "editable in grid" is about what
    *  happens at stamp time, and a layer already on a tile is past that. */
-  let { layer, inLayout = false }: { layer: Layer; inLayout?: boolean } = $props();
+  let {
+    layer,
+    inLayout = false,
+    /* Opens the class grid on this layer. The grid lives in App, beside the one
+       the toolbar opens, so this is a callback rather than a second copy. */
+    onPickClass,
+  }: { layer: Layer; inLayout?: boolean; onPickClass?: (layerId: string) => void } = $props();
 
   const set = (key: LayerField, value: unknown) => void setLayerField(layer.id, key, value);
 
@@ -46,6 +53,11 @@
    *  in one that holds no shape but this — which is what hides the control
    *  rather than offering a list with nothing in it. */
   const masks = $derived(inLayout ? maskChoices(openLayout()?.layers ?? [], layer.id) : []);
+
+  /** What the dropdown lists. Wider than `masks`: a cutter that lives on the
+   *  tiles is offered to a layer that does not yet, because picking it takes
+   *  the layer along rather than doing nothing. */
+  const offers = $derived(inLayout ? maskOffers(openLayout()?.layers ?? [], layer.id) : []);
 
   /** How many tiles the open wall holds — the span a grid-space layer's x and y
    *  are fractions of. A layer on a tile is measured against the tile. */
@@ -278,22 +290,43 @@
          character's class icon needs the block to travel with the icon — the
          rule says a per-tile cutter may only cut a per-tile layer, and until
          the checkbox existed here a shape could never say yes to it. -->
+    <!-- An icon says what it is for. The switch is the same one, but for a
+         class icon it is not an option: without it the icon bakes into the
+         stamp and forty-four portraits wear the class the layer was made with,
+         with no error and no row in the tile panel to say otherwise. The label
+         that hides that is the reason the feature looked broken. -->
     <label
       class="check"
-      title="Makes this layer travel to the tiles — so a per-tile mask can cut it"
+      title={layer.shape === "icon"
+        ? "Each tile picks its own class. Without this, every tile wears this layer's class."
+        : "Makes this layer travel to the tiles — so a per-tile mask can cut it"}
     >
       <input
         type="checkbox"
         checked={layer.perTile}
         onchange={(e) => set("perTile", e.currentTarget.checked)}
       />
-      Editable in grid
+      {layer.shape === "icon" ? "A class per tile" : "Editable in grid"}
+    </label>
+  {/if}
+  <!-- The class the layer itself is. Until this row existed the only writer of
+       it was the moment of insertion, so a wrong pick meant delete and insert
+       again — which mints a new layer id and leaves every class already chosen
+       on a tile pointing at a layer that is gone. -->
+  {#if layer.shape === "icon" && onPickClass}
+    <label class="field">
+      <span>Class</span>
+      <button class="wide" onclick={() => onPickClass(layer.id)}>
+        {layer.icon || "Pick a class…"}
+      </button>
     </label>
   {/if}
   <!-- Width and height are the one size the canvas handles cannot give you
-       exactly, and a shape is the only kind that keeps them apart. -->
+       exactly, and a shape is the only kind that keeps them apart — except an
+       icon, which has one size because its artwork keeps its own proportions.
+       A second field there would have been a second answer to one question. -->
   <label class="field">
-    <span>Width</span>
+    <span>{layer.shape === "icon" ? "Size" : "Width"}</span>
     <input
       type="range"
       min="0.02"
@@ -304,20 +337,22 @@
     />
     {@render amount("w", layer.w * TILE_W, (n) => n / TILE_W, 1)}
   </label>
-  <label class="field">
-    <span>Height</span>
-    <input
-      type="range"
-      min="0.02"
-      max={Math.max(1.5, layer.h)}
-      step="any"
-      value={layer.h}
-      oninput={(e) => set("h", num(e))}
-    />
-    <!-- Off the tile's height, not its width: `h` is a fraction of the tile's
-         other side, and 624 here would read a square as oblong. -->
-    {@render amount("h", layer.h * TILE_H, (n) => n / TILE_H, 1)}
-  </label>
+  {#if layer.shape !== "icon"}
+    <label class="field">
+      <span>Height</span>
+      <input
+        type="range"
+        min="0.02"
+        max={Math.max(1.5, layer.h)}
+        step="any"
+        value={layer.h}
+        oninput={(e) => set("h", num(e))}
+      />
+      <!-- Off the tile's height, not its width: `h` is a fraction of the tile's
+           other side, and 624 here would read a square as oblong. -->
+      {@render amount("h", layer.h * TILE_H, (n) => n / TILE_H, 1)}
+    </label>
+  {/if}
   {@render paint("Fill", "fill", layer.fill)}
   <!-- An icon is a colour cut to the artwork's outline, so a border would trace
        the rectangle behind it and then be cut away with everything else outside
@@ -546,7 +581,7 @@
        and there is nothing there to cut with. -->
   <label
     class="field"
-    title={masks.length || stale
+    title={offers.length || stale
       ? "Clips this layer to another one in this Layout"
       : "Add another layer to this Layout first — there is nothing to cut with"}
   >
@@ -557,12 +592,18 @@
          looked missing. -->
     <select
       value={layer.maskId ?? ""}
-      disabled={!masks.length && !stale}
+      disabled={!offers.length && !stale}
       onchange={(e) => set("maskId", e.currentTarget.value)}
     >
       <option value="">none</option>
-      {#each masks as shape (shape.id)}
-        <option value={shape.id}>{layerLabel(shape)}</option>
+      {#each offers as shape (shape.id)}
+        <!-- A cutter that lives on the tiles says so, because picking it takes
+             this layer there too: the rule is that a per-tile cutter can only
+             cut a per-tile layer, and the alternative was leaving it out of the
+             list with nothing said. -->
+        <option value={shape.id}>
+          {layerLabel(shape)}{shape.perTile && !layer.perTile ? " — also sends this to the tiles" : ""}
+        </option>
       {/each}
       <!-- A mask the list can no longer offer stays on the layer — switching
            "Editable in grid" is enough to make one — and the row used to go
@@ -1050,6 +1091,12 @@
      glyph of the thing it turns on — one colour fading out — rather than being
      a painted ramp itself, so "on" is said once, by the border, instead of
      twice. */
+  /* Fills the column the sliders start in, so the class reads as this layer's
+     value rather than as a button someone parked in the row. */
+  button.wide {
+    flex: 1;
+    text-align: left;
+  }
   button.ramp {
     flex: none;
     display: inline-flex;

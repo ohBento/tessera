@@ -647,7 +647,14 @@ async function background(
  *  carries a single `scale` and a caption a single `size`, so a stretch has
  *  nowhere to be stored and would spring back the moment the scene rebuilt —
  *  better not to offer the handle than to offer one that lies. */
-export const freeScale = (l: Layer) => l.kind === "shape";
+export const freeScale = (l: Layer) =>
+  /* Except a class icon. Its artwork is fitted to the box rather than stretched
+   * into it, so a one-axis drag showed the icon stretching for as long as the
+   * mouse was down and snapping back on release — the clip travels inside the
+   * object while the drag is live, and the rebuild refits it. Corner handles
+   * only, and Fabric holds those proportional, so what the drag shows is what
+   * the release keeps. */
+  l.kind === "shape" && l.shape !== "icon";
 
 /** Which layers have side handles at all, whatever those handles then do: a
  *  shape stretches by them, a picture crops by them, a caption has neither.
@@ -1034,8 +1041,18 @@ async function cutToShape(
    * none, so there is nothing to cut with and the layer draws whole, exactly
    * as it does when the cutter cannot be resolved at all. */
   const stencilLayer =
-    cutter.kind === "image" ? { ...cutter, asset: layerAsset(swaps, cutter) } : cutter;
+    cutter.kind === "image"
+      ? { ...cutter, asset: layerAsset(swaps, cutter) }
+      : /* And the tile's own class, where a class icon is the one cutting. The
+         * whole point of the pair — a block of colour cut to each character's
+         * class — lives here, and it read the Layout's class for every tile
+         * while the tile row went on offering a picker that moved nothing. */
+        cutter.kind === "shape" && cutter.shape === "icon"
+        ? { ...cutter, icon: layerIcon(swaps, cutter) }
+        : cutter;
   if (stencilLayer.kind === "image" && !stencilLayer.asset) return undefined;
+  if (stencilLayer.kind === "shape" && stencilLayer.shape === "icon" && !stencilLayer.icon)
+    return undefined;
 
   const shape = await layerObject(
     silhouette(stencilLayer),
@@ -1304,12 +1321,24 @@ async function maskFor(l: Layer, deps: SceneDeps, m: Masking): Promise<fabric.Ob
    * offer behaves the same in both places. */
   if (!cutter || cutter.hidden || !cutApplies(l, cutter)) return undefined;
   const shift = nestingShift(m.root, cutter.id) ?? { dx: 0, dy: 0 };
-  const placed = { ...cutter, x: cutter.x + shift.dx, y: cutter.y + shift.dy } as Layer;
+  /* Through silhouette, because the mask is about to become a picture and a
+   * picture carries what the shape itself does not mean: a half-transparent
+   * cutter would cut half-way, and an outline would widen the hole. The wall
+   * has always cut through this; the editor used to get the same effect from
+   * Fabric ignoring both in a clipPath. */
+  const placed = silhouette({ ...cutter, x: cutter.x + shift.dx, y: cutter.y + shift.dy } as Layer);
   const obj = await layerObject(placed, deps, { w: TILE_W, h: TILE_H, x: 0, y: 0 }, "", {}, true);
   if (!obj) return undefined;
-  obj.absolutePositioned = true;
-  obj.inverted = !!l.maskInvert;
-  return obj;
+  /* Wrapped in a group of its own, and that is not decoration. Fabric resets
+   * the transform of whatever it is handed as a clipPath — measured: a class
+   * icon's stencil sat at scale 0.22 at rest and jumped to 1 on the first
+   * mousemove of a drag, so the mask went four and a half times too big and the
+   * layer it was cutting came out whole. The reset lands on the wrapper now,
+   * and the fitted scale inside it survives. */
+  const mask = new fabric.Group([obj], { objectCaching: false });
+  mask.absolutePositioned = true;
+  mask.inverted = !!l.maskInvert;
+  return mask;
 }
 
 /** One Layout's layers as Fabric objects, groups flattened into their members.
@@ -1358,10 +1387,25 @@ async function layoutObjects(
       continue;
     }
     const placed = { ...l, x: l.x + shift.dx, y: l.y + shift.dy, opacity: l.opacity * fade } as Layer;
-    const obj = await layerObject(placed, deps, { w: TILE_W, h: TILE_H, x: 0, y: 0 }, "", {});
+    let obj = await layerObject(placed, deps, { w: TILE_W, h: TILE_H, x: 0, y: 0 }, "", {});
     if (!obj) continue;
     const mask = await maskFor(l, deps, masking);
     if (mask) {
+      /* A class icon already wears a clipPath of its own — the artwork is what
+       * makes it an icon — and Fabric allows exactly one. Assigning the mask
+       * over it left a plain rectangle of paint being cut by the other layer,
+       * which is what "the icon went huge" looks like from the outside. Baked
+       * to pixels first, the artwork is in the picture rather than in a clip,
+       * and the mask has the one slot to itself. The tile path does the same
+       * thing for the same reason. */
+      if (obj.clipPath) {
+        obj = new fabric.FabricImage(await toTileCanvas(obj), {
+          originX: "left",
+          originY: "top",
+          left: 0,
+          top: 0,
+        });
+      }
       obj.clipPath = mask;
       /* A cached object is painted from a bitmap rendered before the clip
        * applied, which shows up as the mask simply not working — the same trap

@@ -327,6 +327,45 @@ describe("masks", () => {
     expect(px(0.1, 0.5)[3]).toBe(0);
   });
 
+  it("stays an icon when the icon is the one being masked", async () => {
+    /* An icon is paint wearing the artwork as its own clipPath, and Fabric
+     * allows exactly one. Putting a mask on the icon overwrote the artwork, so
+     * what drew was the bare rectangle of paint behind it, cut to the other
+     * layer — a slab across the sheet where a badge belonged. Reported as "the
+     * icon is zoomed", which is what a rectangle of paint looks like when you
+     * expected a silhouette.
+     *
+     * Measured as coverage: a star fills about a third of its own box, a
+     * rectangle fills all of it. */
+    const layout = newLayout("Icon mit Maske");
+    const icon = newShapeLayer("icon", "Placeholder");
+    icon.id = "ic";
+    icon.x = 0.5;
+    icon.y = 0.5;
+    icon.w = 0.5;
+    icon.h = 0.5;
+    icon.fill = "#00ff00";
+    icon.maskId = "bl";
+
+    const block = newShapeLayer("rect");
+    block.id = "bl";
+    block.x = 0.5;
+    block.y = 0.5;
+    block.w = 0.9;
+    block.h = 0.9;
+    layout.layers.push(icon, block);
+
+    const { data, width, height } = await decode(await renderLayout(layout, testDeps));
+    let n = 0;
+    for (let i = 0; i < width * height; i++) {
+      const o = i * 4;
+      if (data[o] < 90 && data[o + 1] > 170 && data[o + 2] < 90) n++;
+    }
+    const boxed = 0.5 * TILE_W * (0.5 * TILE_H);
+    expect(n).toBeGreaterThan(0);
+    expect(n).toBeLessThan(boxed * 0.6);
+  });
+
   it("paints a class icon in its own fill", async () => {
     /* The icon is drawn as paint cut to the artwork, and the cut half of that
      * pair is also what a mask asks for — so the two roles are one function

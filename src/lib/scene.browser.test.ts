@@ -624,6 +624,55 @@ describe("a mask on a tile", () => {
     expect(a).not.toBe(b);
   });
 
+  it("cuts each tile to its own class", async () => {
+    /* The pair the icons were built for: one block of colour, cut to the class
+     * of whoever the portrait is. The cutter is the layer the tile names a
+     * class for, and the tile row offers that picker — but the mask path read
+     * the Layout's class for every tile and threw the choice away, so
+     * forty-four portraits wore one class and nothing said so.
+     *
+     * Two tiles, two classes, same cutter: the surviving pixels cannot match. */
+    const m = manifest(2);
+    const [first, second] = order(m);
+
+    for (const id of [first, second]) {
+      const icon = newShapeLayer("icon", "Ranger");
+      icon.id = "cut";
+      icon.x = 0.5;
+      icon.y = 0.5;
+      icon.w = 1;
+      icon.h = 1;
+      icon.live = true;
+      icon.layoutId = "L1";
+
+      const block = newImageLayer("block:#00ff00");
+      block.id = "block";
+      block.x = 0.5;
+      block.y = 0.5;
+      block.scale = 1;
+      block.live = true;
+      block.layoutId = "L1";
+      block.maskId = "cut";
+      m.tiles[id].layers.push(icon, block);
+    }
+    m.tiles[second].swap = { cut: "Witch" };
+
+    const tiles = [...(await renderTiles(view(m), m, testDeps)).values()];
+    const kept = (t: (typeof tiles)[number]) => {
+      let n = 0;
+      for (let y = 0; y < TILE_H; y += 4)
+        for (let x = 0; x < TILE_W; x += 4) {
+          const [r, g, b] = pixel(t, x, y);
+          if (r === 0 && g === 255 && b === 0) n++;
+        }
+      return n;
+    };
+    const [a, b] = [kept(tiles[0]), kept(tiles[1])];
+    expect(a).toBeGreaterThan(0);
+    expect(b).toBeGreaterThan(0);
+    expect(a).not.toBe(b);
+  });
+
   it("cuts a picture to a class icon", async () => {
     /* An icon is not drawn like the other shapes — it is a rectangle of paint
      * clipped to the artwork — so being a cutter is the one place that could
@@ -784,6 +833,42 @@ describe("the Layout editor and the wall agree about a mask", () => {
   /** Within a few per cent: the two paths antialias differently at the edge,
    *  and a 1px band around a 312x402 rectangle is about 1400 pixels. */
   const close = (a: number, b: number) => Math.abs(a - b) < Math.max(a, b) * 0.05;
+
+  it("survives the transform Fabric resets on a clipPath", async () => {
+    /* Fabric owns the transform of whatever it is handed as a clipPath and
+     * resets it the moment a drag starts. Measured in the running app: a class
+     * icon's stencil sat at scale 0.22 at rest and was 1 after the first
+     * mousemove, so the mask covered the whole sheet and the layer it was
+     * cutting came out whole — reported as "the icon is zoomed" and as masks
+     * that stopped working at all.
+     *
+     * The stencil is wrapped in a group of its own now, so the reset lands on
+     * the wrapper and the fitted scale inside survives. This does to the mask
+     * exactly what Fabric does, and then asks what is left on screen. */
+    const cutter = { ...newShapeLayer("icon", "Placeholder"), id: "cut" };
+    cutter.x = 0.5;
+    cutter.y = 0.5;
+    cutter.w = 0.3;
+    cutter.h = 0.3;
+    const pic = { ...newImageLayer("block:#00ff00"), id: "pic" };
+    pic.x = 0.5;
+    pic.y = 0.5;
+    pic.scale = 1;
+    pic.maskId = "cut";
+
+    const canvas = await layoutCanvas({ id: "L1", name: "L", layers: [cutter, pic] });
+    const before = coverInLayout(canvas);
+
+    const masked = canvas.getObjects().find((o) => o.clipPath?.absolutePositioned)!;
+    masked.clipPath!.set({ scaleX: 1, scaleY: 1 });
+    canvas.renderAll();
+    const afterReset = coverInLayout(canvas);
+
+    // A class icon is line art: it can never cover most of a tile.
+    expect(before).toBeGreaterThan(0);
+    expect(before).toBeLessThan(TILE_W * TILE_H * 0.25);
+    expect(afterReset).toBeLessThan(TILE_W * TILE_H * 0.25);
+  });
 
   it("cuts the same piece out, plain", async () => {
     const { layout, tile } = await bothWays(() => {});

@@ -111,6 +111,15 @@ describe("free scaling", () => {
       tl: true, tr: true, bl: true, br: true,
       ml: true, mr: true, mt: true, mb: true,
     });
+    /* A class icon is the exception among shapes. Its artwork is fitted to the
+     * box, not stretched into it, so a side handle showed the icon growing for
+     * as long as the mouse was down — the clip rides inside the object while a
+     * drag is live — and the release refitted it and put it back. Corners only,
+     * which Fabric holds proportional: what the drag shows is what is kept. */
+    expect(scaleControls(newShapeLayer("icon", "Ranger"))).toEqual({
+      tl: true, tr: true, bl: true, br: true,
+      ml: false, mr: false, mt: false, mb: false,
+    });
   });
 
   it("reads a stretched shape back as two different sizes", async () => {

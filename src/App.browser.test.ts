@@ -71,6 +71,7 @@ import {
   type ShapeLayer,
   type TextLayer,
 } from "./lib/model";
+import { maskChoices, maskOffers } from "./lib/model";
 import { textWidth } from "./lib/scene";
 import { queuePick, resetMockFiles, stashPickedFile } from "./lib/platform";
 
@@ -665,6 +666,56 @@ describe("the wall", () => {
       );
     await until(() => !!row());
     expect(row()!.textContent).toContain("1 layout(s)");
+  });
+
+  it("a class per tile takes what the icon cuts along with it", async () => {
+    /* The real setup, from a real manifest: a block of colour cut to the class
+     * icon. The mask is chosen while both are ordinary Layout layers; the
+     * switch comes after. The rule only lets a per-tile cutter cut a per-tile
+     * layer, so flipping it used to void the mask in silence — the block kept a
+     * maskId that no longer applied, the dropdown stopped listing the icon, and
+     * the wall showed a whole rectangle beside a badge instead of one cut to
+     * the other. */
+    await newLayoutDoc("Klassenschnitt");
+    await addLayoutShape("icon", "Ranger");
+    const icon = openLayout()!.layers[0];
+    await addLayoutShape("rect");
+    const block = openLayout()!.layers.find((l) => l.id !== icon.id)!;
+    await setLayerField(block.id, "maskId", icon.id);
+
+    await setLayerField(icon.id, "perTile", true);
+
+    const now = (id: string) => openLayout()!.layers.find((l) => l.id === id)!;
+    expect(now(block.id).perTile).toBe(true);
+    // And the cutter is still on offer for it, which is the same fact stated
+    // by the control the user actually looks at.
+    expect(maskChoices(openLayout()!.layers, block.id).map((l) => l.id)).toContain(icon.id);
+  });
+
+  it("choosing a mask that lives on the tiles takes the layer along", async () => {
+    /* The other half of the same rule. A per-tile cutter may only cut a
+     * per-tile layer, so a plain rectangle could not be cut by a class icon
+     * that names a class per tile — and the dropdown answered by leaving the
+     * icon out entirely, with nothing said. It is offered now, and picking it
+     * sends the rectangle to the tiles as well, which is the only way the pair
+     * can exist at all. */
+    await newLayoutDoc("Maske folgt");
+    await addLayoutShape("icon", "Ranger");
+    const icon = openLayout()!.layers[0];
+    await setLayerField(icon.id, "perTile", true);
+    await addLayoutShape("rect");
+    const block = openLayout()!.layers.find((l) => l.id !== icon.id)!;
+    expect(block.perTile).toBeFalsy();
+
+    // The icon is on offer even though today's rule would refuse it.
+    expect(maskOffers(openLayout()!.layers, block.id).map((l) => l.id)).toContain(icon.id);
+
+    await setLayerField(block.id, "maskId", icon.id);
+
+    const now = openLayout()!.layers.find((l) => l.id === block.id)!;
+    expect(now.perTile).toBe(true);
+    // And the cut is legal, so it will actually render.
+    expect(maskChoices(openLayout()!.layers, block.id).map((l) => l.id)).toContain(icon.id);
   });
 
   it("hiding a stamp hides the whole assignment, live layers and all", async () => {

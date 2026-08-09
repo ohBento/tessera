@@ -20,6 +20,7 @@ import {
   setArchived,
   layerLabel,
   layerAsset,
+  layerIcon,
   layerText,
   migrate,
   maskChoices,
@@ -1340,6 +1341,33 @@ describe("layerAsset", () => {
     /* "No picture on this tile" has to survive. `||` here would put the
      * default straight back — the same trap the caption text fell into. */
     expect(layerAsset({ L1: "" }, layer())).toBe("");
+  });
+});
+
+describe("layerIcon", () => {
+  const layer = () => ({ ...newShapeLayer("icon", "Ranger"), id: "L1" });
+
+  it("falls back to the layer's own class when the tile names none", () => {
+    expect(layerIcon({}, layer())).toBe("Ranger");
+  });
+
+  it("takes the tile's class over the layer's", () => {
+    expect(layerIcon({ L1: "Witch" }, layer())).toBe("Witch");
+  });
+
+  it('treats "" as a choice, not as absence', () => {
+    /* "No icon on this tile" has to survive, exactly as it does for a picture:
+     * `||` would put the layer's class straight back. */
+    expect(layerIcon({ L1: "" }, layer())).toBe("");
+  });
+
+  it("keys on the layer, so two icon layers on a tile choose apart", () => {
+    /* One map per tile carries every layer's choice — a wall with a class badge
+     * and a guild badge must not have one answer the other's question. */
+    const guild = { ...newShapeLayer("icon", "Nova"), id: "L2" };
+    const swaps = { L1: "Witch", L2: "Shai" };
+    expect(layerIcon(swaps, layer())).toBe("Witch");
+    expect(layerIcon(swaps, guild)).toBe("Shai");
   });
 });
 
