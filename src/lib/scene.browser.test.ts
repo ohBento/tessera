@@ -549,6 +549,44 @@ describe("a mask on a tile", () => {
     ]);
   });
 
+  it("holds a left-aligned caption's left edge across tiles", async () => {
+    /* A caption with no width of its own hugs its words, and the box is centred
+     * on x — so a tile that says more grows the box in both directions and the
+     * text starts further left than on its neighbour. Down a wall of names that
+     * reads as a caption that will not line up.
+     *
+     * Left-aligned means the left edge is the fixed one. Measured as the first
+     * column of ink on each tile: they have to match. */
+    const m = manifest(2);
+    const [first, second] = order(m);
+
+    for (const id of [first, second]) {
+      const cap = { ...newTextLayer(), id: "cap", live: true, layoutId: "L1" };
+      cap.x = 0.5;
+      cap.y = 0.5;
+      cap.size = 0.08;
+      cap.align = "left";
+      cap.color = "#00ff00";
+      m.tiles[id].layers.push(cap);
+    }
+    m.tiles[first].text = { cap: "Ii" };
+    m.tiles[second].text = { cap: "IiIiIiIiIi" };
+
+    const tiles = [...(await renderTiles(view(m), m, testDeps)).values()];
+    const leftEdge = (t: (typeof tiles)[number]) => {
+      for (let x = 0; x < TILE_W; x++)
+        for (let y = 0; y < TILE_H; y++) {
+          const [r, g, b] = pixel(t, x, y);
+          if (r < 80 && g > 200 && b < 80) return x;
+        }
+      return -1;
+    };
+    const [a, b] = [leftEdge(tiles[0]), leftEdge(tiles[1])];
+    expect(a).toBeGreaterThan(0);
+    // Within a pixel: the two are measured from different glyph runs.
+    expect(Math.abs(a - b)).toBeLessThanOrEqual(1);
+  });
+
   it("gives each tile its own class", async () => {
     /* The reason the icons exist: one layer, placed and coloured once, and
      * every portrait naming its own class. Two tiles carrying the same layer

@@ -374,8 +374,28 @@ function textObject(l: TextLayer, box: { w: number; h: number; x: number; y: num
    * nowhere near the letters, and left-aligned text started at the tile's edge
    * whatever x said. Measuring first costs one throwaway object and makes the
    * frame mean what it looks like it means. */
+  /* Where the box sits when it has no width of its own and the words are not
+   * the Layout's. Such a box hugs its words and is centred on x, so a longer
+   * name grows it in both directions — and a left-aligned caption then starts
+   * further left on the tile that happens to say more. The Layout editor hides
+   * this by nudging x as you type; a tile has no such moment, and forty tiles
+   * with forty names came out as forty different left edges.
+   *
+   * So the edge the alignment names is what is held: the left one for
+   * left-aligned text, the right one for right-aligned, both measured against
+   * the Layout's own wording — the caption you see in the editor. Centred text
+   * keeps growing both ways, which is what centring means. */
+  const anchored = place(l, box);
+  if (!l.w && tileId && words !== l.text) {
+    const own = boxWidth(l.text, style, size, box.w);
+    const here = boxWidth(words, style, size, box.w);
+    const align = l.align ?? "center";
+    if (align === "left") anchored.left += (here - own) / 2;
+    else if (align === "right") anchored.left -= (here - own) / 2;
+  }
+
   const obj = new fabric.Textbox(words, {
-    ...place(l, box),
+    ...anchored,
     /* A set width wins over measuring: that is the whole point of it. What the
        words do inside is wrap, which is what a Textbox is for. */
     width: l.w ? l.w * box.w : boxWidth(words, style, size, box.w),
