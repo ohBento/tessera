@@ -11,12 +11,21 @@
   import LayoutCanvas from "./LayoutCanvas.svelte";
   import Properties from "./Properties.svelte";
   import {
+    ARCHIVE,
+    archived,
+    bedChoices,
+    bedFor,
+    setBedTile,
+    changedHere,
+    archiveSelection,
+    onArchive,
     addGridImage,
     addLayoutImage,
     addLayoutShape,
     addLayoutText,
     app,
     assignLayoutToSelection,
+    assignLayoutToWall,
     assignTileLayout,
     bakedCount,
     bakeMosaic,
@@ -71,6 +80,7 @@
     redoEdit,
     redoable,
     releaseTilesToInbox,
+    remainingFor,
     replaceAllCharacters,
     replaceCharacter,
     renameLayer,
@@ -126,6 +136,19 @@
     if (isTyping(e.target)) return;
     const key = e.key.toLowerCase();
 
+    /* The sheet answers to the key it documents, and closes on Escape like
+       everything else that opens over the page. Checked before the Layout's own
+       Escape, or opening it inside an editor would shut the document instead. */
+    if (keysOpen && key === "escape") {
+      keysOpen = false;
+      e.preventDefault();
+      return;
+    }
+    if (key === "?" || (key === "/" && e.shiftKey)) {
+      keysOpen = !keysOpen;
+      e.preventDefault();
+      return;
+    }
     if (key === "escape" && editing && !e.ctrlKey) {
       closeLayoutDoc();
       e.preventDefault();
@@ -141,6 +164,34 @@
     else return;
     e.preventDefault();
   }
+
+  /** Whether the keyboard sheet is up.
+   *
+   *  Every one of these is discoverable only by being told: a drag that swaps
+   *  rather than inserts, a modifier that switches snapping off, a duplicate
+   *  bound to Ctrl+D. Undo and Redo carry theirs in a tooltip, but a gesture
+   *  has no button to hang one on. */
+  let keysOpen = $state(false);
+
+  /** What the sheet lists. Written out rather than derived from the handler:
+   *  half of these are canvas gestures that no handler declares, and a list
+   *  that could drift is still better than a list nobody can find. */
+  const KEYS: Array<[string, string]> = [
+    ["Ctrl + Z", "Undo"],
+    ["Ctrl + Y  ·  Ctrl + Shift + Z", "Redo"],
+    ["Ctrl + D", "Duplicate the picked layers (in a Layout)"],
+    ["Escape", "Close the Layout, or the menu over it"],
+    ["?", "This sheet"],
+    ["Wheel", "Zoom"],
+    ["Middle-drag", "Pan"],
+    ["Space + drag", "Pan as well"],
+    ["Drag", "Draw a selection box over tiles"],
+    ["Ctrl + click", "Add one tile, or one layer, to the selection"],
+    ["Shift + click", "Take the whole range up to it"],
+    ["Alt + drag", "Swap two tiles instead of selecting"],
+    ["Alt", "Held while dragging a handle: no snapping"],
+    ["Double-click", "Rename a row · open a Layout from its stamp"],
+  ];
 
   /** Which group rows are expanded. View state only — collapsing a group is
    *  not an edit and has no business in the manifest or in undo. */
@@ -265,6 +316,11 @@
     app.dir;
     home = true;
   });
+
+  /** Whether the strip of faces beside the Layout sheet is showing. On by
+   *  default — the whole point is to see the design on a portrait — and
+   *  collapsible for a narrow window, where it would eat the sheet's width. */
+  let bedStrip = $state(true);
 
   /** The Layout canvas — the toolbar's align buttons act on its live objects. */
   let sheet: LayoutCanvas | undefined = $state();
@@ -610,6 +666,17 @@
                   picked === 1 ? `Assign "${l.name}"` : `Assign "${l.name}" to ${picked} tiles`,
                 run: () => void assignLayoutToSelection(l.id),
               })),
+              /* And the whole wall in one item, for the case the selection
+                 exists to serve: a second account's forty-four portraits, all
+                 wanting the same design. Counted as work left to do — a tile
+                 already wearing it is not offered a second stamp — so the
+                 number vanishes to nothing once the wall is dressed. */
+              ...layouts()
+                .filter((l) => remainingFor(l.id).length)
+                .map((l) => ({
+                  label: `Assign "${l.name}" to all ${remainingFor(l.id).length} remaining`,
+                  run: () => void assignLayoutToWall(l.id),
+                })),
             ]
           : []),
         /* The inverse of the Assign items above, and blunter than they are:
@@ -628,7 +695,28 @@
           run: () => void clearLayers(),
           disabled: !strippableCount(),
         },
-        ...(app.openProjectId
+        ...(!app.openProjectId && picked
+          ? [
+              { separator: true } as Item,
+              {
+                /* BDO never deletes a portrait, so Unsorted only grows — this
+                   is how a character who no longer exists stops being in the
+                   way, without a file being touched. */
+                label: picked === 1 ? "Archive" : `Archive ${picked} tiles`,
+                run: () => void archiveSelection(true),
+              },
+            ]
+          : []),
+        ...(onArchive() && picked
+          ? [
+              { separator: true } as Item,
+              {
+                label: picked === 1 ? "Back to Unsorted" : `Put ${picked} back in Unsorted`,
+                run: () => void archiveSelection(false),
+              },
+            ]
+          : []),
+        ...(app.openProjectId && !onArchive()
           ? [
               { separator: true } as Item,
               /* Only the drawers that would actually take something. One
@@ -955,6 +1043,14 @@
       <button class="twisty" onclick={() => toggleTileRow(id)}>
         {open.has(id) ? "▾" : "▸"}
       </button>
+      <!-- The face, not the number. "40000000005773694" identifies a file and
+           nobody else; at sixty-eight portraits the list was a column of digits
+           to be matched against the wall by counting. The game's own picture,
+           deliberately, even where a mosaic is baked over the tile: this
+           answers "who is this", and a slice of some wall-wide image answers it
+           for nobody. -->
+      <canvas class="thumb" width="31" height="40" use:portrait={{ id, ready: !!app.deps }}
+      ></canvas>
       <button
         class="name"
         onclick={(e) => toggleTile(id, { ctrl: e.ctrlKey, shift: e.shiftKey })}
@@ -1172,6 +1268,16 @@
       >
         ↻
       </button>
+      <!-- Both ways in: the button so it can be found without knowing anything,
+           the key so it can be reached without looking. -->
+      <button
+        class="reload"
+        onclick={() => (keysOpen = true)}
+        title="Keyboard and mouse (?)"
+        aria-label="Keyboard and mouse shortcuts"
+      >
+        ?
+      </button>
     </div>
 
     {#if editing}
@@ -1371,6 +1477,41 @@
       }}
     >
       {#if editing}
+        <!-- The wall's faces beside the sheet, so the design can be tried on
+             one. Composing against black meant stamping to find out whether a
+             caption sat on a forehead; this is the same question answered
+             before the stamp. Clicking a face lays it under the sheet.
+             Deliberately still pictures: rendering the Layout into forty-four
+             of them on every slider drag would cost more than the answer is
+             worth, and the big one shows it already. -->
+        {#if bedStrip && bedChoices().length > 1}
+          <div class="bedstrip" style:padding-top="34px">
+            {#each bedChoices() as id (id)}
+              {@const wearing = tileLayers(id).some((l) => l.layoutId === editing.id)}
+              <button
+                class="bed"
+                class:on={bedFor(editing.id) === id}
+                class:wearing
+                title={wearing ? `${id} — already wearing this layout` : id}
+                onclick={() => setBedTile(id)}
+              >
+                <canvas
+                  class="thumb"
+                  width="31"
+                  height="40"
+                  use:portrait={{ id, ready: !!app.deps }}
+                ></canvas>
+              </button>
+            {/each}
+          </div>
+        {/if}
+        <button
+          class="bedtoggle"
+          title={bedStrip ? "Hide the tile strip" : "Show the tile strip"}
+          onclick={() => (bedStrip = !bedStrip)}
+        >
+          {bedStrip ? "‹" : "›"}
+        </button>
         <LayoutCanvas bind:this={sheet} />
       {:else if home}
         <!-- The start view, always. With several accounts sharing one folder
@@ -1394,6 +1535,18 @@
               <span class="cardsub">{inbox().length} unassigned</span>
               {@render thumbs(inbox())}
             </button>
+            <!-- Only when there is something in it. A permanently empty card for
+                 a folder nobody has put anything away from would be a control
+                 that never does anything; the archive earns its place by
+                 holding something. Last in the row and quiet, because put away
+                 should look put away. -->
+            {#if archived().length}
+              <button class="card away" onclick={() => enter(ARCHIVE)}>
+                <span class="cardname">Archive</span>
+                <span class="cardsub">{archived().length} put away</span>
+                {@render thumbs(archived())}
+              </button>
+            {/if}
             {#each projects() as project (project.id)}
               <button class="card" onclick={() => enter(project.id)}>
                 <span class="cardname">{project.name}</span>
@@ -1410,7 +1563,7 @@
               Open Unsorted, pick the portraits of one account, then "Project from selection".
             </p>
           {/if}
-          {#if app.changedTiles.length}
+          {#if changedHere().length}
             <!-- The one question the app cannot answer for itself. BDO keeps a
                  character's numeric id when a slot is deleted and refilled, so
                  "the file changed" means either a restyle or a stranger — and
@@ -1423,7 +1576,7 @@
                  the mornings the game rewrote something. -->
             <div class="alert">
               <p class="alerthead">
-                {app.changedTiles.length} portrait(s) changed in the game since you were last here.
+                {changedHere().length} portrait(s) changed in the game since you were last here.
               </p>
               <p class="empty">
                 Same character with a new look, or a different character in that slot? Nothing is
@@ -1451,7 +1604,7 @@
                 </button>
               </div>
               <ul>
-                {#each app.changedTiles as id (id)}
+                {#each changedHere() as id (id)}
                   <li>
                     <canvas class="thumb" width="31" height="40" use:portrait={{ id, ready: !!app.deps }}></canvas>
                     <button class="name">
@@ -1910,6 +2063,29 @@
   {/if}
 </main>
 
+<!-- A plain list over the page. No filtering by context: at fourteen entries,
+     deciding which half to hide is more apparatus than the list is. -->
+{#if keysOpen}
+  <div
+    class="sheetback"
+    role="button"
+    tabindex="-1"
+    aria-label="Close"
+    onclick={() => (keysOpen = false)}
+    onkeydown={(e) => e.key === "Enter" && (keysOpen = false)}
+  ></div>
+  <div class="sheet" role="dialog" aria-label="Keyboard and mouse">
+    <h2>Keyboard and mouse</h2>
+    <dl>
+      {#each KEYS as [keys, what] (keys)}
+        <dt>{keys}</dt>
+        <dd>{what}</dd>
+      {/each}
+    </dl>
+    <button onclick={() => (keysOpen = false)}>Close</button>
+  </div>
+{/if}
+
 <style>
   :global(body) {
     margin: 0;
@@ -2094,6 +2270,87 @@
      the promise, and here there is nothing behind a single press. */
   .inert-name {
     cursor: default;
+  }
+  /* Against the left edge of the stage, over the sheet's margin rather than
+     beside it: the sheet is centred and has room to spare there. */
+  .bedstrip {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px;
+    overflow-y: auto;
+    background: rgb(0 0 0 / 0.35);
+  }
+  .bed {
+    padding: 2px;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    background: none;
+    line-height: 0;
+  }
+  .bed.on {
+    border-color: #a685ff;
+  }
+  /* A tile already carrying this layout — the ones worth checking first. */
+  .bed.wearing {
+    box-shadow: inset 0 0 0 2px #3a2b5e;
+  }
+  .bedtoggle {
+    position: absolute;
+    top: 6px;
+    left: 0;
+    z-index: 6;
+    padding: 2px 5px;
+    opacity: 0.6;
+  }
+  .bedtoggle:hover {
+    opacity: 1;
+  }
+  .sheetback {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    background: rgb(0 0 0 / 0.5);
+    border: 0;
+  }
+  .sheet {
+    position: fixed;
+    z-index: 31;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    max-height: 80vh;
+    overflow: auto;
+    padding: 18px 22px;
+    border: 1px solid #3a444c;
+    border-radius: 8px;
+    background: #17122b;
+    box-shadow: 0 10px 40px rgb(0 0 0 / 0.5);
+  }
+  .sheet h2 {
+    margin: 0 0 12px;
+  }
+  .sheet dl {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 6px 18px;
+    margin: 0 0 14px;
+  }
+  .sheet dt {
+    color: #e3dbff;
+    font-family: ui-monospace, monospace;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .sheet dd {
+    margin: 0;
+    color: #8f88a8;
+    font-size: 12px;
   }
   .status {
     margin-left: auto;

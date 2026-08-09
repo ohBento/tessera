@@ -4,7 +4,14 @@
      repeated here. A caption whose words cannot be typed is useless, which is
      why this exists at all rather than waiting for the full panel system. */
   import { TILE_H, TILE_W } from "./lib/bmp";
-  import { openLayout, resetCrop, setLayerField, type LayerField } from "./lib/editor.svelte";
+  import { gridSize } from "./lib/geometry";
+  import {
+    openLayout,
+    resetCrop,
+    setLayerField,
+    visibleIds,
+    type LayerField,
+  } from "./lib/editor.svelte";
   import {
     isGradient,
     findLayer,
@@ -39,6 +46,10 @@
    *  in one that holds no shape but this — which is what hides the control
    *  rather than offering a list with nothing in it. */
   const masks = $derived(inLayout ? maskChoices(openLayout()?.layers ?? [], layer.id) : []);
+
+  /** How many tiles the open wall holds — the span a grid-space layer's x and y
+   *  are fractions of. A layer on a tile is measured against the tile. */
+  const wallCount = () => visibleIds().length;
 
   /** The name of a mask that is set but no longer a legal choice — an "Editable
    *  in grid" toggle away, since a per-tile cutter may only cut a per-tile
@@ -569,6 +580,32 @@
   {/if}
 {/if}
 
+<!-- Where the layer's centre sits, in pixels of the surface it lives on — the
+     tile, or the whole wall for a grid-space picture. The centre and not a
+     corner, because the centre is what the model stores and what rotation
+     turns around: a corner would be a derived number that stops meaning
+     anything once the layer is turned. Dragging existed; typing "exactly the
+     middle" did not. -->
+{#snippet axis(key: "x" | "y", span: number)}
+  <label class="field">
+    <span>{key.toUpperCase()}</span>
+    <input
+      class="num"
+      type="number"
+      step="1"
+      value={Math.round(layer[key] * span)}
+      onchange={(e) => {
+        const px = num(e);
+        e.currentTarget.value = String(Math.round(px));
+        set(key, px / span);
+      }}
+    />
+    <span class="unit">px</span>
+  </label>
+{/snippet}
+{@render axis("x", layer.space === "grid" ? gridSize(wallCount()).w : TILE_W)}
+{@render axis("y", layer.space === "grid" ? gridSize(wallCount()).h : TILE_H)}
+
 <!-- Rotation is on the canvas handle too, but a handle cannot be told "exactly
      ninety" — and the number it left behind was nowhere to be read.
      Not for groups: the renderer flattens a group into a shift and never turns
@@ -615,6 +652,28 @@
   />
   {@render amount("opacity", layer.opacity * 100, (n) => n / 100, 0, 100, "%")}
 </label>
+
+<!-- The typed twin of a swatch. The native picker has sliders and no text
+     field, so a colour from a palette had to be matched by eye. Accepts
+     #8f6bff, 8f6bff and the f0f shorthand; anything else springs back to the
+     colour the layer already has, the same rule the number boxes follow. -->
+{#snippet hex(value: string, store: (v: string) => void)}
+  <input
+    class="hex"
+    value={value}
+    onchange={(e) => {
+      const raw = e.currentTarget.value.trim().replace(/^#/, "");
+      const long =
+        /^[0-9a-f]{6}$/i.test(raw)
+          ? raw
+          : /^[0-9a-f]{3}$/i.test(raw)
+            ? [...raw].map((c) => c + c).join("")
+            : "";
+      if (long) store(`#${long.toLowerCase()}`);
+      else e.currentTarget.value = value;
+    }}
+  />
+{/snippet}
 
 <!-- The typed twin of a slider.
 
@@ -707,12 +766,14 @@
       oninput={(e) =>
         set(key, isGradient(p) ? { ...p, from: e.currentTarget.value } : e.currentTarget.value)}
     />
+    {@render hex(flat(p), (v) => set(key, isGradient(p) ? { ...p, from: v } : v))}
     {#if isGradient(p)}
       <input
         type="color"
         value={p.to}
         oninput={(e) => set(key, { ...p, to: e.currentTarget.value })}
       />
+      {@render hex(p.to, (v) => set(key, { ...p, to: v }))}
     {/if}
     <!-- Inside the label, and safe there: a label hands its click on to its
          first control only when the click did not land on an interactive
@@ -906,6 +967,11 @@
   .num {
     flex: none;
     width: 48px;
+  }
+  .hex {
+    flex: none;
+    width: 68px;
+    font-family: ui-monospace, monospace;
   }
   /* Sits against its box rather than in it: a suffix inside the field would be
      text the user has to delete before typing. Fixed width so the boxes of a

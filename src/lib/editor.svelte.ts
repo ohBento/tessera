@@ -19,6 +19,8 @@ import {
   groupShift,
   holdersUsingLayout,
   inboxIds,
+  archivedIds,
+  setArchived,
   looseTiles,
   moveToProject,
   nameInStack,
@@ -268,11 +270,83 @@ export const openProject = (): Project | undefined =>
 /** Tiles the folder has that no project claims. */
 export const inbox = () => inboxIds(app.manifest, app.folderIds);
 
+/* --- The face under a Layout while it is composed.
+ *
+ * A Layout belongs to no tile, so the editor has to borrow one. Which one is a
+ * view choice and lives here rather than in the manifest: what lay under a
+ * design while it was drawn says nothing about the design, and a field for it
+ * would be the seventh dead one this project has had to dig out. --- */
+
+/** The tile the Layout editor lays its composition over, "" for none. */
+let bedTile = $state("");
+
+/** Which tiles can be borrowed: the open wall's, in grid order. Another
+ *  project's portraits are deliberately out of reach — a Layout is judged
+ *  against the wall it is being built for. */
+export const bedChoices = () => (openProject()?.order ?? inbox()).slice();
+
+/** The one currently under the sheet.
+ *
+ *  Chosen for you until you choose: the first tile already wearing this Layout,
+ *  since that is the one whose result is being judged; failing that the first
+ *  tile of the wall, so a Layout that has never been stamped still has a face
+ *  under it. */
+export const bedFor = (layoutId: string): string => {
+  const choices = bedChoices();
+  if (bedTile && choices.includes(bedTile)) return bedTile;
+  const wearing = choices.find((id) =>
+    (app.manifest.tiles[id]?.layers ?? []).some((l) => l.layoutId === layoutId),
+  );
+  return wearing ?? choices[0] ?? "";
+};
+
+export function setBedTile(id: string) {
+  if (bedTile === id) return;
+  bedTile = id;
+  app.version++;
+}
+
+/** The changed-tile question, minus the ones put away.
+ *
+ *  Archiving is "not now", not "decide for me": the fingerprints are left
+ *  exactly as they are, so bringing a tile back brings its question with it.
+ *  What goes is the noise — a banner asking about portraits deliberately set
+ *  aside is a banner nobody reads. */
+export const changedHere = () => {
+  const away = new Set(archived());
+  return app.changedTiles.filter((id) => !away.has(id));
+};
+
+/** The tiles put away — see archivedIds. Their own wall, reached from its own
+ *  card, so they are out of the way without being out of reach. */
+export const archived = () => archivedIds(app.manifest, app.folderIds);
+
+/** Whether the archive is the wall being shown. Not a project id, because it is
+ *  not a project: a second value for `openProjectId` would have every reader of
+ *  it asking "or is it the archive". */
+export const onArchive = () => app.openProjectId === ARCHIVE;
+
+/** The archive's stand-in id. Deliberately not a valid project id. */
+export const ARCHIVE = " archive";
+
 /** What the canvas and the export are pointed at. The inbox is a wall too: the
- *  unclaimed tiles, with no picture spread over them. */
+ *  unclaimed tiles, with no picture spread over them — and so is the archive. */
 export function wall(): { ids: string[]; gridLayers: Layer[] } {
+  if (onArchive()) return { ids: archived(), gridLayers: [] };
   const p = openProject();
   return p ? { ids: p.order, gridLayers: p.gridLayers } : { ids: inbox(), gridLayers: [] };
+}
+
+/** Puts the picked tiles away, or brings them back. Unclaimed tiles only —
+ *  setArchived enforces that too, whatever a caller believes. */
+export async function archiveSelection(away: boolean) {
+  const ids = [...app.selectedTiles];
+  if (!ids.length) return;
+  await mutate(() => {
+    setArchived(app.manifest, ids, away);
+    clearAll();
+  });
+  app.error = away ? `${ids.length} tile(s) archived` : `${ids.length} tile(s) back in Unsorted`;
 }
 
 export function openProjectView(id: string) {
@@ -1531,9 +1605,35 @@ export const assignTileLayout = (tileId: string, layoutId: string) =>
  *  them, so forty-four renders would be forty-three too many — and one
  *  mutation, so giving a wall its design is one undo step rather than
  *  forty-four. */
+/** The placed tiles of the open wall that are not already wearing this layout.
+ *
+ *  What "assign to the whole wall" means, spelled once for the menu label and
+ *  the action so they cannot disagree. Placed only: the shelf is a waiting
+ *  area and "Write to game" does not write it either. And never a second stamp
+ *  on a tile that has one — the count in the label is the work that will
+ *  actually happen. */
+export const remainingFor = (layoutId: string): string[] => {
+  const p = openProject();
+  if (!p) return [];
+  return p.order.filter(
+    (id) => !(app.manifest.tiles[id]?.layers ?? []).some((l) => l.layoutId === layoutId),
+  );
+};
+
+/** Puts a layout on every placed tile that lacks it — the two-click way to
+ *  dress a second account's wall, instead of selecting forty-four tiles first. */
+export async function assignLayoutToWall(layoutId: string) {
+  const ids = remainingFor(layoutId);
+  if (!ids.length) return;
+  await assignLayoutTo(layoutId, ids);
+}
+
 export async function assignLayoutToSelection(layoutId: string) {
+  await assignLayoutTo(layoutId, [...app.selectedTiles]);
+}
+
+async function assignLayoutTo(layoutId: string, ids: string[]) {
   const layout = app.manifest.layouts.find((l) => l.id === layoutId);
-  const ids = [...app.selectedTiles];
   if (!layout || !app.deps || !ids.length) return;
   await run("stamp", async () => {
     const { asset, seen } = await stampAsset(layout);

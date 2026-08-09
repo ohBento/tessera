@@ -359,6 +359,11 @@ export type Tile = {
    *  deliberately shows none. Optional so manifests written before per-tile
    *  pictures existed still load unchanged. */
   swap?: Record<string, string>;
+  /** Put away: out of Unsorted, into the archive, still on disk and still
+   *  carrying whatever was made for it. Absent is the ordinary state — see
+   *  archivedIds, and setArchived for why it is only ever true on a tile no
+   *  project has claimed. */
+  archived?: boolean;
 };
 
 /** A cosmetic drawer in the tile list — "Done", "Season", whatever helps.
@@ -408,11 +413,36 @@ export const projectTiles = (p: Project) => [...p.order, ...p.shelf];
 export const projectOf = (m: Manifest, tileId: string) =>
   m.projects.find((p) => p.order.includes(tileId) || p.shelf.includes(tileId));
 
-/** Which of `ids` no project has claimed. Derived and never stored: the folder
- *  is where ids come from, and a stored inbox would be a second copy of that
- *  list to keep in step with it. */
+/** Which of `ids` no project has claimed and nobody has put away. Derived and
+ *  never stored: the folder is where ids come from, and a stored inbox would be
+ *  a second copy of that list to keep in step with it. */
 export const inboxIds = (m: Manifest, folderIds: string[]) =>
-  folderIds.filter((id) => !projectOf(m, id));
+  folderIds.filter((id) => !projectOf(m, id) && !m.tiles[id]?.archived);
+
+/** Put away rather than thrown away.
+ *
+ *  BDO never deletes a portrait file — a character deleted in the game leaves
+ *  its picture behind for good — so Unsorted only ever grows, and the faces of
+ *  characters that no longer exist sit in it forever. This is the way to say
+ *  "not this one, ever" without touching the folder, which Tessera has no
+ *  business doing.
+ *
+ *  Only an unclaimed tile can be archived: a tile in a project has a wall it
+ *  belongs to, and "archived but placed" would be a state every count and every
+ *  write would have to ask about. Taking it out of the project first is the
+ *  existing way, one click that already exists. */
+export const archivedIds = (m: Manifest, folderIds: string[]) =>
+  folderIds.filter((id) => !projectOf(m, id) && !!m.tiles[id]?.archived);
+
+export function setArchived(m: Manifest, ids: string[], away: boolean) {
+  for (const id of ids) {
+    const tile = m.tiles[id];
+    // Never against a claimed tile, whatever the caller believes.
+    if (!tile || projectOf(m, id)) continue;
+    if (away) tile.archived = true;
+    else delete tile.archived;
+  }
+}
 
 /** Takes a tile out of every list a project keeps it in, folders included. A
  *  folder still naming a tile the project no longer owns is a row that cannot

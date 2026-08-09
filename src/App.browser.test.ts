@@ -21,6 +21,7 @@ import {
   app,
   applyLayoutTransform,
   assignLayoutToSelection,
+  assignLayoutToWall,
   canGroupLayers,
   closeLayoutDoc,
   dropLayoutLayer,
@@ -41,6 +42,7 @@ import {
   openFolder,
   openProjectView,
   projects,
+  remainingFor,
   renameSnapshot,
   restoreSnapshot,
   deleteLayoutDoc,
@@ -1373,3 +1375,37 @@ describe("the Layout editor", () => {
  * proof is a measurement in the running editor instead: a wall picked while a
  * real folder was still hashing stayed open. See openFolder in editor.svelte.ts,
  * where the reset now sits directly under `app.dir`. */
+
+describe("dressing a whole wall", () => {
+  it("counts only the tiles that still lack the layout, and stamps just those", async () => {
+    /* The two-click way to dress a second account's wall. Placed tiles only —
+     * the shelf is a waiting area and the game never sees it — and never a
+     * second stamp on a tile that already wears the design, so the number in
+     * the menu is the work that will actually happen. */
+    const [a, b, c] = app.folderIds;
+    app.selectedTiles = [a, b, c];
+    await newProjectFrom("Konto");
+    const project = projects()[0];
+    openProjectView(project.id);
+    // One of the three waits on the shelf rather than on the wall.
+    await unplace(c);
+
+    await newLayoutDoc("Rahmen");
+    await addLayoutShape("rect");
+    await closeLayoutDoc();
+    const layout = layouts()[0].id;
+
+    expect(remainingFor(layout).sort()).toEqual([a, b].sort());
+
+    // One tile gets it the ordinary way first; the count has to drop.
+    await assignTileLayout(a, layout);
+    expect(remainingFor(layout)).toEqual([b]);
+
+    await assignLayoutToWall(layout);
+
+    expect(remainingFor(layout)).toEqual([]);
+    expect(tileLayers(b).some((l) => l.layoutId === layout)).toBe(true);
+    // The shelved one is untouched: it was never on the wall.
+    expect(tileLayers(c)).toEqual([]);
+  });
+});

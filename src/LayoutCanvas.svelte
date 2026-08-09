@@ -12,6 +12,7 @@
     app,
     applyLayoutTransform,
     endGesture,
+    bedFor,
     openLayout,
     setLayerField,
     setLayoutSelection,
@@ -91,7 +92,19 @@
         if (!built) fit();
         rebuilding = true;
         try {
-          await buildLayout(canvas, $state.snapshot(layout), deps, true);
+          /* The face under the sheet, so a composition is judged against a
+             portrait instead of against black. Whatever the tile actually shows
+             — a baked mosaic where there is one — because buildLayout hands it
+             to the same background() the wall uses. */
+          const bed = bedFor(layout.id);
+          await buildLayout(
+            canvas,
+            $state.snapshot(layout),
+            deps,
+            true,
+            undefined,
+            bed ? { id: bed, base: $state.snapshot(app.manifest.tiles[bed]?.base ?? null) } : undefined,
+          );
         } finally {
           rebuilding = false;
         }

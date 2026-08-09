@@ -16,6 +16,8 @@ import {
   findLayer,
   findList,
   inboxIds,
+  archivedIds,
+  setArchived,
   layerLabel,
   layerAsset,
   layerText,
@@ -1559,5 +1561,59 @@ describe("uncrop", () => {
     uncrop(l);
     expect(l.scale).toBe(0.3);
     expect(l.crop).toBeUndefined();
+  });
+});
+
+describe("archiving a tile", () => {
+  /* BDO never deletes a portrait, so Unsorted only grows: the faces of
+   * characters that no longer exist sit in it forever. Archiving is the way to
+   * say "not this one" without touching the folder. */
+  const folder = ["a", "b", "c"];
+  const withTiles = () => {
+    const m = emptyManifest();
+    for (const id of folder) m.tiles[id] = emptyTile();
+    return m;
+  };
+
+  it("takes a tile out of the inbox and puts it in the archive", () => {
+    const m = withTiles();
+    setArchived(m, ["b"], true);
+    expect(inboxIds(m, folder)).toEqual(["a", "c"]);
+    expect(archivedIds(m, folder)).toEqual(["b"]);
+  });
+
+  it("brings it back", () => {
+    const m = withTiles();
+    setArchived(m, ["b"], true);
+    setArchived(m, ["b"], false);
+    expect(inboxIds(m, folder)).toEqual(folder);
+    expect(archivedIds(m, folder)).toEqual([]);
+    // Absent again, not `false`: the ordinary state is the missing key, and a
+    // manifest full of `archived: false` is noise that reads as a decision.
+    expect("archived" in m.tiles.b).toBe(false);
+  });
+
+  it("refuses a tile a project has claimed", () => {
+    /* "Archived but placed" would be a state every count and every write had to
+     * ask about. Taking it out of the project first is a click that exists. */
+    const m = withTiles();
+    const p = newProject("Main");
+    p.order = ["a"];
+    m.projects = [p];
+
+    setArchived(m, ["a"], true);
+
+    expect(m.tiles.a.archived).toBeUndefined();
+    expect(archivedIds(m, folder)).toEqual([]);
+  });
+
+  it("keeps the work on an archived tile", () => {
+    // Put away, not thrown away: it comes back with what was made for it.
+    const m = withTiles();
+    m.tiles.b.layers = [newTextLayer()];
+    m.tiles.b.text = { L1: "Elani" };
+    setArchived(m, ["b"], true);
+    expect(m.tiles.b.layers).toHaveLength(1);
+    expect(m.tiles.b.text).toEqual({ L1: "Elani" });
   });
 });

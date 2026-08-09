@@ -1140,8 +1140,19 @@ export async function buildLayout(
   /* Overridable because the stamp path renders a stripped copy of the Layout
    * (see bakeable) and the answer has to come from the whole of it. */
   stencils = stencilIds(layout.layers),
+  /* A tile to lay the composition over, so it can be judged against a face
+   * rather than against black. Whatever that tile actually shows — the baked
+   * mosaic where there is one, the game's own portrait otherwise — through the
+   * same function the wall uses, so the two cannot disagree about what a tile
+   * looks like. Absent for the stamp and the golden tests, which must render
+   * the design and nothing under it. */
+  under?: { id: string; base: Base },
 ): Promise<void> {
   canvas.remove(...canvas.getObjects());
+  if (under) {
+    const bed = await background(under.base, under.id, deps, { x: 0, y: 0 });
+    canvas.add(bed);
+  }
   const objs = await layoutObjects(layout.layers, deps, interactive, { dx: 0, dy: 0 }, false, 1, {
     root: layout.layers,
     stencils,
