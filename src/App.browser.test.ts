@@ -11,7 +11,7 @@
  * outside Tauri — the app opens its mock FaceTexture folder on mount, exactly
  * as it would open the real one. */
 import type * as fabric from "fabric";
-import { mount, unmount } from "svelte";
+import { mount, tick, unmount } from "svelte";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import App from "./App.svelte";
@@ -716,6 +716,34 @@ describe("the wall", () => {
     expect(now.perTile).toBe(true);
     // And the cut is legal, so it will actually render.
     expect(maskChoices(openLayout()!.layers, block.id).map((l) => l.id)).toContain(icon.id);
+  });
+
+  it("lets a section be collapsed while a tile is still picked", async () => {
+    /* The follow that opens the way to a picked tile reads the open sections to
+     * decide what to expand, so the sections are one of its dependencies:
+     * collapsing "On this wall" with a tile still selected woke it, it saw a
+     * closed section under a live selection, and opened it straight back. The
+     * section could not be shut at all until the tile was let go. */
+    await enterInbox();
+    const a = app.folderIds[0];
+    toggleTile(a, { ctrl: false, shift: false });
+
+    const head = () =>
+      [...document.querySelectorAll("aside button.name")].find((b) =>
+        b.textContent!.includes("right-click the wall to assign"),
+      ) as HTMLButtonElement | undefined;
+    await until(() => !!head());
+    // The follow opened it, which is the behaviour worth keeping.
+    await until(() => !!document.querySelector(`[data-tile="${a}"]`));
+
+    head()!.click();
+    await tick();
+    expect(document.querySelector(`[data-tile="${a}"]`)).toBeNull();
+
+    // And it stays shut: the tile is still picked.
+    await new Promise((r) => setTimeout(r, 60));
+    expect(app.selectedTiles).toContain(a);
+    expect(document.querySelector(`[data-tile="${a}"]`)).toBeNull();
   });
 
   it("hiding a stamp hides the whole assignment, live layers and all", async () => {

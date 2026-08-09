@@ -276,9 +276,25 @@
      fresh start, which is the moment it is needed most. A tile filed into a
      folder is reached through two twisties rather than one, and both are on
      the way. */
+  /* Which selection this has already followed. Without it the effect fought
+     the hand: it reads `open` to decide what to expand, so `open` is one of its
+     dependencies — collapsing "On this wall" while a tile was still picked woke
+     it, it saw a closed section under a live selection, and opened it again.
+     The section could not be shut at all until the tile was deselected.
+
+     Following is for the moment the selection changes. After that the sections
+     are the reader's business. */
+  let followed = "";
+
   $effect(() => {
     const picked = app.selectedTiles;
-    if (!picked.length) return;
+    if (!picked.length) {
+      followed = "";
+      return;
+    }
+    const mark = picked.join(",");
+    if (mark === followed) return;
+    followed = mark;
     const first = visibleIds().find((id) => picked.includes(id)) ?? picked[0];
     const drawer = folders().find((f) => f.tiles.includes(first));
     const path = drawer ? ["groups", drawer.id] : ["tiles"];
@@ -1855,10 +1871,10 @@
              thing only the user knows — the inbox is whatever no project has
              claimed, and it is where a newly created character turns up. -->
         <h2 class:spaced={wallLayers.length}>
-          <button class="twisty inline" onclick={() => toggleOpen("projects")}>
-            {open.has("projects") ? "▾" : "▸"}
+          <button class="head" onclick={() => toggleOpen("projects")} aria-expanded={open.has("projects")}>
+            <span class="twisty inline">{open.has("projects") ? "▾" : "▸"}</span>
+            Projects
           </button>
-          Projects
         </h2>
         <ul class:collapsed={!open.has("projects")}>
           <li class:selected={!app.openProjectId} aria-current={!app.openProjectId ? "true" : undefined}>
@@ -1921,10 +1937,10 @@
              same frame twice. Collapsible, because that library is the list
              that grows without bound. -->
         <h2 class="spaced">
-          <button class="twisty inline" onclick={() => toggleOpen("layouts")}>
-            {open.has("layouts") ? "▾" : "▸"}
+          <button class="head" onclick={() => toggleOpen("layouts")} aria-expanded={open.has("layouts")}>
+            <span class="twisty inline">{open.has("layouts") ? "▾" : "▸"}</span>
+            Layouts{#if layouts().length}&nbsp;({layouts().length}){/if}
           </button>
-          Layouts{#if layouts().length}&nbsp;({layouts().length}){/if}
         </h2>
         {#if !layouts().length}
           <p class="empty">None yet.</p>
@@ -2009,10 +2025,10 @@
              by mistake would rearrange a wall you are not looking at. On the
              overview it is the document-wide ones instead. -->
         <h2 class="spaced">
-          <button class="twisty inline" onclick={() => toggleOpen("snapshots")}>
-            {open.has("snapshots") ? "▾" : "▸"}
+          <button class="head" onclick={() => toggleOpen("snapshots")} aria-expanded={open.has("snapshots")}>
+            <span class="twisty inline">{open.has("snapshots") ? "▾" : "▸"}</span>
+            Snapshots{#if snapshots().length}&nbsp;({snapshots().length}){/if}
           </button>
-          Snapshots{#if snapshots().length}&nbsp;({snapshots().length}){/if}
         </h2>
         {#if open.has("snapshots")}
           {#if !snapshots().length}
@@ -2116,10 +2132,10 @@
              it was. Its own section rather than a preamble to Tiles, because
              it is a list that grows and wants a twisty like the rest. -->
         <h2 class="spaced">
-          <button class="twisty inline" onclick={() => toggleOpen("groups")}>
-            {open.has("groups") ? "▾" : "▸"}
+          <button class="head" onclick={() => toggleOpen("groups")} aria-expanded={open.has("groups")}>
+            <span class="twisty inline">{open.has("groups") ? "▾" : "▸"}</span>
+            Folders{#if folders().length}&nbsp;({folders().length}){/if}
           </button>
-          Folders{#if folders().length}&nbsp;({folders().length}){/if}
         </h2>
         {#if open.has("groups")}
           {#if !folders().length}
@@ -2669,6 +2685,33 @@
      two files made "unavailable" look like three different states. */
   .tools button:disabled {
     opacity: 0.45;
+  }
+  /* Every button says so under the pointer. Most did not: the rail, the header
+     and the sidebar each styled their own and the rest stayed flat, so half the
+     controls in this app gave no sign they were controls at all. One rule,
+     global on purpose — a per-list rule is what produced the gaps. Anything
+     with a hover of its own is more specific and still wins. */
+  :global(button:not(:disabled):hover) {
+    background: #2f2652;
+  }
+  /* A section head is the whole line, not the triangle on it. Only the arrow
+     answered a click, so a list you could collapse looked like a list you
+     could not — and the word beside it looked like a label rather than the way
+     in. Full width so the pointer finds it anywhere along the row. */
+  h2 > button.head {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+    padding: 2px 4px;
+    border: 0;
+    background: none;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+  }
+  h2 > button.head:hover {
+    background: #241e3a;
   }
   .tools .gap {
     grid-column: 1 / -1;
