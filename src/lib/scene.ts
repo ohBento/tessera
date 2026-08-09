@@ -992,13 +992,8 @@ export async function buildGrid(
   m: Manifest,
   deps: SceneDeps,
   interactive = false,
-  /* Called as each portrait arrives, so the wall can say how far it has got
-   * instead of showing an empty frame. Optional: the export and the golden
-   * tests have nobody to tell. */
-  onStep?: (done: number, total: number) => void,
 ): Promise<void> {
   canvas.remove(...canvas.getObjects());
-  let done = 0;
 
   const ids = wall.ids;
   const grid = gridSize(ids.length);
@@ -1014,11 +1009,7 @@ export async function buildGrid(
    * They are added in id order once they are all in, because the order they
    * finish in is not the order they are stacked in. */
   const backgrounds = await Promise.all(
-    ids.map((id, index) => {
-      const drawn = background(m.tiles[id]?.base ?? null, id, deps, cellAt(index));
-      if (onStep) void drawn.then(() => onStep(++done, ids.length));
-      return drawn;
-    }),
+    ids.map((id, index) => background(m.tiles[id]?.base ?? null, id, deps, cellAt(index))),
   );
   for (const obj of backgrounds) canvas.add(obj);
 

@@ -88,13 +88,6 @@
    * element before the previous one has finished tearing down leaves it in a
    * state where nothing renders and nothing is reported — so every rebuild
    * waits on the one before it. */
-  /** How many portraits are on screen out of how many the wall has, while it
-   *  is filling. Both zero when there is nothing to wait for. A wall of
-   *  forty-four reads two-megabyte files off the disk; before this it simply
-   *  showed black and gave no reason. */
-  let loaded = $state(0);
-  let loading = $state(0);
-
   let building: Promise<unknown> = Promise.resolve();
   let built = -1;
   /* Clearing the canvas drops Fabric's active object, which fires
@@ -127,13 +120,7 @@
            * has to be the same list the hit-testing below reads, not a second
            * derivation that could disagree by one. */
           const view = $state.snapshot(wall());
-          loaded = 0;
-          loading = view.ids.length;
-          await buildGrid(canvas, view, $state.snapshot(app.manifest), deps, true, (done, total) => {
-            loaded = done;
-            loading = total;
-          });
-          loading = 0;
+          await buildGrid(canvas, view, $state.snapshot(app.manifest), deps, true);
         } finally {
           rebuilding = false;
         }
@@ -596,14 +583,6 @@
 
 <div class="host" bind:this={host}>
   <canvas bind:this={el}></canvas>
-  <!-- Only while there is something to wait for, and only past the first few:
-       a wall that fills in a blink should not flash a bar at you. -->
-  {#if loading > 4 && loaded < loading}
-    <div class="loading" role="status" aria-live="polite">
-      <div class="track"><div class="fill" style:width="{(loaded / loading) * 100}%"></div></div>
-      <span>{loaded} of {loading} portraits</span>
-    </div>
-  {/if}
   <div class="hud">
     <!-- English like the rest of the app, and like the Layout editor's own HUD
          three files over — the two are the same strip in two places, and one of
@@ -632,36 +611,6 @@
     flex: 1;
     min-height: 0;
     overflow: hidden;
-  }
-  /* Centred on the wall, because that is where the eye already is when the
-     tiles are still black. */
-  .loading {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    align-items: center;
-    padding: 12px 16px;
-    border-radius: 6px;
-    background: rgb(0 0 0 / 0.55);
-    color: #d9d4e8;
-    font: 12px/1.4 ui-sans-serif, system-ui, sans-serif;
-    pointer-events: none;
-  }
-  .track {
-    width: 180px;
-    height: 4px;
-    border-radius: 2px;
-    background: #2a2244;
-    overflow: hidden;
-  }
-  .fill {
-    height: 100%;
-    background: linear-gradient(90deg, #8f6bff, #ff5fa8);
-    transition: width 80ms linear;
   }
   .hud {
     position: absolute;
