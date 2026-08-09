@@ -196,6 +196,12 @@ export type TextLayer = Common & {
    * defaulted so no existing caption moves; dragging the side handle or typing
    * a width is what settles it. */
   w?: number;
+  /* And how tall the box is, as a fraction of tile height. Lines past it are
+   * cut off — the box is the promise that a caption cannot grow into whatever
+   * sits beneath it, which is the whole reason to fix a height at all. Absent
+   * means the box grows downwards with its lines, which is what every caption
+   * written before this did. */
+  h?: number;
 };
 
 /** Children keep their own tile-absolute coordinates; the group's x/y is a

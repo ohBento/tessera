@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import { TILE_H, TILE_W } from "./bmp";
 import { newImageLayer, newLayout, newShapeLayer, newTextLayer, type Layer } from "./model";
-import { buildLayout, readBackLayout, scaleControls, trimTo } from "./scene";
+import { buildLayout, readBackLayout, scaleControls, snapWidth, trimTo } from "./scene";
 import { testDeps } from "../test/images";
 
 /** A Layout with two blocks at known spots, built onto a real interactive
@@ -509,6 +509,71 @@ describe("the crop handle is wired to the mouse", () => {
       expect(img.width).toBeLessThan(200);
       // Trimmed, not squashed: the picture behind the frame is the same size.
       expect(img.scaleX).toBeCloseTo(img.scaleY, 6);
+    } finally {
+      await canvas.dispose();
+    }
+  });
+});
+
+describe("a caption's width handle snaps", () => {
+  /** One layer on a real interactive canvas — the same shape the free-scaling
+   *  block above uses, spelled again because that one is scoped to it. */
+  async function one(make: () => Layer) {
+    const el = document.createElement("canvas");
+    document.body.append(el);
+    const canvas = new fabric.Canvas(el, { width: TILE_W, height: TILE_H });
+    const layout = newLayout("S");
+    layout.layers.push(make());
+    await buildLayout(canvas, layout, testDeps, true);
+    return { canvas, obj: canvas.getObjects()[0] };
+  }
+
+  /* It did not, and the reason was the event: Fabric gives a Textbox's side
+   * handle a `changeWidth` action that writes `width` and leaves `scaleX` at
+   * one, firing `object:resizing` — while the snapping hung on
+   * `object:scaling`. So the caption was the one layer that slid past every
+   * guide in the sheet. */
+  it("pulls the dragged edge onto a nearby line and leaves the other one still", async () => {
+    const { canvas, obj } = await one(() => {
+      const l = newTextLayer();
+      l.x = 0.5;
+      l.y = 0.5;
+      l.w = 0.3;
+      l.text = "Text";
+      return l;
+    });
+    try {
+      obj.setCoords();
+      const before = obj.getBoundingRect();
+      // A line four pixels beyond the right edge — inside the eight-pixel pull.
+      const target = { left: before.left + before.width + 4, top: 0, width: 0, height: TILE_H };
+
+      const guides = snapWidth(obj, "mr", [target], 8);
+
+      expect(guides.length).toBe(1);
+      obj.setCoords();
+      const after = obj.getBoundingRect();
+      expect(after.left + after.width).toBeCloseTo(target.left, 0);
+      // The edge the pointer is not holding does not move.
+      expect(after.left).toBeCloseTo(before.left, 0);
+    } finally {
+      await canvas.dispose();
+    }
+  });
+
+  it("leaves a rotated caption alone", async () => {
+    // Its bounding rect has no edge that belongs to the box any more.
+    const { canvas, obj } = await one(() => {
+      const l = newTextLayer();
+      l.w = 0.3;
+      l.rotation = 20;
+      return l;
+    });
+    try {
+      obj.setCoords();
+      const before = obj.getBoundingRect();
+      const guides = snapWidth(obj, "mr", [{ left: before.left + before.width + 4, top: 0, width: 0, height: TILE_H }], 8);
+      expect(guides).toEqual([]);
     } finally {
       await canvas.dispose();
     }

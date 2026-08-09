@@ -28,7 +28,14 @@
   } from "./lib/geometry";
 
   import { findLayer, walkLayers } from "./lib/model";
-  import { buildLayout, freeScale, readBackLayout, scaleControls, snapScale } from "./lib/scene";
+  import {
+    buildLayout,
+    freeScale,
+    readBackLayout,
+    scaleControls,
+    snapScale,
+    snapWidth,
+  } from "./lib/scene";
 
   let host: HTMLDivElement;
   let el: HTMLCanvasElement;
@@ -390,6 +397,17 @@
         SNAP_PX / canvas!.getZoom(),
         !layer || !freeScale(layer),
       );
+    });
+    /* A caption's width handle. Fabric calls that action `resizing`, not
+     * `scaling`, so it needs its own listener — the snap itself is the same
+     * idea one field over. */
+    canvas.on("object:resizing", (opt) => {
+      transforming = true;
+      guides = [];
+      const target = opt.target;
+      const corner = opt.transform?.corner;
+      if (!target || !corner || (opt.e as MouseEvent | undefined)?.altKey) return;
+      guides = snapWidth(target, corner, others(target), SNAP_PX / canvas!.getZoom());
     });
     canvas.on("object:rotating", () => {
       transforming = true;

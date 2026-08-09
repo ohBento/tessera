@@ -324,6 +324,26 @@ export function textWidth(l: TextLayer): number {
   );
 }
 
+/** The rectangle a caption with a fixed height is held to, in scene
+ *  coordinates — or nothing when it has none and may grow with its lines.
+ *
+ *  Centred on the layer like everything else, so raising the height opens the
+ *  box equally at the top and the bottom and the words stay where they are. */
+export function captionBox(
+  l: TextLayer,
+  box: { w: number; h: number; x: number; y: number },
+): { left: number; top: number; width: number; height: number } | undefined {
+  if (!l.h) return undefined;
+  const width = (l.w ?? 1) * box.w;
+  const height = l.h * box.h;
+  return {
+    left: box.x + l.x * box.w - width / 2,
+    top: box.y + l.y * box.h - height / 2,
+    width,
+    height,
+  };
+}
+
 /** A caption.
  *
  *  fabric.Textbox rather than Text, because a caption that runs past the tile
@@ -380,6 +400,20 @@ function textObject(l: TextLayer, box: { w: number; h: number; x: number; y: num
      * next stamp update. */
     editable: !tileId,
   });
+  /* Cut to the box when it has a height. A clipPath is the cheap way to do it
+     and the slot is free here — unless the caption is masked, in which case
+     maskFor claims it in layoutObjects and the mask wins. On a tile the two are
+     never in competition: the mask is baked into pixels long before this. */
+  const held = captionBox(l, box);
+  if (held) {
+    obj.clipPath = new fabric.Rect({
+      ...held,
+      originX: "left",
+      originY: "top",
+      absolutePositioned: true,
+    });
+    obj.objectCaching = false;
+  }
   if (l.shadow) {
     obj.shadow = new fabric.Shadow({
       color: l.shadowColor,
@@ -715,6 +749,42 @@ export function snapScale(
   return guides;
 }
 
+/** Pulls a caption's box edge onto nearby lines while its width is dragged.
+ *
+ *  Its own function because a Textbox's side handle is not a scale: Fabric
+ *  gives it a `changeWidth` action that writes `width` and leaves `scaleX` at
+ *  one, and fires `object:resizing` rather than `object:scaling`. snapScale
+ *  never heard about it, which is why the caption was the one layer that did
+ *  not snap to anything.
+ *
+ *  Same bargain as snapScale: the opposite edge must not move, so the width
+ *  change is answered with half of it on `left` — the box is centred, so it
+ *  grows both ways unless told otherwise. */
+export function snapWidth(
+  target: fabric.Object,
+  corner: string,
+  targets: Box[],
+  threshold: number,
+): Guide[] {
+  const edges = HANDLE_EDGES[corner];
+  if (!edges || (target.angle ?? 0) % 360 !== 0) return [];
+
+  target.setCoords();
+  const box = target.getBoundingRect();
+  if (!box.width) return [];
+  const snap = snapEdges(box, edges, targets, threshold);
+  if (!snap.dx) return [];
+
+  const grew = edges.includes("right") ? snap.dx : -snap.dx;
+  const width = (target.width ?? 0) + grew / (target.scaleX || 1);
+  if (width <= 0) return [];
+  target.set({ width });
+  // The edge the pointer is not holding stays where it was.
+  target.left = (target.left ?? 0) + (edges.includes("right") ? grew / 2 : -grew / 2);
+  target.setCoords();
+  return snap.guides.filter((g) => g.axis === "x");
+}
+
 /** `allowRotate` is false for a grid-space image: it gets baked into every
  *  tile's `base` (see mosaicBakeCrops in geometry.ts), and `Base` has no
  *  rotation field — a rotated picture would have no crop that reproduces it.
@@ -924,11 +994,22 @@ export async function buildGrid(
        * objectCaching off because a cached object is drawn from a bitmap that
        * was rendered before the clip applied, which shows up as the clip
        * simply not working. */
+      /* The cell, and — for a caption held to a height — the box as well.
+       * Fabric allows one clipPath, but both are axis-aligned rectangles, so
+       * their intersection is a third one and no nesting is needed. A rotated
+       * caption is left to the cell alone: its box is not axis-aligned any
+       * more, and a rectangle cannot express that overlap. */
+      const held = l.kind === "text" && !l.rotation ? captionBox(l, box) : undefined;
+      const cell = { left: at.x, top: at.y, right: at.x + TILE_W, bottom: at.y + TILE_H };
+      const left = held ? Math.max(cell.left, held.left) : cell.left;
+      const top = held ? Math.max(cell.top, held.top) : cell.top;
+      const right = held ? Math.min(cell.right, held.left + held.width) : cell.right;
+      const bottom = held ? Math.min(cell.bottom, held.top + held.height) : cell.bottom;
       obj.clipPath = new fabric.Rect({
-        left: at.x,
-        top: at.y,
-        width: TILE_W,
-        height: TILE_H,
+        left,
+        top,
+        width: Math.max(0, right - left),
+        height: Math.max(0, bottom - top),
         originX: "left",
         originY: "top",
         absolutePositioned: true,

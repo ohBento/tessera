@@ -136,6 +136,29 @@
       ↺
     </button>
   </label>
+  <!-- And how tall. Lines past it are cut off — the box is what promises a
+       caption cannot grow into whatever sits beneath it. Absent means it grows
+       downwards with its lines, as every caption did before this. -->
+  <label class="field" title="Lines past this are cut off. Empty means the box grows with them">
+    <span>Height</span>
+    <input
+      type="range"
+      min="0.03"
+      max="1"
+      step="any"
+      value={layer.h ?? 0.15}
+      oninput={(e) => set("h", num(e))}
+    />
+    {@render amount("h", (layer.h ?? 0.15) * TILE_H, (n) => n / TILE_H, 20)}
+    <button
+      class="reset"
+      title="Let the box grow with its lines again"
+      disabled={layer.h === undefined}
+      onclick={() => set("h", undefined)}
+    >
+      ↺
+    </button>
+  </label>
   <label class="field">
     <span>Font size</span>
     <!-- The ceiling still follows the layer, and there is still no step. The

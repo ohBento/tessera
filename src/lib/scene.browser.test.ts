@@ -788,3 +788,55 @@ describe("a caption's box holds its width against a single long word", () => {
     expect(Math.abs(long - short)).toBeLessThanOrEqual(4);
   });
 });
+
+describe("a caption held to a height", () => {
+  /* The box is the promise that a caption cannot grow into what sits beneath
+   * it. Measured through renderTiles, because the tile is where the clip has
+   * to share its one clipPath slot with the cell — the two rectangles are
+   * intersected rather than nested. */
+  const inkRows = (bmp: Uint8Array) => {
+    let n = 0;
+    for (let y = 0; y < TILE_H; y++) {
+      for (let x = 0; x < TILE_W; x += 2) {
+        const [r, g, b] = pixel(bmp, x, y);
+        if (g > r + 40 && g > b + 40) {
+          n++;
+          break;
+        }
+      }
+    }
+    return n;
+  };
+
+  const rowsFor = async (h: number | undefined) => {
+    const m = manifest(2);
+    const id = order(m)[0];
+    m.tiles[id].layers.push({
+      ...newTextLayer(),
+      id: "cap",
+      x: 0.5,
+      y: 0.5,
+      size: 0.1,
+      color: "#00ff00",
+      align: "left",
+      live: true,
+      w: 0.3,
+      h,
+      text: "AAAAAAAAAAAAAAAAAAAAAAAA",
+    });
+    const [bmp] = [...(await renderTiles(view(m), m, testDeps)).values()];
+    return inkRows(bmp);
+  };
+
+  it("cuts the lines that do not fit", async () => {
+    const [free, held] = [await rowsFor(undefined), await rowsFor(0.08)];
+    expect(free).toBeGreaterThan(0);
+    // Four lines of wrapped text against a box barely taller than one.
+    expect(held).toBeLessThan(free);
+    expect(held).toBeGreaterThan(0);
+  });
+
+  it("leaves a caption alone when no height is set", async () => {
+    expect(await rowsFor(undefined)).toBe(await rowsFor(undefined));
+  });
+});
