@@ -148,6 +148,18 @@
     const free = !!only && freeScale(only);
     canvas.uniformScaling = !free;
     canvas.uniScaleKey = free ? "shiftKey" : null;
+    /* Per-pixel hit testing answers "which layer did I click", and a masked
+     * layer needs it or it swallows clicks across a box that is mostly not
+     * there. It is the wrong question once a layer is picked: a rectangle whose
+     * mask lies elsewhere paints nothing at all, so there was nothing left to
+     * grab and it could only be moved by typing X and Y. Chosen means grabbable
+     * by its box, which is what every editor does; everything else keeps
+     * answering by its pixels. */
+    const active = new Set(ids);
+    for (const o of canvas.getObjects()) {
+      if (!o.clipPath) continue;
+      o.perPixelTargetFind = !active.has((o as { layerId?: string }).layerId);
+    }
     /* One picked layer gets exactly the handles its kind can honour, from the
      * same function the scene used when it built the object — see
      * scaleControls. Spelling the rule a second time here is what hid a
@@ -666,6 +678,10 @@
     canvas.on("selection:updated", pickedThenRule);
     canvas.on("selection:cleared", () => {
       if (!rebuilding) setLayoutSelection([]);
+      /* Also here, or a masked layer that was picked once keeps grabbing every
+       * click across a box that is mostly empty — the rules that hang off the
+       * selection have to be put back when there is none. */
+      scalingRules();
     });
 
     /* A finished transform. One object writes itself back; a multi-selection
