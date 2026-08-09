@@ -21,7 +21,15 @@ export const isTyping = (el: EventTarget | Element | null): boolean =>
   el instanceof HTMLElement &&
   (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el.isContentEditable);
 
-export const rowsFor = (count: number) => Math.ceil(count / COLS);
+/** How many rows a wall of `count` tiles needs — never fewer than one.
+ *
+ *  An empty wall still has a row's worth of space, and saying otherwise made
+ *  gridSize hand back a *negative* height: nought rows minus the trailing gap.
+ *  The fit in GridCanvas guards against a height of zero, not against one below
+ *  it, so dividing by −28 zoomed the wall in about a hundredfold. Reachable the
+ *  moment every tile is sorted into a project, which empties Unsorted — the
+ *  tidier the folder, the surer the bug. */
+export const rowsFor = (count: number) => Math.max(1, Math.ceil(count / COLS));
 
 /** The space the game leaves between portraits, in tile pixels.
  *

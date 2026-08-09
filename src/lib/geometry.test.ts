@@ -146,6 +146,7 @@ import {
   coverCrop,
   coverScale,
   gridSize,
+  rowsFor,
   gradientLine,
   layerFont,
   LINE_HEIGHT,
@@ -505,5 +506,23 @@ describe("snapEdges", () => {
   it("ignores middles — a half-scaled box lining up is a coincidence", () => {
     // Right edge at 495, the sheet's middle at 500: close, and not a snap.
     expect(snapEdges({ left: 0, top: 0, width: 495, height: 10 }, ["right"], sheet, 8).dx).toBe(0);
+  });
+});
+
+describe("an empty wall still has a size", () => {
+  /* Sorting every tile into a project empties Unsorted, and a wall of nought
+   * tiles used to measure minus twenty-eight pixels tall — the trailing gap
+   * with no row in front of it. GridCanvas divides its viewport by that to fit
+   * the wall, and a negative divisor zoomed it in about a hundredfold. */
+  it("never reports fewer than one row", () => {
+    expect(rowsFor(0)).toBe(1);
+    expect(rowsFor(1)).toBe(1);
+    expect(rowsFor(8)).toBe(2);
+  });
+
+  it("keeps the height positive so a fit can divide by it", () => {
+    expect(gridSize(0).h).toBeGreaterThan(0);
+    // And one row is exactly what it is: a tile tall, no trailing gap.
+    expect(gridSize(0).h).toBe(gridSize(1).h);
   });
 });
