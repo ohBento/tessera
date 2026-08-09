@@ -523,12 +523,34 @@ export const freeScale = (l: Layer) => l.kind === "shape";
  *  the first and pictures shipped with no handle to crop by. */
 export const sideHandles = (l: Layer) => freeScale(l) || l.kind === "image";
 
-/** Left and right only, on a caption: dragging them sets the width its words
- *  wrap at. Fabric's Textbox already does the right thing with those two — it
- *  changes `width` rather than `scaleX`, which is exactly the field the model
- *  wants. Top and bottom stay off: the box's height is however many lines the
- *  words need, and a handle that springs back is worse than no handle. */
-export const widthHandles = (l: Layer) => l.kind === "text";
+/** Which of the eight scale handles a layer may show — the one answer, for the
+ *  two places that have to agree.
+ *
+ *  They did not: the scene put a caption's side handles on, and LayoutCanvas
+ *  took every handle off again the moment it was selected, so the app showed
+ *  none at all while the test on the scene's rule stayed green. The comment
+ *  beside sideHandles already warned that a second spelling would drift; this
+ *  is what it looks like when it does.
+ *
+ *  A caption: sides yes, they set the width its words wrap at — Fabric's
+ *  Textbox turns those two into `width` rather than `scaleX`, which is exactly
+ *  the field the model keeps. Corners no, its size is a font size and belongs
+ *  to the properties field. Top and bottom no, its height is however many
+ *  lines the words need, and a handle that springs back is worse than none. */
+export const scaleControls = (l: Layer) => {
+  const corners = l.kind !== "text";
+  const sides = sideHandles(l);
+  return {
+    tl: corners,
+    tr: corners,
+    bl: corners,
+    br: corners,
+    ml: sides || l.kind === "text",
+    mr: sides || l.kind === "text",
+    mt: sides,
+    mb: sides,
+  };
+};
 
 /* --- Cropping a picture by its side handles.
  *
@@ -704,16 +726,8 @@ function makeInteractive(obj: fabric.Object, l: Layer, allowRotate = true) {
   obj.cornerColor = "#0e0b16";
   obj.cornerStrokeColor = "#cbb8ff";
   obj.transparentCorners = false;
-  const sides = sideHandles(l);
-  const wide = widthHandles(l);
   if (l.kind === "image") obj.controls = { ...obj.controls, ...cropControls() };
-  obj.setControlsVisibility({
-    ml: sides || wide,
-    mr: sides || wide,
-    mt: sides,
-    mb: sides,
-    mtr: allowRotate,
-  });
+  obj.setControlsVisibility({ ...scaleControls(l), mtr: allowRotate });
 }
 
 /** Draws one object into an offscreen tile-sized canvas and hands back the

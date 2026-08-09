@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import { TILE_H, TILE_W } from "./bmp";
 import { newImageLayer, newLayout, newShapeLayer, newTextLayer, type Layer } from "./model";
-import { buildLayout, readBackLayout, trimTo } from "./scene";
+import { buildLayout, readBackLayout, scaleControls, trimTo } from "./scene";
 import { testDeps } from "../test/images";
 
 /** A Layout with two blocks at known spots, built onto a real interactive
@@ -88,6 +88,26 @@ describe("free scaling", () => {
     } finally {
       await text.canvas.dispose();
     }
+  });
+
+  it("hands both callers the same handle rule", () => {
+    /* The rule lives in scaleControls and nowhere else. It used to live in two
+     * places — the scene put a caption's side handles on, LayoutCanvas took
+     * every handle off again on selection — and the test above only ever asked
+     * the scene, so the app shipped a caption with no handles at all while it
+     * stayed green. Pinned here on the function both of them call. */
+    expect(scaleControls(newTextLayer())).toEqual({
+      tl: false, tr: false, bl: false, br: false,
+      ml: true, mr: true, mt: false, mb: false,
+    });
+    expect(scaleControls(newShapeLayer("rect"))).toEqual({
+      tl: true, tr: true, bl: true, br: true,
+      ml: true, mr: true, mt: true, mb: true,
+    });
+    expect(scaleControls(newImageLayer("x.png"))).toEqual({
+      tl: true, tr: true, bl: true, br: true,
+      ml: true, mr: true, mt: true, mb: true,
+    });
   });
 
   it("reads a stretched shape back as two different sizes", async () => {

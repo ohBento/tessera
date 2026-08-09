@@ -28,14 +28,7 @@
   } from "./lib/geometry";
 
   import { findLayer, walkLayers } from "./lib/model";
-  import {
-    buildLayout,
-    freeScale,
-    readBackLayout,
-    sideHandles,
-    snapScale,
-    widthHandles,
-  } from "./lib/scene";
+  import { buildLayout, freeScale, readBackLayout, scaleControls, snapScale } from "./lib/scene";
 
   let host: HTMLDivElement;
   let el: HTMLCanvasElement;
@@ -135,16 +128,13 @@
     const free = !!only && freeScale(only);
     canvas.uniformScaling = !free;
     canvas.uniScaleKey = free ? "shiftKey" : null;
-    /* A caption has no handles to scale by. Its size is a font size and the
-     * box around it is measured off its own words, so there was never an
-     * honest number to read back — dragging a corner simply multiplied
-     * whatever was in the properties field, which is where the size belongs.
-     * Rotation and the move stay; only the eight scale controls go. */
-    if (only?.kind === "text") {
-      canvas.getActiveObject()?.setControlsVisibility({
-        tl: false, tr: false, bl: false, br: false,
-        ml: false, mr: false, mt: false, mb: false,
-      });
+    /* One picked layer gets exactly the handles its kind can honour, from the
+     * same function the scene used when it built the object — see
+     * scaleControls. Spelling the rule a second time here is what hid a
+     * caption's new side handles: this ran on selection and undid the scene's
+     * work, and the test on the scene's rule never saw it. */
+    if (only) {
+      canvas.getActiveObject()?.setControlsVisibility(scaleControls(only));
       return;
     }
     /* uniformScaling only governs the corner handles. An ActiveSelection shows
@@ -158,16 +148,9 @@
      * they crop rather than scale. A multi-selection is not — the handles
      * there belong to the ActiveSelection, which knows nothing about
      * cropping — which is why this asks about the one picked layer. */
-    /* A caption keeps its left and right handles for the same reason a picture
-       keeps all four: they are its own — they set the width its words wrap at,
-       not a scale. Top and bottom go either way. */
-    if (!only || !(sideHandles(only) || widthHandles(only))) {
-      canvas
-        .getActiveObject()
-        ?.setControlsVisibility({ ml: false, mr: false, mt: false, mb: false });
-    } else if (widthHandles(only) && !sideHandles(only)) {
-      canvas.getActiveObject()?.setControlsVisibility({ mt: false, mb: false });
-    }
+    canvas
+      .getActiveObject()
+      ?.setControlsVisibility({ ml: false, mr: false, mt: false, mb: false });
   }
 
   /** Every canvas object standing for one of these layer ids. A layer inside a
