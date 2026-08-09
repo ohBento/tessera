@@ -23,8 +23,17 @@ const nameOf = (path: string) =>
 const markup: Record<string, string> = {};
 for (const [path, text] of Object.entries(files)) markup[nameOf(path)] = text;
 
-/** Every class, in the order the picker shows them. */
-export const ICON_NAMES = Object.keys(markup).sort((a, b) => a.localeCompare(b));
+/** The mark for "not decided yet". A layer has to name some class to exist, and
+ *  on a wall the class is the tile's business, not the Layout's — so the layer
+ *  is made with this one and each portrait says what it really is. Drawn here
+ *  rather than taken from the game, since no class owns it. */
+export const PLACEHOLDER_ICON = "Placeholder";
+
+/** Every class, in the order the picker shows them: the placeholder first,
+ *  because it is where a per-tile icon starts, then the classes by name. */
+export const ICON_NAMES = Object.keys(markup).sort((a, b) =>
+  a === PLACEHOLDER_ICON ? -1 : b === PLACEHOLDER_ICON ? 1 : a.localeCompare(b),
+);
 
 /** One filled outline of an icon. `opacity` carries the shading the artwork
  *  does with fill-opacity — several icons are drawn as a bright silhouette with

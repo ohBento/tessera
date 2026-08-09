@@ -772,11 +772,10 @@
         set(key, isGradient(p) ? { ...p, from: e.currentTarget.value } : e.currentTarget.value)}
     />
     {@render hex(flat(p), (v) => set(key, isGradient(p) ? { ...p, from: v } : v))}
-    <!-- Before the second colour, not after it. Turning a gradient on inserts a
-         swatch and a hex box, and with the button behind them it jumped 122px
-         to the right — the second click landed on the new swatch and opened a
-         colour picker, so the gradient looked like it could not be switched
-         off. A toggle has to stay under the finger that toggled it.
+    <!-- Last in its row, and the second colour goes on a row of its own, so the
+         switch never moves: with it behind the second swatch it jumped 122px
+         right the moment a gradient came on, and the click meant to turn the
+         gradient off landed on the new swatch and opened a colour picker.
 
          Inside the label, and safe there: a label hands its click on to its
          first control only when the click did not land on an interactive
@@ -787,16 +786,33 @@
       title={isGradient(p) ? "Back to one colour" : "Fade into a second colour"}
       onclick={() => set(key, isGradient(p) ? p.from : { from: flat(p), to: "#000000", angle: 0 })}
       aria-label={isGradient(p) ? "Back to one colour" : "Fade into a second colour"}
-    ></button>
-    {#if isGradient(p)}
+    >
+      <!-- One colour fading into nothing: what the button turns on, and with
+           the pressed state on the border, what it turns off. -->
+      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+        <defs>
+          <linearGradient id="ramp-{key}" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="currentColor" stop-opacity="1" />
+            <stop offset="1" stop-color="currentColor" stop-opacity="0.1" />
+          </linearGradient>
+        </defs>
+        <rect x="1.5" y="3.5" width="13" height="9" rx="2" fill="url(#ramp-{key})" />
+      </svg>
+    </button>
+  </label>
+  {#if isGradient(p)}
+    <!-- Under the first colour rather than beside it: two colours in a row read
+         as two separate settings, stacked they read as the pair they are. -->
+    <label class="field">
+      <span></span>
       <input
         type="color"
         value={p.to}
         oninput={(e) => set(key, { ...p, to: e.currentTarget.value })}
       />
       {@render hex(p.to, (v) => set(key, { ...p, to: v }))}
-    {/if}
-  </label>
+    </label>
+  {/if}
   {#if isGradient(p)}
     <!-- Shaped like the fields around it — name in the label column, control
          where the sliders start — so the checkbox lines up with them. -->
@@ -1030,16 +1046,18 @@
   textarea {
     resize: vertical;
   }
-  /* The gradient switch, sized and shaped like the swatches it sits beside
-     because it is one: it shows the fade it would turn the paint into.
-     `button.ramp` rather than `.ramp` so it outweighs the shared `button.on`
-     background — pressed, this one keeps its ramp and only its edge lights. */
+  /* The gradient switch, sized like the swatches it sits beside. It carries a
+     glyph of the thing it turns on — one colour fading out — rather than being
+     a painted ramp itself, so "on" is said once, by the border, instead of
+     twice. */
   button.ramp {
     flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     width: 32px;
     height: 32px;
     padding: 0;
-    background: linear-gradient(90deg, #8f6bff, #ff5fa8);
   }
   button.ramp.on {
     border-color: #a685ff;
