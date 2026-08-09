@@ -1488,3 +1488,34 @@ describe("dressing a whole wall", () => {
     expect(tileLayers(c)).toEqual([]);
   });
 });
+
+describe("the sheets over the page", () => {
+  const sheet = (label: string) => document.querySelector(`[role="dialog"][aria-label="${label}"]`);
+  const press = (key: string) =>
+    window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+
+  it("does not open the keyboard sheet under the icon grid", async () => {
+    /* Both sheets sit at the same z-index and the grid comes later in the
+     * markup, so it covers anything opened behind it. `?` toggled its sheet
+     * regardless: it went up out of sight, and the next press put it away
+     * again — a key that did nothing, twice. */
+    await newLayoutDoc("Blätter");
+    const icons = () =>
+      [...document.querySelectorAll("button")].find(
+        (b) => b.title === "Class icon",
+      ) as HTMLButtonElement;
+    await until(() => !!icons() && !icons().disabled);
+    icons().click();
+    await until(() => !!sheet("Class icons"));
+
+    press("?");
+    await tick();
+    expect(sheet("Keyboard and mouse")).toBeNull();
+
+    // And it is the grid in the way, not the key: with the grid gone it opens.
+    press("Escape");
+    await until(() => !sheet("Class icons"));
+    press("?");
+    await until(() => !!sheet("Keyboard and mouse"));
+  });
+});

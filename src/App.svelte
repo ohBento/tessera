@@ -154,7 +154,10 @@
       e.preventDefault();
       return;
     }
-    if (key === "?" || (key === "/" && e.shiftKey)) {
+    /* Not under the icon grid. Both sheets sit at the same z-index and the grid
+       is later in the markup, so it wins — the sheet opened out of sight and
+       the key looked broken. Escape closes the grid, then `?` works. */
+    if ((key === "?" || (key === "/" && e.shiftKey)) && !iconsOpen) {
       keysOpen = !keysOpen;
       e.preventDefault();
       return;
@@ -251,6 +254,7 @@
     ["Alt + drag", "Swap two tiles instead of selecting"],
     ["Alt", "Held while dragging a handle: no snapping"],
     ["Double-click", "Rename a row · open a Layout from its stamp"],
+    ["Enter  ·  Escape", "While renaming: keep the new name · put the old one back"],
   ];
 
   /** Which group rows are expanded. View state only — collapsing a group is
@@ -261,6 +265,15 @@
   let open = $state(new Set<string>(["projects"]));
   const toggleOpen = (id: string) => {
     open.has(id) ? open.delete(id) : open.add(id);
+    open = new Set(open);
+  };
+  /* Whatever was just made has to be visible. Projects and Layouts are hidden
+     with CSS rather than dropped from the markup, so their "+" sits outside the
+     hidden list and stays pressable while the section is shut — and the new row
+     landed somewhere the eye could not follow. Snapshots and Folders drop their
+     whole block, "+" included, so this does not arise there. */
+  const reveal = (id: string) => {
+    open.add(id);
     open = new Set(open);
   };
 
@@ -722,7 +735,10 @@
             picked > 1
               ? `Project from ${freeCount()} free tile(s)`
               : "Project from selection",
-          run: () => void newProjectFrom(""),
+          run: () => {
+            reveal("projects");
+            void newProjectFrom("");
+          },
           disabled: !freeCount(),
         },
         ...(elsewhere.length ? [{ separator: true } as Item] : []),
@@ -1451,7 +1467,10 @@
       <!-- The one disabled button in this row that explained nothing — and the
            one the empty state points at. -->
       <button
-        onclick={() => newProjectFrom("")}
+        onclick={() => {
+          reveal("projects");
+          void newProjectFrom("");
+        }}
         disabled={!freeCount() || !!app.busy || home}
         title={home
           ? "Open Unsorted first, then pick the portraits of one account"
@@ -1822,7 +1841,11 @@
           <p class="empty">No layers.</p>
         {/if}
         {@render layerRows(layoutLayers, false, null)}
-        <p class="empty">Right-click a layer to group, duplicate, rename or delete.</p>
+        {#if layoutLayers.length}
+          <!-- Only with something to right-click on. Under "No layers." it read
+               as an instruction for the empty list itself. -->
+          <p class="empty">Right-click a layer to group, duplicate, rename or delete.</p>
+        {/if}
         {#if selectedLayoutLayer}
           <Properties
             layer={selectedLayoutLayer}
@@ -1925,7 +1948,10 @@
         </ul>
         <button
           class="wide"
-          onclick={() => newProjectFrom("")}
+          onclick={() => {
+          reveal("projects");
+          void newProjectFrom("");
+        }}
           disabled={!freeCount() || !!app.busy}
           title="Builds a wall from the picked tiles that no project has claimed"
         >
@@ -2001,7 +2027,9 @@
                 </button>
               {/if}
               <button title="Edit layout" onclick={() => openLayoutDoc(layout.id)}>✎</button>
-              <button title="Duplicate (Ctrl+D)" onclick={() => duplicateLayoutDoc(layout.id)}>⧉</button>
+              <!-- No shortcut in the tooltip: Ctrl+D duplicates the picked
+                   layers inside a Layout, and this copies the whole Layout. -->
+              <button title="Duplicate" onclick={() => duplicateLayoutDoc(layout.id)}>⧉</button>
               <button title="Delete" onclick={() => removeLayout(layout.id, layout.name)}>×</button
               >
             </li>
@@ -2009,7 +2037,10 @@
         </ul>
         <button
           class="wide"
-          onclick={() => newLayoutDoc(`Layout ${layouts().length + 1}`)}
+          onclick={() => {
+            reveal("layouts");
+            void newLayoutDoc(`Layout ${layouts().length + 1}`);
+          }}
           disabled={!app.dir || !!app.busy}
         >
           + New layout
@@ -2263,7 +2294,7 @@
   {/if}
 </main>
 
-<!-- A plain list over the page. No filtering by context: at fourteen entries,
+<!-- A plain list over the page. No filtering by context: at this length,
      deciding which half to hide is more apparatus than the list is. -->
 {#if keysOpen}
   <div
@@ -2277,7 +2308,10 @@
   <div class="sheet" role="dialog" aria-label="Keyboard and mouse">
     <h2>Keyboard and mouse</h2>
     <dl>
-      {#each KEYS as [keys, what] (keys)}
+      <!-- Unkeyed on purpose. The list is a constant, so a key buys nothing —
+           and keying it by the shortcut made two rows that answer to Escape a
+           duplicate key, which throws and takes the sheet with it. -->
+      {#each KEYS as [keys, what]}
         <dt>{keys}</dt>
         <dd>{what}</dd>
       {/each}

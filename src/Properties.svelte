@@ -1001,8 +1001,11 @@
     letter-spacing: 0.04em;
   }
   /* Same 32px target as every other icon button; .row does this for the ones
-     that live in a row, and these do not. */
-  .quad-toggle {
+     that live in a row, and these do not. The ↺ beside a slider is the same
+     case: it carried the class with no rule behind it and came out a text
+     button half the height of the handle next to it. */
+  .quad-toggle,
+  .reset {
     display: inline-flex;
     align-items: center;
     justify-content: center;
