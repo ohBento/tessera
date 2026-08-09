@@ -38,6 +38,7 @@ import {
   moveTilesToProject,
   deleteProject,
   newProjectFrom,
+  openFolder,
   openProjectView,
   projects,
   renameSnapshot,
@@ -1363,3 +1364,12 @@ describe("the Layout editor", () => {
     expect(canGroupLayers()).toBe(false);
   });
 });
+
+/* Not covered by a test, deliberately: the reset that used to snap the wall
+ * back to Unsorted sits between "the folder was asked for" and "the load
+ * finished", and against the in-memory mock that gap is shorter than the 25ms
+ * this file polls at. Two attempts at pinning it both passed against the bug
+ * before they passed against the fix, which is worse than no test — so the
+ * proof is a measurement in the running editor instead: a wall picked while a
+ * real folder was still hashing stayed open. See openFolder in editor.svelte.ts,
+ * where the reset now sits directly under `app.dir`. */

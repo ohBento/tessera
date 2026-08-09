@@ -758,6 +758,27 @@ async function persist(): Promise<boolean> {
 export async function openFolder(dir?: string) {
   await run("load", async () => {
     app.dir = dir ?? (await defaultDir());
+    /* Everything the view has to forget, before the slow part rather than after
+     * it. Opening a folder starts on the overview — with several accounts
+     * sharing one there is no single "the" wall to open, and a new character
+     * has to be visible somewhere the moment it appears. But hashing sixty
+     * portraits takes seconds, and a click landing in that window was undone by
+     * the load finishing: the wall opened and snapped back to Unsorted. What is
+     * true the instant a folder is asked for belongs where it is known, not at
+     * the end of the queue. */
+    app.selected = "";
+    app.openProjectId = "";
+    // Undo must not reach back into the folder that was open before.
+    history.past.length = 0;
+    history.future.length = 0;
+    /* Everything the view has to forget, before the slow part rather than after
+     * it. Opening a folder starts on the overview — with several accounts
+     * sharing one there is no single "the" wall to open, and a new character
+     * has to be visible somewhere the moment it appears. But hashing sixty
+     * portraits takes seconds, and a click landing in that window was undone by
+     * the load finishing: the wall opened and snapped back to Unsorted. What is
+     * true the instant a folder is asked for belongs where it is known, not at
+     * the end of the queue. */
     /* Re-opening is the one moment the files behind the ids may all have been
      * replaced from outside — a restore, a folder copied in by hand, the game
      * regenerating a portrait. loadOriginal caches on the opposite promise, so
@@ -806,14 +827,6 @@ export async function openFolder(dir?: string) {
     await refreshSnapshots();
 
     app.deps = tauriDeps(app.dir);
-    app.selected = "";
-    /* Start on the overview rather than on a wall. With several accounts
-     * sharing the folder there is no single "the" wall to open, and a new
-     * character has to be visible somewhere the moment it appears. */
-    app.openProjectId = "";
-    // Undo must not reach back into the folder that was open before.
-    history.past.length = 0;
-    history.future.length = 0;
     app.version++;
     // Last, so nothing after it clears the line.
     if (lost.length)

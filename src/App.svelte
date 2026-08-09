@@ -159,15 +159,23 @@
      the rows shut, because twenty open editors is not a list any more, and
      only scroll to the topmost of them.
 
-     Not gated on the Tiles section being open any more: a tile filed into a
-     Group has its row over there instead, so that check skipped the follow for
-     half the places a tile can live. With everything collapsed the row simply
-     is not in the document and the scroll finds nothing, which costs nothing. */
+     The way to the row is opened too, not just the row. Both sections start
+     collapsed, so a tile picked on the wall used to scroll to something that
+     was not in the document at all — the follow silently did nothing on a
+     fresh start, which is the moment it is needed most. A tile filed into a
+     folder is reached through two twisties rather than one, and both are on
+     the way. */
   $effect(() => {
     const picked = app.selectedTiles;
     if (!picked.length) return;
-    if (picked.length === 1 && !open.has(picked[0])) toggleTileRow(picked[0]);
     const first = visibleIds().find((id) => picked.includes(id)) ?? picked[0];
+    const drawer = folders().find((f) => f.tiles.includes(first));
+    const path = drawer ? ["groups", drawer.id] : ["tiles"];
+    if (path.some((key) => !open.has(key))) {
+      for (const key of path) open.add(key);
+      open = new Set(open);
+    }
+    if (picked.length === 1 && !open.has(picked[0])) toggleTileRow(picked[0]);
     // After the row exists, not before — opening it is what creates it.
     void tick().then(() =>
       document.querySelector(`[data-tile="${first}"]`)?.scrollIntoView({ block: "nearest" }),
