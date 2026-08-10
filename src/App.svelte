@@ -326,7 +326,9 @@
     followed = mark;
     const first = visibleIds().find((id) => picked.includes(id)) ?? picked[0];
     const drawer = folders().find((f) => f.tiles.includes(first));
-    const path = drawer ? ["groups", drawer.id] : ["tiles"];
+    // A drawer is its own twisty and nothing above it: the Folders section it
+    // used to sit under is gone, the drawers live in Tiles now.
+    const path = drawer ? [drawer.id] : ["tiles"];
     if (path.some((key) => !open.has(key))) {
       for (const key of path) open.add(key);
       open = new Set(open);
@@ -2300,20 +2302,13 @@
              rows stays scannable. Named for what the model has always called
              them: "Group" was taken twice over — a drawer of tiles here and a
              real stack of layers in the Layout — and the two behave nothing
-             alike. Purely cosmetic — a folder renders nothing,
-             owns nothing, and dissolving one leaves every tile exactly where
-             it was. Its own section rather than a preamble to Tiles, because
-             it is a list that grows and wants a twisty like the rest. -->
-        <h2 class="spaced">
-          <button class="head" onclick={() => toggleOpen("groups")} aria-expanded={open.has("groups")}>
-            <span class="twisty inline">{open.has("groups") ? "▾" : "▸"}</span>
-            Folders{#if folders().length}&nbsp;({folders().length}){/if}
-          </button>
-        </h2>
-        {#if open.has("groups")}
-          {#if !folders().length}
-            <p class="empty">None yet.</p>
-          {/if}
+             alike. Purely cosmetic — a folder renders nothing, owns nothing,
+             and dissolving one leaves every tile exactly where it was.
+             Inside Tiles rather than beside it: a drawer holds tiles off this
+             wall, so a heading of its own put half the wall's portraits under
+             one word and half under another. Each drawer keeps its own twisty,
+             which is the only collapsing this needed. -->
+        <h2 class="spaced">Tiles</h2>
         {#each folders() as folder (folder.id)}
           <div
             class="group"
@@ -2373,19 +2368,8 @@
           </div>
         {/each}
 
-          {#if openProject()}
-            <button
-              class="wide"
-              onclick={() => newFolderHere("")}
-              disabled={!!app.busy}
-              title="A drawer for finished tiles, so the list stays short"
-            >
-              + New folder{#if app.selectedTiles.length}&nbsp;({app.selectedTiles.length}){/if}
-            </button>
-          {/if}
-        {/if}
-
-        <h2 class="spaced">Tiles</h2>
+        <!-- The loose pile, after the drawers: what is filed away reads as a
+             heading and what is not reads as the list under it. -->
         <div class="group">
           <div class="grouphead">
             <button class="twisty" onclick={() => toggleOpen("tiles")}>
@@ -2405,6 +2389,20 @@
             </div>
           {/if}
         </div>
+
+        <!-- Last in the section, where every other "+" in this sidebar sits.
+             It makes a drawer out of whatever is picked, so it belongs under
+             both lists rather than between them. -->
+        {#if openProject()}
+          <button
+            class="wide"
+            onclick={() => newFolderHere("")}
+            disabled={!!app.busy}
+            title="A drawer for finished tiles, so the list stays short"
+          >
+            + New folder{#if app.selectedTiles.length}&nbsp;({app.selectedTiles.length}){/if}
+          </button>
+        {/if}
 
       {/if}
       <!-- The way back up. Only once there is a way back: a button that is
