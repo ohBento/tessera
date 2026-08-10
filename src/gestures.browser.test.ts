@@ -18,6 +18,7 @@ import App from "./App.svelte";
 import {
   addLayoutImage,
   addLayoutShape,
+  addLayoutText,
   app,
   assignTileLayout,
   closeLayoutDoc,
@@ -54,6 +55,13 @@ async function until(what: () => boolean, ms = 8000, what_for = "the app") {
 
 let host: HTMLDivElement;
 let ui: Record<string, unknown> | undefined;
+
+/** A button by its tooltip. The rail and the tile rows are icons, so there is
+ *  no text to match on — and the title is what a hand hovers to find them too. */
+const byTitle = (title: string) =>
+  [...document.querySelectorAll("button")].find((b) => b.title === title) as
+    | HTMLButtonElement
+    | undefined;
 
 /** The app in a window big enough to draw in. */
 async function editor() {
@@ -157,17 +165,15 @@ describe("framing a picture on the wall", () => {
       );
       const wallCanvas = (window as unknown as { tesseraWall: Canvas }).tesseraWall;
 
-      // By its title: the tool is an icon in the rail, so there is no text to
-      // match, and the title is what a hand hovers to find it too.
-      const button = [...document.querySelectorAll("button")].find((b) =>
-        b.title.startsWith("Frame a tile's picture"),
-      ) as HTMLButtonElement;
-      button.click();
-      await until(() => button.getAttribute("aria-pressed") === "true", 8000, "the framing tool to switch on");
-
-      // Click the tile the picture is on, then drag what the tool framed.
+      /* The way a hand gets there: click the tile, which opens its row, then
+       * press the place button beside the picture in that row. The tool takes
+       * what to place from the list rather than from a click on the canvas —
+       * a wall is layers all the way across, and clicking to choose one would
+       * take the tile-selection drag with it. */
       const cell = cellAt(visibleIds().indexOf(tile));
       await clickScene(wallCanvas, cell.x + TILE_W / 2, cell.y + TILE_H / 2);
+      await until(() => !!byTitle("Place this on this tile"), 8000, "the tile's own row to open");
+      byTitle("Place this on this tile")!.click();
       await until(() => !!wallCanvas.getActiveObject(), 8000, "the stand-in to appear");
       await dragObject(wallCanvas, wallCanvas.getActiveObject()!, 60, 40);
       await until(() => !!app.manifest.tiles[tile].frame?.[pic.id], 5000, "the frame to be written");
@@ -189,6 +195,121 @@ describe("framing a picture on the wall", () => {
       expect(shared.y).toBeCloseTo(before.y, 6);
       if (shared.kind !== "image") throw new Error("the layer stopped being a picture");
       expect(shared.scale).toBeCloseTo(before.scale, 6);
+    } finally {
+      await teardown();
+    }
+  });
+
+  it("places a caption too, and offers it no handle that resizes it", async () => {
+    /* The reason the tool grew past pictures: a caption clear of the chin on
+     * forty-three portraits lands on it on the forty-fourth, and the tile is
+     * the only place that can say so. What it may not do is change the type
+     * size — one caption larger than the rest reads as a mistake rather than
+     * as a choice — so the corner and side handles are not offered. */
+    try {
+      await wall();
+
+      await newLayoutDoc("Schrift");
+      await addLayoutText();
+      const layout = openLayout()!;
+      const caption = layout.layers[0];
+      if (caption.kind !== "text") throw new Error("addLayoutText made something else");
+      const before = { x: caption.x, y: caption.y, size: caption.size };
+      /* Live, or it bakes into the stamp and the tile has no copy of its own to
+         place — only `perTile` layers are copied onto the tiles (bakeable). */
+      await setLayerField(caption.id, "perTile", true);
+
+      const tile = app.folderIds[0];
+      await assignTileLayout(tile, layout.id);
+      await closeLayoutDoc();
+      await until(
+        () => ((window as { tesseraWall?: Canvas }).tesseraWall?.getObjects().length ?? 0) > 0,
+        8000,
+        "the wall to come back with its tiles",
+      );
+      const wallCanvas = (window as unknown as { tesseraWall: Canvas }).tesseraWall;
+
+      const cell = cellAt(visibleIds().indexOf(tile));
+      await clickScene(wallCanvas, cell.x + TILE_W / 2, cell.y + TILE_H / 2);
+      await until(() => !!byTitle("Place this on this tile"), 8000, "the tile's own row to open");
+      byTitle("Place this on this tile")!.click();
+      await until(() => !!wallCanvas.getActiveObject(), 8000, "the stand-in to appear");
+
+      const stand = wallCanvas.getActiveObject()!;
+      // No zoom on a caption: corners and sides both gone, the turn handle stays.
+      expect(stand.isControlVisible("br")).toBe(false);
+      expect(stand.isControlVisible("mr")).toBe(false);
+      expect(stand.isControlVisible("mtr")).toBe(true);
+
+      await dragObject(wallCanvas, stand, 50, 30);
+      /* The caption's own copy on the tile, not the Layout's: every other tile
+       * keeps the caption where the design put it. */
+      const written = app.manifest.tiles[tile].layers.find((l) => l.kind === "text")!;
+      await until(() => !!app.manifest.tiles[tile].frame?.[written.id], 5000, "the placement to be written");
+
+      const f = app.manifest.tiles[tile].frame![written.id];
+      expect(Math.abs(f.x)).toBeGreaterThan(0);
+      expect(Math.abs(f.y)).toBeGreaterThan(0);
+      // Dragged, not resized — whatever the stand-in did, no zoom was stored.
+      expect(f.z).toBeCloseTo(1, 6);
+
+      const shared = app.manifest.layouts.find((l) => l.id === layout.id)!.layers[0];
+      if (shared.kind !== "text") throw new Error("the layer stopped being a caption");
+      expect(shared.x).toBeCloseTo(before.x, 6);
+      expect(shared.y).toBeCloseTo(before.y, 6);
+      expect(shared.size).toBeCloseTo(before.size, 6);
+    } finally {
+      await teardown();
+    }
+  });
+
+  it("carries the choice to the next tile that has the same layer", async () => {
+    /* What makes forty-four tiles bearable. A live copy keeps the id of the
+     * layer it came from, so the same choice means something on every tile the
+     * Layout is stamped on: click the next portrait and the frame is already on
+     * its caption.
+     *
+     * It hung on one line. Fabric clears its selection whenever a press lands
+     * on bare canvas, and the wall answered that by dropping the chosen layer —
+     * so the frame died on the way to the tile it was being carried to. */
+    try {
+      await wall();
+
+      await newLayoutDoc("Wanderung");
+      await addLayoutText();
+      const layout = openLayout()!;
+      const caption = layout.layers[0];
+      await setLayerField(caption.id, "perTile", true);
+
+      const [first, second] = app.folderIds;
+      await assignTileLayout(first, layout.id);
+      await assignTileLayout(second, layout.id);
+      await closeLayoutDoc();
+      await until(
+        () => ((window as { tesseraWall?: Canvas }).tesseraWall?.getObjects().length ?? 0) > 0,
+        8000,
+        "the wall to come back with its tiles",
+      );
+      const wallCanvas = (window as unknown as { tesseraWall: Canvas }).tesseraWall;
+
+      const at = (id: string) => cellAt(visibleIds().indexOf(id));
+      await clickScene(wallCanvas, at(first).x + TILE_W / 2, at(first).y + TILE_H / 2);
+      await until(() => !!byTitle("Place this on this tile"), 8000, "the tile's own row to open");
+      byTitle("Place this on this tile")!.click();
+      await until(() => !!wallCanvas.getActiveObject(), 8000, "the stand-in to appear");
+      const onFirst = wallCanvas.getActiveObject()!.left ?? 0;
+
+      // Low in the cell, clear of the frame: this has to be a press on the wall.
+      await clickScene(wallCanvas, at(second).x + TILE_W / 2, at(second).y + TILE_H * 0.9);
+      await until(
+        () => (wallCanvas.getActiveObject()?.left ?? onFirst) !== onFirst,
+        5000,
+        "the frame to move to the second tile",
+      );
+      const moved = wallCanvas.getActiveObject()!;
+      expect((moved as { framing?: boolean }).framing).toBe(true);
+      // One cell further along, not merely somewhere else.
+      expect((moved.left ?? 0) - onFirst).toBeCloseTo(at(second).x - at(first).x, 3);
     } finally {
       await teardown();
     }

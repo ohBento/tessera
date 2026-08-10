@@ -15,6 +15,7 @@ import {
   findLayer,
   groupShift,
   isGradient,
+  isLiveCopy,
   framed,
   layerAsset,
   layerIcon,
@@ -326,6 +327,27 @@ export function textWidth(l: TextLayer): number {
     ) / TILE_W
   );
 }
+
+/** How big a live layer sits on a tile, as fractions of the tile — whichever
+ *  fields it happens to keep its size in.
+ *
+ *  The tool that places a layer per tile needs one answer for all three kinds,
+ *  both to draw its frame at the right size and to turn a dragged handle back
+ *  into a zoom factor. A caption's height is the box it is held to, or the one
+ *  line it currently is when it has none.
+ *
+ *  A picture answers with its width twice over: how tall it comes out depends
+ *  on the pixels behind it, which are not in the manifest. The one caller that
+ *  needs a picture's height has the decoded image in hand and takes it from
+ *  there. */
+export const layerSize = (l: Layer): { w: number; h: number } =>
+  l.kind === "image"
+    ? { w: l.scale, h: l.scale }
+    : l.kind === "shape"
+      ? { w: l.w, h: l.h }
+      : l.kind === "text"
+        ? { w: textWidth(l), h: l.h ?? l.size * LINE_HEIGHT }
+        : { w: 1, h: 1 };
 
 /** The rectangle a caption with a fixed height is held to, in scene
  *  coordinates — or nothing when it has none and may grow with its lines.
@@ -1190,15 +1212,25 @@ export async function buildGrid(
        * answer — no picture on this tile — and the layer simply does not
        * render, which is why the check is on the resolved value and not on
        * whether a key exists. */
-      const l =
+      /* And where this tile put it. Every live layer, not only pictures: a
+       * caption that sits well on forty-three portraits sits over an eyebrow on
+       * the forty-fourth, and the tile is the only place that can say so. The
+       * Layout still owns the design; framed() is a difference from it. */
+      const l = framed(
         raw.kind === "image" && raw.live
-          ? framed({ ...raw, asset: layerAsset(swaps, raw) }, frames[raw.id])
+          ? { ...raw, asset: layerAsset(swaps, raw) }
           : /* And this tile's own class, where it names one. Same map, same
              * bargain: the Layout places and colours the icon once, each
              * portrait says which class it is. */
             raw.kind === "shape" && raw.shape === "icon" && raw.live
             ? { ...raw, icon: layerIcon(swaps, raw) }
-            : raw;
+            : raw,
+        /* isLiveCopy and not `raw.live`: a caption is live whether or not it
+         * carries the flag — the ones stamped before the flag existed have
+         * none — and a layer the tile owns outright has nothing to differ
+         * from, since editing it *is* editing the layer. */
+        isLiveCopy(raw) ? frames[raw.id] : undefined,
+      );
       if (l.kind === "image" && !l.asset) continue;
       // Groups are a wall-side concept only in Layouts; on a tile they would
       // need the same flattening layoutObjects does, and nothing creates one

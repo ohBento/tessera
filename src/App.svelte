@@ -242,7 +242,7 @@
     ["Ctrl + Y  ·  Ctrl + Shift + Z", "Redo"],
     ["Ctrl + D", "Duplicate the picked layers (in a Layout)"],
     ["Delete  ·  Backspace", "Delete the picked layers (in a Layout)"],
-    ["Escape", "Leave the framing tool"],
+    ["Escape", "Leave the placing tool"],
     ["Escape", "Close the Layout, or the menu over it"],
     ["?", "This sheet"],
     ["Wheel", "Zoom"],
@@ -1028,6 +1028,45 @@
   </svg>
 {/snippet}
 
+<!-- A crop frame with a picture's diagonal inside it — the mark every editor
+     uses for "which part of this shows". Shared by the tool in the rail and by
+     the button beside each of a tile's own layers, because pressing either
+     starts the same thing. -->
+{#snippet placeIcon(size: number)}
+  <svg width={size} height={size} viewBox="0 0 17 17" aria-hidden="true">
+    <path d="M4.5 1 V12.5 H16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+    <path d="M1 4.5 H12.5 V16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+    <path d="M6.5 10.5 L8.8 7.6 L10.4 9.4 L12 7.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" opacity="0.8" />
+  </svg>
+{/snippet}
+
+<!-- Where a tile says "this one, here". The tool needs a tile and one of its
+     live layers; both are on this row already, so the button hands it the pair
+     and switches the mode on rather than asking for three clicks in two places.
+     Beside it the way back: the layer as the Layout placed it. -->
+{#snippet placeRow(tileId: string, layerId: string)}
+  {@const on =
+    framing && app.selected === layerId && app.selectedTiles.length === 1 && app.selectedTiles[0] === tileId}
+  <button
+    class="swatch"
+    class:on
+    title={on ? "Placing this on the wall — drag its frame" : "Place this on this tile"}
+    onclick={() => {
+      app.selectedTiles = [tileId];
+      selectLayer(layerId);
+      framing = true;
+    }}
+  >
+    {@render placeIcon(13)}
+  </button>
+  <button
+    class="swatch"
+    title="Put it back where the Layout placed it"
+    disabled={!tileFrame(tileId, layerId)}
+    onclick={() => void clearTileFrame(tileId, layerId)}>⤢</button
+  >
+{/snippet}
+
 {#snippet lockIcon(locked: boolean)}
   <!-- Three differences at once, because one was not enough to read at a
        glance: the shackle closes, the body fills, and the button takes the
@@ -1213,6 +1252,7 @@
             disabled={tileText(id, caption.id) === undefined}
             onclick={() => void clearTileText(id, caption.id)}>↺</button
           >
+          {@render placeRow(id, caption.id)}
         </label>
       {/each}
 
@@ -1279,16 +1319,11 @@
             disabled={chosen === undefined}
             onclick={() => void clearTileAsset(id, pic.id)}>↺</button
           >
-          <!-- The way back from a framing that went wrong. No numbers beside
-               it: the frame on the wall is where framing is done, and a row of
-               fields here would ask why moving has them and everything else
-               does not. -->
-          <button
-            class="swatch"
-            title="Show this picture where the Layout put it"
-            disabled={!tileFrame(id, pic.id)}
-            onclick={() => void clearTileFrame(id, pic.id)}>⤢</button
-          >
+          <!-- Placing it, and the way back from a placing that went wrong. No
+               numbers beside them: the frame on the wall is where placing is
+               done, and a row of fields here would ask why moving has them and
+               everything else does not. -->
+          {@render placeRow(id, pic.id)}
         </div>
       {/each}
 
@@ -1347,6 +1382,7 @@
             disabled={chosen === undefined}
             onclick={() => void clearTileAsset(id, badge.id)}>↺</button
           >
+          {@render placeRow(id, badge.id)}
         </div>
       {/each}
     {/if}
@@ -1609,14 +1645,10 @@
         onclick={() => (framing = !framing)}
         disabled={home || !!editing || !!app.busy}
         title={framing
-          ? "Framing a tile's picture: drag to move it, corners zoom, the top handle turns. Escape leaves"
-          : "Frame a tile's picture inside its mask"}
+          ? "Placing: pick a tile, then one of its own layers in the list — drag it, corners zoom, the top handle turns. Escape leaves"
+          : "Place a tile's own layers — its picture, caption or class icon"}
       >
-        <svg width="17" height="17" viewBox="0 0 17 17" aria-hidden="true">
-          <path d="M4.5 1 V12.5 H16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-          <path d="M1 4.5 H12.5 V16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-          <path d="M6.5 10.5 L8.8 7.6 L10.4 9.4 L12 7.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" opacity="0.8" />
-        </svg>
+        {@render placeIcon(17)}
       </button>
       <span class="gap"></span>
       <!-- Framed mountain and sun, the icon every editor uses for a picture —

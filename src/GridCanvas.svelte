@@ -23,10 +23,18 @@
   } from "./lib/editor.svelte";
   import { TILE_H, TILE_W } from "./lib/bmp";
   import { cellIndexAt, cellsIn, isTyping, snapBox, type Guide } from "./lib/geometry";
-  import { buildGrid, cellAt, gridSize, readBack, snapScale, type Tagged } from "./lib/scene";
-  import { framed, layerAsset, type ImageLayer } from "./lib/model";
+  import {
+    buildGrid,
+    cellAt,
+    gridSize,
+    layerSize,
+    readBack,
+    snapScale,
+    type Tagged,
+  } from "./lib/scene";
+  import { framed, isLiveCopy, layerAsset, type Layer } from "./lib/model";
 
-  /* On while the framing tool is chosen in App's toolbar. The wall has no other
+  /* On while the placing tool is chosen in App's toolbar. The wall has no other
      mode, and that is deliberate — see the note on frameAt below. */
   let { framing = false }: { framing?: boolean } = $props();
 
@@ -50,29 +58,40 @@
    *  drag, so it feels the same at any zoom. */
   const SNAP_PX = 8;
 
-  /* ---- The framing tool -------------------------------------------------
+  /* ---- The placing tool -------------------------------------------------
    *
-   * Masking a picture is how you show one part of it, and which part is right
-   * depends on the picture. The Layout owns the frame; the tile owns what sits
-   * inside it. This is the only mode the wall has, so it says so: the button
-   * stays pressed, Escape leaves, and while it is on a drag frames instead of
-   * sweeping a selection.
+   * A Layout designs forty-four tiles at once, and forty-four faces are not
+   * alike: the picture that wants to sit left on one sits centre on the next,
+   * and a caption clear of the chin on most of them lands on it here. The
+   * Layout owns the design; the tile owns where its own copy sits inside it.
+   * This is the only mode the wall has, so it says so: the button stays
+   * pressed, Escape leaves.
    *
-   * Fabric supplies the frame and its handles, but not on the picture itself —
-   * a masked tile layer is baked to pixels before the cell clips it, so
-   * dragging that object would take the mask along with it. What is dragged is
-   * a transparent stand-in at the picture's place, and what the eye follows is
-   * the ghost: the whole picture, faintly, including the parts the mask cuts
-   * away. Without it you would be nudging an invisible thing until something
+   * What it acts on comes from the list on the right, not from a click on the
+   * canvas. A wall is layers all the way across — clicking to choose one would
+   * take the tile-selection drag with it, and picking between two that overlap
+   * would be a lottery. So: choose the tile, choose the layer in its row, and
+   * the frame appears on it.
+   *
+   * Fabric supplies the frame and its handles, but not on the layer itself — a
+   * masked or flattened tile layer is baked to pixels before the cell clips it,
+   * so dragging that object would take the mask along with it. What is dragged
+   * is a transparent stand-in at the layer's place. A picture also gets a
+   * ghost: the whole of it, faintly, including the parts the mask cuts away,
+   * without which you would be nudging an invisible thing until something
    * happened to appear. */
   let target: { tileId: string; layerId: string } | null = null;
   let stand: fabric.Object | undefined;
   let ghost: fabric.Object | undefined;
 
-  /** The live pictures drawn on a tile, newest last — the ones a tile frames. */
-  const picturesOn = (tileId: string) =>
+  /** The live layers drawn on a tile, newest last — the ones a tile places.
+   *
+   *  Live copies only. A layer the tile owns outright is already draggable on
+   *  the wall and has nothing to differ from: editing it *is* editing the
+   *  layer. */
+  const placeableOn = (tileId: string) =>
     (app.manifest.tiles[tileId]?.layers ?? []).filter(
-      (l): l is ImageLayer => l.kind === "image" && !!l.live && !!l.asset,
+      (l) => isLiveCopy(l) && !l.hidden && !(l.kind === "image" && !l.asset),
     );
 
   function dropFrameTools() {
@@ -81,25 +100,31 @@
     stand = ghost = undefined;
   }
 
-  /** Puts the stand-in and the ghost on the picture this tile shows. */
+  /** The layer as the Layout asks for it on this tile — this tile's picture or
+   *  class filled in, but without what the tile chose about where it sits.
+   *  What a Frame is measured against. */
+  function atRest(tileId: string, layerId: string): Layer | undefined {
+    const layer = placeableOn(tileId).find((l) => l.id === layerId);
+    if (!layer) return undefined;
+    if (layer.kind !== "image") return layer;
+    const asset = layerAsset(app.manifest.tiles[tileId]?.swap ?? {}, layer);
+    return asset ? { ...layer, asset } : undefined;
+  }
+
+  /** Puts the stand-in — and, for a picture, the ghost — on what this tile
+   *  currently shows for that layer. */
   async function frameAt(tileId: string, layerId: string) {
     if (!canvas || !app.deps) return;
-    const layer = picturesOn(tileId).find((l) => l.id === layerId);
-    if (!layer) return;
+    const base = atRest(tileId, layerId);
+    if (!base) return;
     const ids = visibleIds();
     const index = ids.indexOf(tileId);
     if (index < 0) return;
 
-    const shown = framed(
-      { ...layer, asset: layerAsset(app.manifest.tiles[tileId]?.swap ?? {}, layer) },
-      tileFrame(tileId, layerId),
-    );
-    if (!shown.asset) return;
-
+    const shown = framed(base, tileFrame(tileId, layerId));
     const cell = cellAt(index);
-    const img = await fabric.FabricImage.fromURL(await app.deps.asset(shown.asset));
-    const width = shown.scale * TILE_W;
-    const height = width * ((img.height || 1) / (img.width || 1));
+    const size = layerSize(shown);
+    const width = size.w * TILE_W;
     const place = {
       originX: "center" as const,
       originY: "center" as const,
@@ -108,17 +133,30 @@
       angle: shown.rotation,
     };
 
+    /* The ghost is a picture's alone. It exists because a mask hides most of
+       what is being dragged; a caption and an icon draw themselves whole, so
+       the frame is enough and a second faint copy would only be in the way.
+       ponytail: if a masked caption turns out to need one, the honest fix is
+       to render the layer through scene.ts rather than to load its file here. */
+    const drawn =
+      shown.kind === "image"
+        ? await fabric.FabricImage.fromURL(await app.deps.asset(shown.asset))
+        : undefined;
+    const height = drawn ? width * ((drawn.height || 1) / (drawn.width || 1)) : size.h * TILE_H;
+
     dropFrameTools();
     /* `keep` so a rebuild leaves them standing. The wall is rebuilt the moment
        a frame is written, which is the moment the mouse comes up — and the
        frame used to be swept away with everything else and fetched back
        asynchronously, so it blinked out under the hand at the end of every
        drag. buildGrid clears its own objects only. */
-    img.set({ ...place, opacity: 0.28, selectable: false, evented: false });
-    Object.assign(img, { keep: true });
-    img.scaleToWidth(width);
-    ghost = img;
-    canvas.add(img);
+    if (drawn) {
+      drawn.set({ ...place, opacity: 0.28, selectable: false, evented: false });
+      Object.assign(drawn, { keep: true });
+      drawn.scaleToWidth(width);
+      ghost = drawn;
+      canvas.add(drawn);
+    }
 
     stand = new fabric.Rect({
       ...place,
@@ -133,7 +171,26 @@
       hasBorders: true,
       objectCaching: false,
     });
-    Object.assign(stand, { framing: true, keep: true });
+    /* A caption is offered no handle that resizes it — see framed(). Rotation
+       stays: turning a caption clear of a shoulder is placing it, not restyling
+       it. */
+    if (shown.kind === "text")
+      stand.setControlsVisibility({
+        tl: false,
+        tr: false,
+        bl: false,
+        br: false,
+        ml: false,
+        mr: false,
+        mt: false,
+        mb: false,
+        mtr: true,
+      });
+    /* `layerId` so Fabric's own selection event writes back the layer this
+       stands for instead of clearing the choice — the tool reads that same
+       field to know what to place, and an empty write would take its own frame
+       down. */
+    Object.assign(stand, { framing: true, keep: true, layerId });
     canvas.add(stand);
     canvas.setActiveObject(stand);
     target = { tileId, layerId };
@@ -156,21 +213,35 @@
   /** What the tile chose, as a difference from what the Layout asked for. */
   async function writeFrame() {
     if (!stand || !target) return;
-    const layer = picturesOn(target.tileId).find((l) => l.id === target!.layerId);
-    if (!layer) return;
+    const base = atRest(target.tileId, target.layerId);
+    if (!base) return;
     const ids = visibleIds();
     const back = readBack(stand as Tagged, ids.length, ids.indexOf(target.tileId));
+    /* The zoom measured against the layer's own resting width, whichever field
+       that comes out of — one factor that means the same thing to a picture, an
+       icon and a caption, which each keep their size differently.
+       Not readBack's `scale`: that goes through getScaledWidth, which counts
+       the frame's own 1px stroke. A plain drag then wrote a zoom of 1.003 on a
+       half-tile picture and 1.011 on a caption, and every nudge multiplied it
+       again — a picture that grew a little each time it was moved. */
+    const rest = layerSize(base).w;
+    const width = ((stand.width ?? 0) * (stand.scaleX ?? 1)) / TILE_W;
     await setTileFrame(target.tileId, target.layerId, {
-      x: back.x - layer.x,
-      y: back.y - layer.y,
-      z: layer.scale ? back.scale / layer.scale : 1,
-      a: back.rotation - layer.rotation,
+      x: back.x - base.x,
+      y: back.y - base.y,
+      z: rest ? width / rest : 1,
+      a: back.rotation - base.rotation,
     });
   }
 
-  /* Leaving the mode takes its furniture with it. Rebuilds no longer do — the
-     pair is marked `keep` — so this only has to put the frame back if something
-     else removed it, which is the case when the tile it framed stops existing. */
+  /* The frame follows the choice on the right: one tile picked, one of its live
+     layers picked, and it appears on that. Leaving the mode takes the furniture
+     with it, and so does a choice the wall cannot show — no tile, several
+     tiles, or a layer this tile does not carry.
+
+     Rebuilds no longer remove the pair — it is marked `keep` — so the last
+     clause only puts it back when something else did, which is the case when
+     the tile it stood on stops existing. */
   $effect(() => {
     if (!framing) {
       target = null;
@@ -178,10 +249,23 @@
       canvas?.requestRenderAll();
       return;
     }
-    const want = target;
     void app.version;
-    if (want && canvas && stand && !canvas.getObjects().includes(stand))
-      void frameAt(want.tileId, want.layerId);
+    const tile = app.selectedTiles.length === 1 ? app.selectedTiles[0] : "";
+    const layerId = app.selected;
+    if (!tile || !layerId || !placeableOn(tile).some((l) => l.id === layerId)) {
+      if (target) {
+        target = null;
+        dropFrameTools();
+        canvas?.requestRenderAll();
+      }
+      return;
+    }
+    if (
+      target?.tileId !== tile ||
+      target.layerId !== layerId ||
+      !(canvas && stand && canvas.getObjects().includes(stand))
+    )
+      void frameAt(tile, layerId);
   });
 
   /** Every visible tile the band touches. */
@@ -419,26 +503,13 @@
         opt.e.preventDefault();
         return;
       }
-      /* The framing tool takes the drag and nothing else: panning, the wheel
-         and the right-click menu all still answer, because framing a picture
-         means zooming in and reaching for "another picture" constantly. What
-         it does swallow is the selection band and the swap drag. */
-      if (framing && opt.e.button === 0) {
-        // `stand &&` and not just the comparison: both are undefined on bare
-        // canvas before anything has been framed, and undefined === undefined
-        // sent every first click straight back out.
-        if (stand && opt.target === stand) return;
-        const over = tileAt(opt.e);
-        if (!over) return;
-        const pics = picturesOn(over);
-        if (!pics.length) return;
-        /* Clicking the same tile again walks to its next picture — rare, but a
-           tile with two of them would otherwise have one that cannot be
-           reached at all. */
-        const at = target?.tileId === over ? pics.findIndex((p) => p.id === target!.layerId) : -1;
-        void frameAt(over, pics[(at + 1) % pics.length].id);
-        return;
-      }
+      /* The mode swallows nothing here. It used to take the click, to choose
+         what to place; that choice comes from the list on the right now, so
+         clicking the wall still picks tiles, drags still sweep a band, and
+         Alt+drag still swaps — all of which you need while placing, because
+         choosing the next tile is half the work.
+         The stand-in is an ordinary Fabric object, so a press on it is already
+         `opt.target` below and never reaches the band. */
       // A layer object swallows the click only when it is the chosen one; every
       // other object is inert, so "no target" means bare wall.
       if (opt.e.button !== 0 || opt.target) return;
@@ -652,7 +723,13 @@
     });
 
     canvas.on("selection:cleared", () => {
-      if (!rebuilding) selectLayer("");
+      /* Not while placing. There the chosen layer is what the tool acts on, and
+         a press on the wall is how the next tile is chosen — clearing it there
+         meant the frame died on the way to the tile it was being carried to,
+         and forty-four portraits had to be picked out of the list one at a
+         time. Live copies keep the id of the layer they came from, so the same
+         choice lands on the next tile that carries the same Layout. */
+      if (!rebuilding && !framing) selectLayer("");
     });
 
     /* Snapping a wall picture to the wall.

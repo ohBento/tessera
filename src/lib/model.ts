@@ -1054,18 +1054,35 @@ export const layerText = (texts: Record<string, string>, layer: TextLayer, tileI
 export const layerAsset = (swaps: Record<string, string>, layer: ImageLayer) =>
   swaps[layer.id] ?? layer.asset;
 
-/** A tile's own framing of a shared picture: a nudge, a zoom and a turn, all
+/** A tile's own placement of a shared layer: a nudge, a zoom and a turn, all
  *  relative to what the Layout asked for. Absent is the ordinary state and
  *  means "as the Layout placed it". */
 export type Frame = { x: number; y: number; z: number; a: number };
 
 export const NO_FRAME: Frame = { x: 0, y: 0, z: 1, a: 0 };
 
-/** The layer as this tile frames it. Relative rather than absolute, so moving
- *  the layer in the Layout still moves every tile's picture with it and only
- *  the difference each tile chose stays its own. */
-export const framed = (l: ImageLayer, f: Frame | undefined): ImageLayer =>
-  f ? { ...l, x: l.x + f.x, y: l.y + f.y, scale: l.scale * f.z, rotation: l.rotation + f.a } : l;
+/** The layer as this tile places it. Relative rather than absolute, so moving
+ *  the layer in the Layout still moves every tile's copy with it and only the
+ *  difference each tile chose stays its own.
+ *
+ *  The zoom is a factor rather than a width because a picture, an icon and a
+ *  caption each store their size in a different field. It lands on whichever
+ *  one that is — except on a caption, which takes none: the Layout owns the
+ *  type size, and one caption larger than the other forty-three reads as a
+ *  mistake rather than as a choice. The tool offers a caption no corner
+ *  handles, which is the same rule seen from the other side. */
+export function framed<L extends Layer>(l: L, f: Frame | undefined): L {
+  if (!f) return l;
+  const size =
+    l.kind === "image"
+      ? { scale: l.scale * f.z }
+      : l.kind === "shape"
+        ? { w: l.w * f.z, h: l.h * f.z }
+        : {};
+  // The generic is the promise that a framed layer is the kind it went in as;
+  // TypeScript cannot see that through a spread, hence the one cast.
+  return { ...l, x: l.x + f.x, y: l.y + f.y, rotation: l.rotation + f.a, ...size } as L;
+}
 
 /** Which class one tile shows for a live icon layer, or "" for none.
  *
