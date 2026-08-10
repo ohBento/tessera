@@ -4,7 +4,8 @@
    * side panel lists. The tool strip and dense token set land in M4; this
    * exists to drive the layout/stamp path end to end. */
   import { onMount, tick } from "svelte";
-  import { ask } from "./lib/platform";
+  import { ask, getVersion, openUrl } from "./lib/platform";
+  import { latestRelease, releasePage } from "./lib/update";
 
   import ContextMenu, { type Item } from "./ContextMenu.svelte";
   import GridCanvas from "./GridCanvas.svelte";
@@ -215,6 +216,20 @@
     else return;
     e.preventDefault();
   }
+
+  /** What this build is, and what is out there.
+   *
+   *  Asked once, at startup, and never again: a desktop tool that is open all
+   *  day has no business polling. `latestRelease` answers "" for up to date, no
+   *  release yet, and no network alike, so the quiet case needs no handling —
+   *  and the noisy one is a dot, not a dialogue. One request to GitHub's public
+   *  API per start, which is the only call this app makes to the internet. */
+  let version = $state("");
+  let newer = $state("");
+  onMount(async () => {
+    version = await getVersion();
+    newer = await latestRelease();
+  });
 
   /** Whether the keyboard sheet is up.
    *
@@ -1578,12 +1593,20 @@
       <!-- Both ways in: the button so it can be found without knowing anything,
            the key so it can be reached without looking. -->
       <button
-        class="reload"
+        class="reload help"
         onclick={() => (keysOpen = true)}
-        title="Keyboard and mouse (?)"
-        aria-label="Keyboard and mouse shortcuts"
+        title={newer ? `Keyboard and mouse (?) — ${newer} is out` : "Keyboard and mouse (?)"}
+        aria-label={newer
+          ? `Keyboard and mouse shortcuts — version ${newer} is available`
+          : "Keyboard and mouse shortcuts"}
       >
         ?
+        <!-- The only thing on screen that says a new version exists. The sheet
+             behind this button is where the version lives, and nobody opens a
+             shortcut sheet to check for updates — so the news has to be on the
+             button. Red rather than the amber used for "layout changed": two
+             marks that mean different things must not look alike. -->
+        {#if newer}<span class="fresh" aria-hidden="true"></span>{/if}
       </button>
     </div>
 
@@ -2456,6 +2479,17 @@
         <dd>{what}</dd>
       {/each}
     </dl>
+    <!-- The version, and the only place it is written down. This sheet is the
+         nearest thing the app has to an About box, and a number nobody can read
+         off the screen is a number nobody can put in a bug report. -->
+    <p class="build">
+      Tessera {version}
+      {#if newer}
+        · <button class="link" onclick={() => void openUrl(releasePage)}
+          >{newer} is out — release notes</button
+        >
+      {/if}
+    </p>
     <button onclick={() => (keysOpen = false)}>Close</button>
   </div>
 {/if}
@@ -3233,6 +3267,39 @@
   }
   .dirty {
     color: #ffc45c;
+  }
+  /* On the "?" button, over its top right corner. Positioned against the
+     button rather than sitting in its text, so the glyph stays centred and the
+     mark reads as a badge on the control instead of punctuation after it.
+     `.help` and not `.reload`: two buttons in this header wear that class, and
+     the other one is the refresh beside it. */
+  .reload.help {
+    position: relative;
+  }
+  .fresh {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #ff4d4d;
+  }
+  /* The version line: quiet, and the same grey every other aside in this app
+     is set in. */
+  .build {
+    margin: 10px 0 0;
+    color: #8f88a8;
+    font-size: 11px;
+  }
+  .build .link {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: #cbb8ff;
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
   }
   .field {
     display: flex;

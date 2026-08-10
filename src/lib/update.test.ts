@@ -1,5 +1,21 @@
-import { describe, expect, it } from "vitest";
-import { isNewer } from "./update";
+import { describe, expect, it, vi } from "vitest";
+import { isNewer, latestRelease } from "./update";
+
+describe("latestRelease", () => {
+  it("asks nobody outside the shipped application", async () => {
+    /* The browser build reports "0.0.0-browser", which every tag beats, so an
+     * unguarded check would announce an update on the dev server and in every
+     * mounted test — and reach across the network to do it. A suite that asks
+     * GitHub is a suite that fails on a train. */
+    const fetched = vi.spyOn(globalThis, "fetch");
+    try {
+      expect(await latestRelease()).toBe("");
+      expect(fetched).not.toHaveBeenCalled();
+    } finally {
+      fetched.mockRestore();
+    }
+  });
+});
 
 describe("isNewer", () => {
   it("compares numerically, not as text", () => {

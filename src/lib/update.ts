@@ -1,4 +1,4 @@
-import { getVersion } from "./platform";
+import { getVersion, isDesktop } from "./platform";
 
 const REPO = "ohBento/tessera";
 
@@ -21,6 +21,12 @@ export function isNewer(candidate: string, current: string): boolean {
  *  Reaches GitHub directly — the API sends CORS headers, so no plugin and no
  *  server of our own is involved. */
 export async function latestRelease(): Promise<string> {
+  /* Only from the shipped application. A browser build has no version to
+     compare — getVersion answers "0.0.0-browser", which every tag beats — so
+     without this the dev server and every mounted test would report an update
+     and reach across the network to do it. A suite that asks GitHub is a suite
+     that fails on a train. */
+  if (!isDesktop) return "";
   try {
     const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`);
     if (!res.ok) return "";

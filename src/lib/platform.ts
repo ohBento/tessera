@@ -17,6 +17,7 @@ import { getVersion as tauriVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { documentDir as tauriDocumentDir, join as tauriJoin } from "@tauri-apps/api/path";
 import { ask as tauriAsk, open as tauriOpen } from "@tauri-apps/plugin-dialog";
+import { openUrl as tauriOpenUrl } from "@tauri-apps/plugin-opener";
 import {
   copyFile as tCopyFile,
   exists as tExists,
@@ -33,6 +34,13 @@ import {
 import { encodeBmp32, TILE_H, TILE_W } from "./bmp";
 
 const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+/** Whether this is the shipped application rather than a browser build.
+ *
+ *  Exported for the one caller that needs to know the difference rather than
+ *  be shielded from it: the update check has nothing to compare against
+ *  outside Tauri, and asking anyway would have every test reach the network. */
+export const isDesktop = inTauri;
 
 /* --- In-memory filesystem. Flat: keys are full paths, directories exist only
  * as prefixes. Nothing here persists — reloading the page starts over, which
@@ -183,6 +191,14 @@ export const copyFile = inTauri
   : async (from: string, to: string) => void files.set(to, memRead(from));
 
 export const getVersion = inTauri ? tauriVersion : async () => "0.0.0-browser";
+
+/** Opens a link in the machine's own browser.
+ *
+ *  Through here rather than straight from the component, like every other way
+ *  out of this app: the browser tests mount the whole thing, and a bare import
+ *  of a Tauri plugin takes them down with it. Outside Tauri it is a no-op —
+ *  a test that opens a tab is a test that steals the focus. */
+export const openUrl = inTauri ? tauriOpenUrl : async (_url: string) => {};
 
 /** Font families installed on this machine.
  *
