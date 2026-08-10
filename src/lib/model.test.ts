@@ -858,6 +858,30 @@ describe("migrate v6 into one project", () => {
     expect(input).toEqual(copy);
     expect(migrate(structuredClone(once))).toEqual(once);
   });
+
+  it("reads a document from a newer build rather than gutting it", () => {
+    /* `version: 8` matched neither the v7 test nor the v6 one and fell through
+     * to toV6, which reads a shape that stopped existing two versions ago:
+     * projects, folders, the shelf and every tile layer were dropped. Reachable
+     * by starting an older Tessera once — the first thing anyone does when a
+     * new version misbehaves. */
+    const doc = emptyManifest();
+    const p = newProject("Main");
+    p.order = ["t0"];
+    p.folders = [{ id: "f1", name: "Done", tiles: ["t0"] }];
+    doc.projects = [p];
+    doc.tiles.t0 = { base: null, layers: [newTextLayer()], text: {} };
+
+    const fromNewer = { ...structuredClone(doc), version: 8, wallpaper: "unknown to us" };
+    const back = migrate(fromNewer);
+
+    expect(back.projects.map((x) => x.name)).toEqual(["Main"]);
+    expect(back.projects[0].folders[0].tiles).toEqual(["t0"]);
+    expect(back.tiles.t0.layers.length).toBe(1);
+    // What this build has no name for rides along instead of being dropped —
+    // the whole reason reading it as v7 is a bounded guess.
+    expect((back as unknown as Record<string, unknown>).wallpaper).toBe("unknown to us");
+  });
 });
 
 describe("per-tile captions", () => {

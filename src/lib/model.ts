@@ -1600,6 +1600,15 @@ function toV7(m: Raw): Raw {
 export function migrate(raw: unknown): Manifest {
   const m = raw as Raw | null;
   if (!m || typeof m !== "object") return emptyManifest();
-  if (m.version === 7) return { ...emptyManifest(), ...m } as Manifest;
+  /* `>=`, not `===`. A document from a newer build failed both tests and fell
+   * through to toV6, which reads a shape that stopped existing two versions
+   * ago: projects, folders, the shelf and every tile layer were dropped on the
+   * floor. Reachable by starting an older Tessera once — the one thing a user
+   * does when a new version misbehaves.
+   *
+   * Reading it as v7 is a guess, but a bounded one: the spread keeps fields
+   * this build has no name for, so what it cannot use it carries. Rewriting a
+   * newer document as an older shape is not bounded at all. */
+  if (typeof m.version === "number" && m.version >= 7) return { ...emptyManifest(), ...m } as Manifest;
   return { ...emptyManifest(), ...toV7(m.version === 6 ? m : toV6(m)) } as Manifest;
 }

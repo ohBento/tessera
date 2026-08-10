@@ -87,7 +87,16 @@ import {
 } from "./lib/model";
 import { maskChoices, maskOffers } from "./lib/model";
 import { textWidth } from "./lib/scene";
-import { queuePick, resetMockFiles, stashPickedFile } from "./lib/platform";
+import {
+  keepAllCharacters,
+  keepCharacter,
+  replaceAllCharacters,
+  replaceCharacter,
+  restorableCount,
+  restoreProject,
+} from "./lib/editor.svelte";
+import { queuePick, readFile, resetMockFiles, stashPickedFile } from "./lib/platform";
+import { vaultedIds } from "./lib/project";
 
 /** Waits for a condition instead of a fixed delay: the app loads tiles and
  *  builds a Fabric scene asynchronously, and a sleep long enough to be safe on
@@ -1650,5 +1659,140 @@ describe("the sheets over the page", () => {
     await until(() => !sheet("Class icons"));
     press("?");
     await until(() => !!sheet("Keyboard and mouse"));
+  });
+});
+
+/* --- The four answers to "the game rewrote this tile", and the way back from a
+ * write. These reach past the document and delete the last untouched copy of a
+ * portrait, which makes them the highest-stakes code in the app; `classify` was
+ * well covered, the actions taken on its verdict were not.
+ *
+ * The mass buttons are clicked in "answers the whole changed list at once"
+ * above. What is pinned here is what that test cannot see: which of them eats
+ * the vault, and which one deliberately does not. --- */
+describe("keeping and replacing a character", () => {
+  /** A project of `count` tiles, dressed and written to the game — which is
+   *  what puts their pristine originals in the vault. */
+  async function written(count: number) {
+    const ids = app.folderIds.slice(0, count);
+    app.selectedTiles = [...ids];
+    await newProjectFrom("Konto");
+    openProjectView(projects()[0].id);
+    queuePick(await magentaSquare("tresor"));
+    await newLayoutDoc("Tresortest");
+    await addLayoutImage();
+    await closeLayoutDoc();
+    for (const id of ids) await assignTileLayout(id, layouts()[0].id);
+    await saveToGame();
+    await until(() => ids.every((id) => app.vaulted.includes(id)));
+    return ids;
+  }
+
+  it("drops the vault copy of a restyled character and keeps the layers", async () => {
+    /* The vault is what loadOriginal serves as "the original", in preference to
+     * the game's own file. After a restyle it holds the face from before, so
+     * keeping it would mean the editor went on showing the old haircut for
+     * good — seen on a real folder, thirty-five portraits deep. */
+    const [a] = await written(1);
+
+    app.hashes = { ...app.hashes, [a]: "restyled" };
+    app.changedTiles = [a];
+    await keepCharacter(a);
+
+    expect(app.manifest.tiles[a].layers.length).toBeGreaterThan(0);
+    expect(app.changedTiles).toEqual([]);
+    expect(await vaultedIds(app.dir)).not.toContain(a);
+    expect(app.vaulted).not.toContain(a);
+  });
+
+  it("strips a tile whose slot went to a stranger, and drops that vault copy too", async () => {
+    const [a] = await written(1);
+
+    app.hashes = { ...app.hashes, [a]: "fremder" };
+    app.changedTiles = [a];
+    await replaceCharacter(a);
+
+    // The layers were composed for a face that no longer exists.
+    expect(app.manifest.tiles[a].layers).toEqual([]);
+    expect(projects()[0].order).not.toContain(a);
+    expect(await vaultedIds(app.dir)).not.toContain(a);
+  });
+
+  it("leaves the vault alone when the whole folder was regenerated", async () => {
+    /* The one rule that makes the mass answer more than a loop over the
+     * per-tile one. A wholesale regeneration is the opposite situation to a
+     * restyle: the vault is the curated set of originals, and it is the single
+     * thing this answer must not eat. */
+    const [a, b] = await written(2);
+
+    app.hashes = { ...app.hashes, [a]: "neu-a", [b]: "neu-b" };
+    app.changedTiles = [a, b];
+    await keepAllCharacters();
+
+    const held = await vaultedIds(app.dir);
+    expect(held).toContain(a);
+    expect(held).toContain(b);
+    expect(app.changedTiles).toEqual([]);
+  });
+
+  it("puts every layer back with one Ctrl+Z after answering 'all new'", async () => {
+    // One mutation for the whole list, which is what makes a single undo the
+    // way out of a mass answer given in error.
+    const [a, b] = await written(2);
+
+    app.hashes = { ...app.hashes, [a]: "neu-a", [b]: "neu-b" };
+    app.changedTiles = [a, b];
+    await replaceAllCharacters();
+    expect(app.manifest.tiles[a].layers).toEqual([]);
+    expect(app.manifest.tiles[b].layers).toEqual([]);
+
+    await undoEdit();
+
+    expect(app.manifest.tiles[a].layers.length).toBeGreaterThan(0);
+    expect(app.manifest.tiles[b].layers.length).toBeGreaterThan(0);
+    // The vault copies stay gone, as the per-tile button leaves them: undo
+    // takes back the document, never the disk.
+    expect(await vaultedIds(app.dir)).not.toContain(a);
+  });
+});
+
+describe("putting the game's own portraits back", () => {
+  const same = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+  it("writes the vault copies over the folder and leaves the document alone", async () => {
+    const [a] = app.folderIds;
+    const pristine = await readFile(`${app.dir}/${a}.bmp`);
+    app.selectedTiles = [a];
+    await newProjectFrom("Konto");
+    openProjectView(projects()[0].id);
+    queuePick(await magentaSquare("zurueck"));
+    await newLayoutDoc("Zurücktest");
+    await addLayoutImage();
+    await closeLayoutDoc();
+    await assignTileLayout(a, layouts()[0].id);
+    await saveToGame();
+    expect(same(await readFile(`${app.dir}/${a}.bmp`), pristine)).toBe(false);
+
+    await restoreProject();
+
+    expect(same(await readFile(`${app.dir}/${a}.bmp`), pristine)).toBe(true);
+    expect(app.error).toContain("put back");
+    /* "Show the originals in game again", not "throw the work away": every
+     * layer stays, and Write to game puts it all back. */
+    expect(app.manifest.tiles[a].layers.length).toBeGreaterThan(0);
+  });
+
+  it("counts what the vault holds, not what the project owns", async () => {
+    /* The dialog used to offer every tile of the project and then report "none
+     * of these were written" once it was too late to say no: a tile that was
+     * never written has no vault copy and nothing to undo. */
+    const [a, b] = app.folderIds;
+    app.selectedTiles = [a, b];
+    await newProjectFrom("Konto");
+    openProjectView(projects()[0].id);
+
+    expect(restorableCount()).toBe(0);
+    await restoreProject();
+    expect(app.error).toContain("Nothing to put back");
   });
 });

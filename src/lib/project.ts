@@ -65,16 +65,43 @@ export function localStamp(len: 16 | 19 = 16) {
  *
  *  Putting the portraits back into the folder and reopening makes the snapshot
  *  restorable: restoreSnapshot prunes to the folder too, so the work comes back
- *  with the ids it belongs to. */
+ *  with the ids it belongs to.
+ *
+ *  `broken` is the name an unreadable manifest was moved aside under — see
+ *  below for why that is not the same as having no manifest at all. */
 export async function loadManifest(
   dir: string,
   ids: string[],
-): Promise<{ manifest: Manifest; lost: string[]; snapshot: string }> {
+): Promise<{ manifest: Manifest; lost: string[]; snapshot: string; broken: string }> {
   let m = emptyManifest();
+  let broken = "";
+  let text = "";
   try {
-    m = migrate(JSON.parse(await readTextFile(await manifestPath(dir))));
+    text = await readTextFile(await manifestPath(dir));
   } catch {
-    // no project yet, or unreadable — start clean rather than block the folder
+    // No project here yet. The ordinary first open, and the only case that
+    // should silently produce an empty document.
+  }
+  if (text) {
+    try {
+      m = migrate(JSON.parse(text));
+    } catch {
+      /* A file that is there but will not parse used to share the catch above,
+       * so a damaged document was indistinguishable from a first run: the app
+       * opened empty and the first edit wrote over the only copy. Moved aside
+       * instead — the fresh start then cannot eat it, and what is left is a
+       * file a text editor can still be pointed at.
+       *
+       * Seconds in the name for the same reason the folder-cleanup snapshot
+       * carries them: two opens inside a minute are a double-click apart.
+       *
+       * Not caught: if the move fails the folder does not open, and that is
+       * the right way round. Starting clean over a manifest we could neither
+       * read nor set aside is the one outcome this whole path exists to
+       * prevent. */
+      broken = `manifest.unreadable ${localStamp(19)}.json`;
+      await rename(await manifestPath(dir), await join(await projectDir(dir), broken));
+    }
   }
   const lost = droppedWork(m, ids);
   let snapshot = "";
@@ -90,7 +117,7 @@ export async function loadManifest(
     );
   }
   // Characters get created and deleted between sessions; the folder wins.
-  return { manifest: pruneToFolder(m, ids), lost, snapshot };
+  return { manifest: pruneToFolder(m, ids), lost, snapshot, broken };
 }
 
 /* --- Knowing when the game changed a file under us.

@@ -1011,7 +1011,7 @@ export async function openFolder(dir?: string) {
      * inside the app. loadManifest puts the document aside first and says what
      * went; the message below is the only thing standing between that and work
      * disappearing without a word. */
-    const { manifest, lost, snapshot } = await loadManifest(app.dir, ids);
+    const { manifest, lost, snapshot, broken } = await loadManifest(app.dir, ids);
     app.manifest = manifest;
     /* Layers naming a layout the library no longer has: manifests from before
      * the delete cascaded, or a snapshot that brought stamps back after their
@@ -1048,6 +1048,12 @@ export async function openFolder(dir?: string) {
       app.error =
         `${lost.length} tile(s) are no longer in the folder — their layers went with them. ` +
         `Put the portraits back and reopen, then restore "${snapshot}".`;
+    /* Never both: a manifest that could not be read leaves an empty document,
+     * and an empty document has no work for the folder to drop. */
+    else if (broken)
+      app.error =
+        `manifest.json could not be read and was set aside as "${broken}". ` +
+        `This folder starts empty — the old file is still in FaceTexture.tessera.`;
   });
 }
 

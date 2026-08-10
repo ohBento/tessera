@@ -297,3 +297,54 @@ describe("loadManifest lines the manifest up with the folder", () => {
     expect(projectOf(m, "neu")).toBeUndefined();
   });
 });
+
+describe("loadManifest tells a damaged document from a first run", () => {
+  const path = "/docs/FaceTexture/../FaceTexture.tessera/manifest.json";
+
+  it("moves an unreadable manifest aside rather than starting clean over it", async () => {
+    /* Both used to share one catch, so a damaged document was indistinguishable
+     * from having none: the app opened empty and the first edit wrote over the
+     * only copy there was. */
+    files.clear();
+    rename.mockClear();
+    const platform = await import("./platform");
+    files.set(path, "{ half a manifest");
+    vi.mocked(platform.readTextFile).mockResolvedValueOnce("{ half a manifest");
+
+    const { manifest: m, broken } = await loadManifest("/docs/FaceTexture", ["a"]);
+
+    expect(broken).toMatch(/^manifest\.unreadable /);
+    expect(files.has(path)).toBe(false);
+    // The bytes are still there under the new name — a text editor can be
+    // pointed at them, which is the whole point of not overwriting.
+    expect(files.get(`/docs/FaceTexture/../FaceTexture.tessera/${broken}`)).toBe("{ half a manifest");
+    expect(m.projects).toEqual([]);
+  });
+
+  it("stays silent when there is simply no manifest yet", async () => {
+    // The ordinary first open, and the only case that may quietly produce an
+    // empty document.
+    files.clear();
+    rename.mockClear();
+    const platform = await import("./platform");
+    vi.mocked(platform.readTextFile).mockRejectedValueOnce(new Error("no such file"));
+
+    const { broken } = await loadManifest("/docs/FaceTexture", ["a"]);
+
+    expect(broken).toBe("");
+    expect(rename).not.toHaveBeenCalled();
+  });
+
+  it("does not open the folder at all when the damaged file cannot be moved", async () => {
+    /* Starting clean over a manifest we could neither read nor set aside is the
+     * one outcome this path exists to prevent, so the failure travels up and
+     * the open fails loudly instead. */
+    files.clear();
+    rename.mockClear();
+    const platform = await import("./platform");
+    vi.mocked(platform.readTextFile).mockResolvedValueOnce("{ half a manifest");
+    rename.mockRejectedValueOnce(new Error("locked"));
+
+    await expect(loadManifest("/docs/FaceTexture", ["a"])).rejects.toThrow("locked");
+  });
+});
