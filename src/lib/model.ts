@@ -1304,6 +1304,11 @@ export function pruneDeadLayoutRefs(m: Manifest): number {
     for (const l of gone) {
       delete tile.text[l.id];
       delete tile.swap?.[l.id];
+      /* And where the tile put it. Keyed by layer id like the other two, so it
+         has to go with the layer for the same reason — and more sharply: live
+         copies keep the id they came from, so a Layout deleted and stamped
+         again would have brought every old placement back with it. */
+      delete tile.frame?.[l.id];
     }
     dropped += before - tile.layers.length;
   }

@@ -24,6 +24,7 @@
   import { TILE_H, TILE_W } from "./lib/bmp";
   import { cellIndexAt, cellsIn, isTyping, snapBox, type Guide } from "./lib/geometry";
   import {
+    applyCrop,
     buildGrid,
     cellAt,
     gridSize,
@@ -32,7 +33,7 @@
     snapScale,
     type Tagged,
   } from "./lib/scene";
-  import { framed, isLiveCopy, layerAsset, type Layer } from "./lib/model";
+  import { framed, isLiveCopy, layerAsset, layerText, type Layer } from "./lib/model";
 
   /* On while the placing tool is chosen in App's toolbar. The wall has no other
      mode, and that is deliberate — see the note on frameAt below. */
@@ -106,8 +107,13 @@
   function atRest(tileId: string, layerId: string): Layer | undefined {
     const layer = placeableOn(tileId).find((l) => l.id === layerId);
     if (!layer) return undefined;
+    const tile = app.manifest.tiles[tileId];
+    /* This tile's own wording, not the Layout's. A caption's box is measured
+       from the words in it, so a frame sized off the default sat at a fifth of
+       the width over a caption that fills the tile. */
+    if (layer.kind === "text") return { ...layer, text: layerText(tile?.text ?? {}, layer, tileId) };
     if (layer.kind !== "image") return layer;
-    const asset = layerAsset(app.manifest.tiles[tileId]?.swap ?? {}, layer);
+    const asset = layerAsset(tile?.swap ?? {}, layer);
     return asset ? { ...layer, asset } : undefined;
   }
 
@@ -115,11 +121,19 @@
    *  currently shows for that layer. */
   async function frameAt(tileId: string, layerId: string) {
     if (!canvas || !app.deps) return;
-    const base = atRest(tileId, layerId);
-    if (!base) return;
     const ids = visibleIds();
+    const base = atRest(tileId, layerId);
     const index = ids.indexOf(tileId);
-    if (index < 0) return;
+    /* Nothing to stand on: the tile was told to show no picture here, or it has
+       left the wall. The furniture goes before the return, or the frame stays
+       on the tile it was last on while the selection has moved to this one —
+       and the next drag then writes onto a tile nobody is pointing at. */
+    if (!base || index < 0) {
+      target = null;
+      dropFrameTools();
+      canvas.requestRenderAll();
+      return;
+    }
 
     const shown = framed(base, tileFrame(tileId, layerId));
     const cell = cellAt(index);
@@ -142,6 +156,15 @@
       shown.kind === "image"
         ? await fabric.FabricImage.fromURL(await app.deps.asset(shown.asset))
         : undefined;
+    /* Trimmed and flipped the way the renderer does it, or the frame is the
+       shape of the whole file rather than of the part on the tile — four times
+       too tall on a picture cropped to a strip — and the ghost shows pixels the
+       wall does not. Crop first, then measure: `scale` is the width of what is
+       left, which is the whole point of the crop/scale distinction. */
+    if (drawn && shown.kind === "image") {
+      applyCrop(drawn, shown.crop);
+      drawn.set({ flipX: !!shown.flipX, flipY: !!shown.flipY });
+    }
     const height = drawn ? width * ((drawn.height || 1) / (drawn.width || 1)) : size.h * TILE_H;
 
     dropFrameTools();

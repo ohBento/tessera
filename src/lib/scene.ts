@@ -339,14 +339,20 @@ export function textWidth(l: TextLayer): number {
  *  A picture answers with its width twice over: how tall it comes out depends
  *  on the pixels behind it, which are not in the manifest. The one caller that
  *  needs a picture's height has the decoded image in hand and takes it from
- *  there. */
+ *  there.
+ *
+ *  `w` is a fraction of tile width and `h` of tile height, which is what makes
+ *  the caption's fallback the awkward one: `size` is a fraction of tile *width*
+ *  (see textObject), so a line of it has to be carried across the aspect ratio
+ *  or the frame comes out 804/624 — 29% — too tall. `l.h` needs no such thing;
+ *  it is a height fraction already. */
 export const layerSize = (l: Layer): { w: number; h: number } =>
   l.kind === "image"
     ? { w: l.scale, h: l.scale }
     : l.kind === "shape"
       ? { w: l.w, h: l.h }
       : l.kind === "text"
-        ? { w: textWidth(l), h: l.h ?? l.size * LINE_HEIGHT }
+        ? { w: textWidth(l), h: l.h ?? (l.size * LINE_HEIGHT * TILE_W) / TILE_H }
         : { w: 1, h: 1 };
 
 /** The rectangle a caption with a fixed height is held to, in scene
@@ -1242,8 +1248,16 @@ export async function buildGrid(
        *
        * A cutter that is hidden stops cutting, exactly as in a Layout: the eye
        * has to mean the same thing everywhere, and something that is not there
-       * cannot be why half a picture is missing. */
-      const cutter = l.maskId ? own.find((x) => x.id === l.maskId) : undefined;
+       * cannot be why half a picture is missing.
+       *
+       * Framed like anything else, and easy to miss because a cutter never
+       * draws itself: taken raw, a shape the tile had placed cut the old hole
+       * and the drag did nothing at all — which for a badge (a block cut to a
+       * class icon) meant the tool wrote into the manifest and changed no
+       * pixel. */
+      const rawCutter = l.maskId ? own.find((x) => x.id === l.maskId) : undefined;
+      const cutter =
+        rawCutter && isLiveCopy(rawCutter) ? framed(rawCutter, frames[rawCutter.id]) : rawCutter;
       const cut = cutApplies(l, cutter) && !cutter!.hidden ? cutter : undefined;
       /* A class icon is paint wearing the artwork as its clipPath, and every
        * tile layer is about to be given the cell as its clipPath — Fabric

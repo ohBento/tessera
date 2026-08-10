@@ -1105,3 +1105,59 @@ describe("a caption held to a height", () => {
   });
 });
 
+describe("a tile's own placement of a cut layer", () => {
+  /* The badge is the pair the live shapes exist for: a block of paint wearing a
+   * class icon as its mask. The tile places the icon, and the icon is a cutter,
+   * which never draws itself — so the frame reaches the wall only through the
+   * hole it cuts. Taken raw, it cut the old hole and the drag changed nothing
+   * at all: a tool that wrote into the manifest and moved no pixel. */
+  const badge = async (frame?: { x: number; y: number; z: number; a: number }) => {
+    const m = manifest(1);
+    const id = order(m)[0];
+    const icon: ShapeLayer = {
+      ...newShapeLayer("icon", "Placeholder"),
+      id: "cutter",
+      x: 0.5,
+      y: 0.5,
+      w: 0.4,
+      h: 0.4,
+      live: true,
+      layoutId: "L1",
+    };
+    const block: ImageLayer = {
+      ...newImageLayer("block:#00ff00"),
+      id: "paint",
+      x: 0.5,
+      y: 0.5,
+      scale: 1,
+      maskId: icon.id,
+      live: true,
+      layoutId: "L1",
+    };
+    m.tiles[id].layers.push(icon, block);
+    if (frame) m.tiles[id].frame = { [icon.id]: frame };
+    const [bmp] = [...(await renderTiles(view(m), m, testDeps)).values()];
+    return bmp;
+  };
+
+  /** How much of the block survived the cut. */
+  const ink = (bmp: Uint8Array) => {
+    let n = 0;
+    for (let y = 0; y < TILE_H; y += 4)
+      for (let x = 0; x < TILE_W; x += 4) if (pixel(bmp, x, y)[1] > 128) n++;
+    return n;
+  };
+
+  it("moves the hole the mask cuts", async () => {
+    const [plain, moved] = [await badge(), await badge({ x: 0.25, y: 0, z: 1, a: 0 })];
+    expect(ink(plain)).toBeGreaterThan(0);
+    // No Buffer here — this runs in Chromium, not in node.
+    expect(moved.every((b, i) => b === plain[i])).toBe(false);
+  });
+
+  it("zooms it", async () => {
+    const [plain, bigger] = [await badge(), await badge({ x: 0, y: 0, z: 1.6, a: 0 })];
+    expect(ink(bigger)).toBeGreaterThan(ink(plain));
+  });
+});
+

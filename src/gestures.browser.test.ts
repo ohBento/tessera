@@ -25,6 +25,7 @@ import {
   newLayoutDoc,
   openLayout,
   setLayerField,
+  setTileAsset,
   visibleIds,
 } from "./lib/editor.svelte";
 import { emptyManifest } from "./lib/model";
@@ -310,6 +311,54 @@ describe("framing a picture on the wall", () => {
       expect((moved as { framing?: boolean }).framing).toBe(true);
       // One cell further along, not merely somewhere else.
       expect((moved.left ?? 0) - onFirst).toBeCloseTo(at(second).x - at(first).x, 3);
+    } finally {
+      await teardown();
+    }
+  });
+
+  it("takes the frame away when the tile it moved to shows nothing there", async () => {
+    /* "Show no picture on this tile" is a real answer, so the layer is still on
+     * the tile and still listed — there is simply nothing to stand on. The
+     * frame used to survive that: the tool bailed before clearing its own
+     * furniture, so the violet box stayed on the previous portrait while the
+     * selection had moved on, and the next drag wrote onto a tile nobody was
+     * pointing at. */
+    try {
+      await wall();
+
+      queuePick(await magentaSquare("bild"));
+      await newLayoutDoc("Leer");
+      await addLayoutImage();
+      const layout = openLayout()!;
+      const pic = layout.layers[0];
+      await setLayerField(pic.id, "perTile", true);
+
+      const [first, second] = app.folderIds;
+      await assignTileLayout(first, layout.id);
+      await assignTileLayout(second, layout.id);
+      // The second portrait is told to show none of it.
+      await setTileAsset(second, pic.id, "");
+      await closeLayoutDoc();
+      await until(
+        () => ((window as { tesseraWall?: Canvas }).tesseraWall?.getObjects().length ?? 0) > 0,
+        8000,
+        "the wall to come back with its tiles",
+      );
+      const wallCanvas = (window as unknown as { tesseraWall: Canvas }).tesseraWall;
+      const framesOn = () =>
+        wallCanvas.getObjects().filter((o: FabricObject) => (o as { framing?: boolean }).framing);
+
+      const at = (id: string) => cellAt(visibleIds().indexOf(id));
+      await clickScene(wallCanvas, at(first).x + TILE_W / 2, at(first).y + TILE_H / 2);
+      await until(() => !!byTitle("Place this on this tile"), 8000, "the tile's own row to open");
+      byTitle("Place this on this tile")!.click();
+      await until(() => framesOn().length === 1, 8000, "the stand-in to appear");
+
+      await clickScene(wallCanvas, at(second).x + TILE_W / 2, at(second).y + TILE_H * 0.9);
+      await until(() => app.selectedTiles[0] === second, 5000, "the second tile to be picked");
+      await until(() => framesOn().length === 0, 5000, "the frame to be taken down");
+      // And nothing was written behind our back onto the tile we left.
+      expect(app.manifest.tiles[first].frame?.[pic.id]).toBeUndefined();
     } finally {
       await teardown();
     }

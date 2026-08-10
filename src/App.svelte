@@ -1044,13 +1044,19 @@
      live layers; both are on this row already, so the button hands it the pair
      and switches the mode on rather than asking for three clicks in two places.
      Beside it the way back: the layer as the Layout placed it. -->
-{#snippet placeRow(tileId: string, layerId: string)}
+{#snippet placeRow(tileId: string, layer: Layer)}
+  {@const layerId = layer.id}
   {@const on =
     framing && app.selected === layerId && app.selectedTiles.length === 1 && app.selectedTiles[0] === tileId}
   <button
     class="swatch"
     class:on
-    title={on ? "Placing this on the wall — drag its frame" : "Place this on this tile"}
+    disabled={!!layer.hidden}
+    title={layer.hidden
+      ? "Switched off on this tile — nothing to place"
+      : on
+        ? "Placing this on the wall — drag its frame"
+        : "Place this on this tile"}
     onclick={() => {
       app.selectedTiles = [tileId];
       selectLayer(layerId);
@@ -1252,7 +1258,7 @@
             disabled={tileText(id, caption.id) === undefined}
             onclick={() => void clearTileText(id, caption.id)}>↺</button
           >
-          {@render placeRow(id, caption.id)}
+          {@render placeRow(id, caption)}
         </label>
       {/each}
 
@@ -1323,7 +1329,7 @@
                numbers beside them: the frame on the wall is where placing is
                done, and a row of fields here would ask why moving has them and
                everything else does not. -->
-          {@render placeRow(id, pic.id)}
+          {@render placeRow(id, pic)}
         </div>
       {/each}
 
@@ -1382,7 +1388,7 @@
             disabled={chosen === undefined}
             onclick={() => void clearTileAsset(id, badge.id)}>↺</button
           >
-          {@render placeRow(id, badge.id)}
+          {@render placeRow(id, badge)}
         </div>
       {/each}
     {/if}
