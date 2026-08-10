@@ -123,6 +123,8 @@
     unplace,
     tileText,
     visibleIds,
+    wearing,
+    removeLayoutFrom,
     toggleLayerHidden,
     toggleLayerLocked,
     toggleLayoutLayerHidden,
@@ -768,25 +770,66 @@
         /* Assigning used to be one dropdown per row — forty-four visits to
            give a wall one design. The layouts are the same library the
            sidebar lists; this is only a second way in, on the selection. */
+        /* Two rows rather than four per layout. With five designs the flat
+           list ran to twenty entries and off the bottom of the screen, and
+           adding "remove" would have doubled it again. Inside each submenu the
+           selection comes first and the whole wall after a rule, which is the
+           order the two are reached for in. */
         ...(layouts().length
           ? [
               { separator: true } as Item,
-              ...layouts().map((l) => ({
-                label:
-                  picked === 1 ? `Assign "${l.name}"` : `Assign "${l.name}" to ${picked} tiles`,
-                run: () => void assignLayoutToSelection(l.id),
-              })),
-              /* And the whole wall in one item, for the case the selection
-                 exists to serve: a second account's forty-four portraits, all
-                 wanting the same design. Counted as work left to do — a tile
-                 already wearing it is not offered a second stamp — so the
-                 number vanishes to nothing once the wall is dressed. */
-              ...layouts()
-                .filter((l) => remainingFor(l.id).length)
-                .map((l) => ({
-                  label: `Assign "${l.name}" to all ${remainingFor(l.id).length} remaining`,
-                  run: () => void assignLayoutToWall(l.id),
-                })),
+              {
+                label: "Assign layout",
+                items: [
+                  ...layouts().map((l) => ({
+                    label: picked === 1 ? `"${l.name}"` : `"${l.name}" to ${picked} tiles`,
+                    run: () => void assignLayoutToSelection(l.id),
+                  })),
+                  /* And the whole wall in one item, for the case the selection
+                     exists to serve: a second account's forty-four portraits,
+                     all wanting the same design. Counted as work left to do —
+                     a tile already wearing it is not offered a second stamp —
+                     so the number vanishes once the wall is dressed. */
+                  ...(layouts().some((l) => remainingFor(l.id).length)
+                    ? [{ separator: true } as Item]
+                    : []),
+                  ...layouts()
+                    .filter((l) => remainingFor(l.id).length)
+                    .map((l) => ({
+                      label: `"${l.name}" to all ${remainingFor(l.id).length} remaining`,
+                      run: () => void assignLayoutToWall(l.id),
+                    })),
+                ],
+              } as Item,
+              /* Named per layout, unlike the blunt "clear everything" below:
+                 a portrait can wear two designs, and taking the wrong one off
+                 is not something to discover afterwards. Only the designs
+                 actually on these tiles are offered — an item that would do
+                 nothing is worse than no item. */
+              {
+                label: "Remove layout",
+                disabled: !layouts().some((l) => wearing(l.id, app.selectedTiles).length),
+                items: [
+                  ...layouts()
+                    .filter((l) => wearing(l.id, app.selectedTiles).length)
+                    .map((l) => {
+                      const n = wearing(l.id, app.selectedTiles).length;
+                      return {
+                        label: n === 1 ? `"${l.name}"` : `"${l.name}" from ${n} tiles`,
+                        run: () => void removeLayoutFrom(l.id, [...app.selectedTiles]),
+                      };
+                    }),
+                  ...(layouts().some((l) => wearing(l.id, visibleIds()).length)
+                    ? [{ separator: true } as Item]
+                    : []),
+                  ...layouts()
+                    .filter((l) => wearing(l.id, visibleIds()).length)
+                    .map((l) => ({
+                      label: `"${l.name}" from all ${wearing(l.id, visibleIds()).length} on this wall`,
+                      run: () => void removeLayoutFrom(l.id, visibleIds()),
+                    })),
+                ],
+              } as Item,
             ]
           : []),
         /* The inverse of the Assign items above, and blunter than they are:
@@ -2040,17 +2083,19 @@
             </li>
           {/each}
         </ul>
-        <button
-          class="wide"
-          onclick={() => {
-          reveal("projects");
-          void newProjectFrom("");
-        }}
-          disabled={!freeCount() || !!app.busy}
-          title="Builds a wall from the picked tiles that no project has claimed"
-        >
-          + Project from selection{#if freeCount()}&nbsp;({freeCount()}){/if}
-        </button>
+        <!-- Inside its section too, for the same reason. `reveal` stays on the
+             two ways in from outside — the header button and the wall's own
+             menu — where the section may well be shut. -->
+        {#if open.has("projects")}
+          <button
+            class="wide"
+            onclick={() => void newProjectFrom("")}
+            disabled={!freeCount() || !!app.busy}
+            title="Builds a wall from the picked tiles that no project has claimed"
+          >
+            + Project from selection{#if freeCount()}&nbsp;({freeCount()}){/if}
+          </button>
+        {/if}
 
         <!-- One library across every project: a design fits characters from
              any account, and keeping a copy per wall would mean editing the
@@ -2129,16 +2174,19 @@
             </li>
           {/each}
         </ul>
-        <button
-          class="wide"
-          onclick={() => {
-            reveal("layouts");
-            void newLayoutDoc(`Layout ${layouts().length + 1}`);
-          }}
-          disabled={!app.dir || !!app.busy}
-        >
-          + New layout
-        </button>
+        <!-- Inside the section, like every other "+". It sat outside because
+             the list above is hidden with CSS rather than dropped, so the
+             button stayed on screen under a collapsed heading and offered to
+             add to a list nobody could see. -->
+        {#if open.has("layouts")}
+          <button
+            class="wide"
+            onclick={() => void newLayoutDoc(`Layout ${layouts().length + 1}`)}
+            disabled={!app.dir || !!app.busy}
+          >
+            + New layout
+          </button>
+        {/if}
 
         <!-- A wall put aside under a name, so it can be tried out and walked
              back from. Twenty kilobytes each — the assets and the vault copies

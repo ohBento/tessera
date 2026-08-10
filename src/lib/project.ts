@@ -39,6 +39,21 @@ export async function listTiles(dir: string) {
 
 export const tilePath = (dir: string, id: string) => join(dir, `${id}.bmp`);
 
+/** "YYYY-MM-DD hh:mm", or with seconds at 19 — on the clock in the room.
+ *
+ *  A snapshot is named after the moment it was taken, and `toISOString` names
+ *  it in UTC: a wall put aside at six in the evening in Berlin was filed as
+ *  four, and the two most recent snapshots read as older than they were. The
+ *  offset is subtracted before formatting rather than the parts assembled by
+ *  hand, which keeps the padding and the leap rules with the Date. */
+export function localStamp(len: 16 | 19 = 16) {
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60_000)
+    .toISOString()
+    .slice(0, len)
+    .replace("T", " ");
+}
+
 /** The document lined up with the folder, plus what that cost.
  *
  *  `lost` are the ids the folder no longer has that still carried work, and
@@ -67,7 +82,7 @@ export async function loadManifest(
     // Seconds in the name, unlike the one before a write to the game: two opens
     // inside the same minute are a double-click away, and the second one would
     // otherwise overwrite the first — which holds strictly more work.
-    snapshot = `Before folder cleanup ${new Date().toISOString().slice(0, 19).replace("T", " ")}`;
+    snapshot = `Before folder cleanup ${localStamp(19)}`;
     await writeSnapshot(
       dir,
       { name: snapshot, projectId: "" },

@@ -9,6 +9,8 @@ import {
   bakeMosaicInto,
   clearBases,
   deleteStampCascade,
+  isLiveCopy,
+  stampFamily,
   dissolveFolder,
   duplicateLayers,
   duplicateLayout,
@@ -81,6 +83,7 @@ import {
   hashTiles,
   loadFingerprints,
   loadManifest,
+  localStamp,
   pruneVault,
   vaultedIds,
   saveFingerprints,
@@ -547,8 +550,14 @@ export const tileFrame = (tileId: string, layerId: string): Frame | undefined =>
 export async function setTileFrame(tileId: string, layerId: string, f: Frame) {
   const tile = app.manifest.tiles[tileId];
   if (!tile) return;
+  /* Two statements, not `(tile.frame ??= {})[layerId] = f`. On a reactive proxy
+     that expression evaluates to the bare right-hand side rather than to the
+     proxied object, so the write lands outside the proxy and only reaches the
+     screen because `mutate` bumps the version afterwards. The compiler says so;
+     it is worth not relying on. */
   await mutate(() => {
-    (tile.frame ??= {})[layerId] = f;
+    tile.frame ??= {};
+    tile.frame[layerId] = f;
   });
 }
 
@@ -566,6 +575,42 @@ export const tileIcons = (tileId: string): ShapeLayer[] =>
   drawnOn(tileId).filter(
     (l): l is ShapeLayer => l.kind === "shape" && l.shape === "icon" && !!l.live,
   );
+
+/** How many of these tiles wear that Layout. What the menu counts before it
+ *  offers to take it off. */
+export const wearing = (layoutId: string, ids: string[]) =>
+  ids.filter((id) =>
+    (app.manifest.tiles[id]?.layers ?? []).some((l) => l.layoutId === layoutId && !isLiveCopy(l)),
+  );
+
+/** Takes one Layout off these tiles — the stamp and the live copies beside it,
+ *  and the per-tile wording, pictures and placements keyed to them.
+ *
+ *  The inverse of assigning, and it has to be as thorough: a stamp removed on
+ *  its own leaves captions drawing on the wall with no row to switch them off,
+ *  which is the fault `deleteStampCascade` was written for. One mutation, so
+ *  one Ctrl+Z puts the design back on all of them. */
+export async function removeLayoutFrom(layoutId: string, ids: string[]) {
+  const targets = wearing(layoutId, ids);
+  if (!targets.length) return;
+  await mutate(() => {
+    for (const id of targets) {
+      const tile = app.manifest.tiles[id];
+      const stamps = tile.layers.filter((l) => l.layoutId === layoutId && !isLiveCopy(l));
+      for (const stamp of stamps) {
+        for (const gone of stampFamily(tile.layers, stamp.id)) {
+          delete tile.text[gone.id];
+          delete tile.swap?.[gone.id];
+          delete tile.frame?.[gone.id];
+          delete tile.paint?.[gone.id];
+        }
+        deleteStampCascade(tile.layers, stamp.id);
+      }
+    }
+    clearAll();
+    app.error = `Removed from ${targets.length} tile(s)`;
+  });
+}
 
 /** The live shapes on one tile that are not class icons — the rectangles,
  *  ellipses and polygons a Layout keeps live.
@@ -647,8 +692,10 @@ export async function setTileAsset(tileId: string, layerId: string, asset: strin
   if (!tile) return;
   await mutate(() => {
     // The map is optional on Tile, so a manifest written before per-tile
-    // pictures existed has to grow one on first use.
-    (tile.swap ??= {})[layerId] = asset;
+    // pictures existed has to grow one on first use. Two statements — see
+    // setTileFrame for why the one-liner is a trap on a reactive proxy.
+    tile.swap ??= {};
+    tile.swap[layerId] = asset;
   });
 }
 
@@ -2125,7 +2172,7 @@ export async function saveToGame() {
   /* A restore point before the one action that overwrites the game's own
    * files. Nobody thinks to take one first, and this is the moment they would
    * wish they had. */
-  const stamp = new Date().toISOString().slice(0, 16).replace("T", " ");
+  const stamp = localStamp();
   /* And no write if it failed. The snapshot is the only way back from this
    * action, so going ahead without one turns a full disk into lost work. The
    * message takeSnapshot left in app.error stays, because the write that would

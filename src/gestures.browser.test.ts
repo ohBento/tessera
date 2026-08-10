@@ -28,7 +28,7 @@ import {
   setTileAsset,
   visibleIds,
 } from "./lib/editor.svelte";
-import { emptyManifest } from "./lib/model";
+import { emptyManifest, type TextLayer } from "./lib/model";
 import { queuePick, resetMockFiles, stashPickedFile } from "./lib/platform";
 import { cellAt } from "./lib/scene";
 import { TILE_H, TILE_W } from "./lib/bmp";
@@ -366,6 +366,66 @@ describe("framing a picture on the wall", () => {
     }
   });
 
+  it("keeps the ghost on top after the first drag", async () => {
+    /* The faint whole picture is the only thing to aim by when a mask hides
+     * most of what is being dragged. It showed for the first drag and never
+     * again: writing a placement rebuilds the wall, `buildGrid` adds its
+     * objects to a canvas the ghost survived on, and Fabric adds to the top —
+     * so from the second drag on the ghost lay under the tile's own artwork.
+     * The frame still looked right, because Fabric draws the active object's
+     * controls on the upper canvas whatever is buried below. */
+    try {
+      await wall();
+
+      queuePick(await magentaSquare("bild"));
+      await newLayoutDoc("Maskiert");
+      await addLayoutShape("icon", "Placeholder");
+      const icon = openLayout()!.layers[0];
+      await addLayoutImage();
+      const pic = openLayout()!.layers.find((l) => l.id !== icon.id)!;
+      await setLayerField(pic.id, "perTile", true);
+      await setLayerField(icon.id, "perTile", true);
+      await setLayerField(pic.id, "maskId", icon.id);
+
+      const tile = app.folderIds[0];
+      await assignTileLayout(tile, openLayout()!.id);
+      await closeLayoutDoc();
+      await until(
+        () => ((window as { tesseraWall?: Canvas }).tesseraWall?.getObjects().length ?? 0) > 0,
+        8000,
+        "the wall to come back with its tiles",
+      );
+      const wallCanvas = (window as unknown as { tesseraWall: Canvas }).tesseraWall;
+
+      const cell = cellAt(visibleIds().indexOf(tile));
+      await clickScene(wallCanvas, cell.x + TILE_W / 2, cell.y + TILE_H / 2);
+      await until(() => !!byTitle("Place this on this tile"), 8000, "the tile's own row to open");
+      byTitle("Place this on this tile")!.click();
+      await until(() => !!wallCanvas.getActiveObject(), 8000, "the stand-in to appear");
+
+      await dragObject(wallCanvas, wallCanvas.getActiveObject()!, 40, 25);
+      await until(() => !!app.manifest.tiles[tile].frame?.[pic.id], 5000, "the placement to be written");
+      /* The rebuild the write sets off is asynchronous, and it is the rebuild
+         that does the damage — asserting before it lands measures the canvas
+         the drag left behind and passes on a wall that is about to be wrong. */
+      await until(() => !app.busy, 5000, "the wall to settle");
+      await new Promise((r) => setTimeout(r, 400));
+
+      /* Above everything the rebuild put back — which is what "visible" means
+         on a canvas. The stand-in is the last object; the ghost is under it and
+         over the wall. */
+      const objects = wallCanvas.getObjects();
+      const stand = objects.findIndex((o: FabricObject) => (o as { framing?: boolean }).framing);
+      const ghost = objects.findIndex(
+        (o: FabricObject) => (o as { keep?: boolean }).keep && !(o as { framing?: boolean }).framing,
+      );
+      expect(stand).toBe(objects.length - 1);
+      expect(ghost).toBe(objects.length - 2);
+    } finally {
+      await teardown();
+    }
+  });
+
   it("takes the frame away when the tile it moved to shows nothing there", async () => {
     /* "Show no picture on this tile" is a real answer, so the layer is still on
      * the tile and still listed — there is simply nothing to stand on. The
@@ -492,6 +552,73 @@ describe("what a gesture does to a mask", () => {
       await scaleObject(canvas, obj, "br", 60, 60);
       await until(() => countColour(canvas, GREEN) !== before, 3000).catch(() => {});
       expect(countColour(canvas, GREEN)).toBeGreaterThan(before);
+    } finally {
+      await teardown();
+    }
+  });
+
+  it("keeps a caption's cut whole while the caption is dragged", async () => {
+    /* Words as a stencil. Dragging the caption drags the hole with it — that is
+     * what syncMasks is for — and the cut must stay the same size on the way:
+     * it may land somewhere else, but letters do not lose their strokes in
+     * transit. Reported as "it partly disappears, and only comes back on
+     * Update". */
+    try {
+      const canvas = await editor();
+      await addLayoutText();
+      const words = openLayout()!.layers[0];
+      /* Centred and small, and put back in the middle after the wording
+         changes it. A left-aligned caption holds its left edge while its box
+         grows, so setting the text alone walks the centre right — correct, and
+         it swamped the first version of this test. */
+      await setLayerField(words.id, "align", "center");
+      await setLayerField(words.id, "text", "MM");
+      await setLayerField(words.id, "size", 0.12);
+      await setLayerField(words.id, "x", 0.5);
+      await setLayerField(words.id, "y", 0.5);
+      await addLayoutShape("rect");
+      const block = openLayout()!.layers.find((l) => l.id !== words.id)!;
+      await setLayerField(block.id, "fill", "#00ff00");
+      /* The block fills the tile, so nothing the drag does can carry a letter
+         off its edge — a smaller cut then means the stencil went wrong, not
+         that the words left the paint. */
+      await setLayerField(block.id, "w", 1);
+      await setLayerField(block.id, "h", 1);
+      await setLayerField(block.id, "maskId", words.id);
+      await until(() =>
+        canvas.getObjects().some((o: FabricObject) => !!o.clipPath?.absolutePositioned),
+      );
+      const stencil = canvas
+        .getObjects()
+        .find((o) => (o as { layerId?: string }).layerId === words.id)!;
+
+      const atRest = countColour(canvas, GREEN);
+      expect(atRest).toBeGreaterThan(0);
+      const before = stencil.getCenterPoint();
+      const originBefore = { x: stencil.originX, y: stencil.originY, w: stencil.width };
+      let worst = atRest;
+      await dragObject(canvas, stencil, 24, 16, () => {
+        worst = Math.min(worst, countColour(canvas, GREEN));
+      });
+      /* The letters keep their weight all the way. A tenth of slack for the
+         antialiased edges moving over different background, and no more —
+         what this pins is a cut that thins out or vanishes mid-drag. */
+      /* A tenth of slack for antialiased edges over different background, and
+         no more: what this pins is a cut that thins out or vanishes mid-drag. */
+      expect(worst).toBeGreaterThan(Math.round(atRest * 0.9));
+      expect(countColour(canvas, GREEN)).toBeGreaterThan(Math.round(atRest * 0.9));
+
+      /* And the hole went exactly where the hand did. Measured on the canvas
+         and in the model, because the first version of this test moved the
+         caption 224px and blamed the drag: a left-aligned caption holds its
+         left edge while its box grows, so setting the wording had walked its
+         centre right long before any mouse came near it. */
+      const centre = stencil.getCenterPoint();
+      expect(centre.x - before.x).toBeCloseTo(24, -0.5);
+      expect(centre.y - before.y).toBeCloseTo(16, -0.5);
+      const now = openLayout()!.layers.find((l) => l.id === words.id)!;
+      expect((now.x - 0.5) * TILE_W).toBeCloseTo(24, -0.5);
+      expect(originBefore.x).toBe("center");
     } finally {
       await teardown();
     }

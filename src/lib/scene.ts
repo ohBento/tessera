@@ -1349,8 +1349,18 @@ export async function buildGrid(
     }
   }
 
-  canvas.remove(...canvas.getObjects().filter((o) => !(o as { keep?: boolean }).keep));
+  /* Foreign objects stay, and stay on top. Fabric adds to the end of the list,
+     so leaving them where they were buried them under the wall the moment it
+     was rebuilt: the placing tool's ghost — the faint whole picture you aim by
+     when a mask hides most of what you are dragging — showed for the first drag
+     and never again, because the first drag is the first rebuild. Its frame
+     looked fine throughout, Fabric drawing an active object's controls on the
+     upper canvas whatever is buried below it. Taken off and put back last, in
+     their own order. */
+  const kept = canvas.getObjects().filter((o) => (o as { keep?: boolean }).keep);
+  canvas.remove(...canvas.getObjects());
   for (const obj of out) canvas.add(obj);
+  for (const obj of kept) canvas.add(obj);
   canvas.renderAll();
 }
 

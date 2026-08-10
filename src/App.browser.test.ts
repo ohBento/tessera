@@ -50,6 +50,9 @@ import {
   deleteLayoutDoc,
   deleteLayoutLayers,
   setTileFrame,
+  setTileText,
+  removeLayoutFrom,
+  wearing,
   stripSelectedTiles,
   saveToGame,
   snapshots,
@@ -851,6 +854,51 @@ describe("the wall", () => {
     expect(archived()).toContain(a);
     // And its placement went with the layers it belonged to.
     expect(app.manifest.tiles[a].frame).toBeUndefined();
+  });
+
+  it("takes one layout off the tiles that wear it, and nothing else", async () => {
+    /* The inverse of assigning, and it has to be as thorough. A stamp removed
+     * on its own leaves the captions and logos the Layout keeps live beside it
+     * drawing on the wall with no row to switch them off — the fault
+     * deleteStampCascade exists for — and the tile's own wording, pictures and
+     * placements are keyed to those same ids.
+     *
+     * And it takes only what was asked for: a second design on the same tile
+     * stays, which is the whole reason the menu names the layout rather than
+     * offering one blunt "clear". */
+    const [a, b] = app.folderIds;
+    await newLayoutDoc("Weg");
+    await addLayoutText();
+    const doomed = openLayout()!;
+    const caption = doomed.layers[0];
+    await setLayerField(caption.id, "perTile", true);
+    await closeLayoutDoc();
+
+    await newLayoutDoc("Bleibt");
+    const keeper = openLayout()!;
+    await addLayoutShape("rect");
+    await closeLayoutDoc();
+
+    for (const id of [a, b]) {
+      await assignTileLayout(id, doomed.id);
+      await assignTileLayout(id, keeper.id);
+    }
+    await until(() => tileLayers(a).length === 3);
+    await setTileText(a, caption.id, "Nachtklinge");
+    await setTileFrame(a, caption.id, { x: 0.1, y: 0, z: 1, a: 0 });
+    expect(wearing(doomed.id, [a, b])).toEqual([a, b]);
+
+    await removeLayoutFrom(doomed.id, [a]);
+
+    // Gone from the one asked for, stamp and live caption together.
+    expect(tileLayers(a).some((l) => l.layoutId === doomed.id)).toBe(false);
+    // And its wording and placement with it — both keyed by the caption's id.
+    expect(app.manifest.tiles[a].text[caption.id]).toBeUndefined();
+    expect(app.manifest.tiles[a].frame?.[caption.id]).toBeUndefined();
+    // The other design on the same tile is untouched.
+    expect(tileLayers(a).some((l) => l.layoutId === keeper.id)).toBe(true);
+    // And so is the tile that was not named.
+    expect(wearing(doomed.id, [a, b])).toEqual([b]);
   });
 
   it("deleting a stamp takes its live caption with it", async () => {
