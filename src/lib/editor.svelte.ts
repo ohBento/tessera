@@ -52,6 +52,7 @@ import {
   resolveLayers,
   shiftLayer,
   stripTile,
+  walkLayers,
   stampInto,
   swapPlaced,
   takeOutOfFolder,
@@ -1492,12 +1493,23 @@ export async function applyLayoutTransform(
    * in — subtract it again or the layer jumps by the group's offset on the
    * first drag after grouping. */
   const shift = nestingShift(layout.layers, layerId) ?? { dx: 0, dy: 0 };
+  /* A stencil rebuilds the sheet even on a plain move. Everything else may skip
+     it — Fabric has already moved the very object that was dragged, so tearing
+     the scene down would redraw what is already right — but a stencil does not
+     draw itself: what it changes is the hole in something else, and that hole
+     is a second object kept in step by hand while the gesture is open
+     (LayoutCanvas.syncMasks). Reported from a real Layout, filmed: the words
+     move and the cut stays behind until something rebuilds, and "Update stamps"
+     was simply the nearest button that does. The cause of the drift is not
+     found; this makes the release the moment it is settled rather than the
+     moment it is left wrong, and costs one rebuild per mask drag. */
+  const cuts = [...walkLayers(layout.layers)].some((l) => l.maskId === layerId);
   await mutate(() => {
     layer.x = patch.x - shift.dx;
     layer.y = patch.y - shift.dy;
     layer.rotation = patch.rotation;
     resize(layer, patch);
-  }, scaled(patch), gesture);
+  }, scaled(patch) || cuts, gesture);
 }
 
 /** Ends the current undo run, so the next edit starts a new step. The one

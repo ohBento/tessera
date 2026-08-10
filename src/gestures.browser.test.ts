@@ -654,16 +654,24 @@ describe("what a gesture does to a mask", () => {
       /* The reported Layout, to the number: Impact at 81px in a 42x714 box,
          punched out of a 138x804 strip of paint with rounded corners. */
       const caption = openLayout()!.layers[0];
-      await setLayerField(caption.id, "text", "Descr");
+      await setLayerField(caption.id, "text", "T\nE\nX\nT");
       await setLayerField(caption.id, "font", "Impact");
-      await setLayerField(caption.id, "size", 81 / TILE_W);
-      await setLayerField(caption.id, "w", 42 / TILE_W);
-      await setLayerField(caption.id, "h", 714 / TILE_H);
+      await setLayerField(caption.id, "italic", true);
+      /* Left-aligned, which is the ingredient every earlier attempt was missing
+         — and the one place in this app where the width of a caption decides
+         where it sits. Straight off the reported manifest, along with the rest
+         of these numbers. */
+      await setLayerField(caption.id, "align", "left");
+      await setLayerField(caption.id, "size", 0.130597014925373);
+      await setLayerField(caption.id, "w", 0.08471058593347748);
+      await setLayerField(caption.id, "h", 0.8881571666073222);
+      await setLayerField(caption.id, "x", 0.11039510606528684);
       await addLayoutShape("rect");
       const block = openLayout()!.layers.find((l) => l.id !== caption.id)!;
       await setLayerField(block.id, "fill", "#00ff00");
-      await setLayerField(block.id, "w", 138 / TILE_W);
+      await setLayerField(block.id, "w", 0.2207902121305737);
       await setLayerField(block.id, "h", 1);
+      await setLayerField(block.id, "x", 0.11039510606528684);
       await setLayerField(block.id, "cornerRadius", 0.36);
       await setLayerField(block.id, "maskId", caption.id);
       // Inverted: the letters are punched out of the paint rather than filled
@@ -745,6 +753,7 @@ describe("what a gesture does to a mask", () => {
       expect(box.left + box.width / 2).toBeCloseTo(heart.x, -0.5);
       expect(box.top + box.height / 2).toBeCloseTo(heart.y, -0.5);
 
+
       const mid = stencil.getCenterPoint();
       const dpr = canvas.getRetinaScaling();
       const vt = canvas.viewportTransform;
@@ -816,6 +825,48 @@ describe("what a gesture does to a mask", () => {
       expect(now.caption - was.caption).toBeGreaterThan(10);
       expect(now.block).toBeCloseTo(was.block, -0.5);
       expect(canvas.getActiveObject()).toBe(objectFor(canvas, caption.id));
+    } finally {
+      await teardown();
+    }
+  });
+
+  it("rebuilds the sheet when a stencil is let go, and not when anything else is", async () => {
+    /* A plain move normally skips the rebuild: Fabric has already moved the
+     * very object that was dragged, so tearing the scene down would redraw what
+     * is already right. A stencil is the exception. It does not draw itself —
+     * what it changes is a hole in something else, and that hole is a second
+     * object kept in step by hand while the gesture is open. Filmed on a real
+     * Layout: the words move and the cut stays behind until something rebuilds,
+     * and "Update stamps" was only the nearest button that does one.
+     *
+     * The drift itself is still unexplained. This settles the canvas at the
+     * release instead of leaving it wrong, for one rebuild per mask drag. */
+    try {
+      const canvas = await editor();
+      await addLayoutText();
+      const words = openLayout()!.layers[0];
+      await setLayerField(words.id, "text", "MM");
+      await addLayoutShape("rect");
+      const block = openLayout()!.layers.find((l) => l.id !== words.id)!;
+      await setLayerField(block.id, "maskId", words.id);
+      await until(() =>
+        canvas.getObjects().some((o: FabricObject) => !!o.clipPath?.absolutePositioned),
+      );
+
+      const before = app.version;
+      await dragObject(canvas, objectFor(canvas, words.id)!, 20, 0);
+      await until(() => app.version > before, 5000, "the sheet to be rebuilt");
+
+      /* And the layer it cuts is not a stencil, so it still travels for free —
+         the exception has to stay an exception or every drag pays for it. */
+      const quiet = app.version;
+      await dragObject(canvas, objectFor(canvas, block.id)!, 20, 0);
+      await until(
+        () => findLayer(openLayout()!.layers, block.id)!.x !== 0.5,
+        5000,
+        "the plain move to be written",
+      );
+      expect(app.version).toBe(quiet);
     } finally {
       await teardown();
     }
