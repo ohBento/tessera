@@ -617,14 +617,24 @@ describe("what a gesture does to a mask", () => {
     try {
       const canvas = await editor();
       await addLayoutText();
+      /* The reported Layout, to the number: Impact at 81px in a 42x714 box,
+         punched out of a 138x804 strip of paint with rounded corners. */
       const caption = openLayout()!.layers[0];
-      await setLayerField(caption.id, "text", "TEXT");
-      await setLayerField(caption.id, "w", 0.07);
-      await setLayerField(caption.id, "h", 0.9);
+      await setLayerField(caption.id, "text", "Descr");
+      await setLayerField(caption.id, "font", "Impact");
+      await setLayerField(caption.id, "size", 81 / TILE_W);
+      await setLayerField(caption.id, "w", 42 / TILE_W);
+      await setLayerField(caption.id, "h", 714 / TILE_H);
       await addLayoutShape("rect");
       const block = openLayout()!.layers.find((l) => l.id !== caption.id)!;
       await setLayerField(block.id, "fill", "#00ff00");
+      await setLayerField(block.id, "w", 138 / TILE_W);
+      await setLayerField(block.id, "h", 1);
+      await setLayerField(block.id, "cornerRadius", 0.36);
       await setLayerField(block.id, "maskId", caption.id);
+      // Inverted: the letters are punched out of the paint rather than filled
+      // with it, which is the arrangement the report came from.
+      await setLayerField(block.id, "maskInvert", true);
       await until(() =>
         canvas.getObjects().some((o: FabricObject) => !!o.clipPath?.absolutePositioned),
       );
@@ -633,12 +643,47 @@ describe("what a gesture does to a mask", () => {
       const stencil = canvas
         .getObjects()
         .find((o) => (o as { layerId?: string }).layerId === caption.id)!;
-      const before = { left: cut.clipPath!.left ?? 0, top: cut.clipPath!.top ?? 0 };
-
+      const read = () => {
+        const c = cut.clipPath!;
+        return {
+          left: Math.round(c.left ?? 0),
+          top: Math.round(c.top ?? 0),
+          sx: Number((c.scaleX ?? 1).toFixed(3)),
+          sy: Number((c.scaleY ?? 1).toFixed(3)),
+          w: Math.round(c.width ?? 0),
+        };
+      };
+      const before = read();
       await dragObject(canvas, stencil, 1, 0);
-      const after = { left: cut.clipPath!.left ?? 0, top: cut.clipPath!.top ?? 0 };
-      expect(after.left - before.left).toBeCloseTo(1, -0.5);
-      expect(after.top - before.top).toBeCloseTo(0, -0.5);
+      const after = read();
+      /* The hole is wherever the stencil is, to the pixel. Measured against the
+         stencil rather than against the nudge, and that distinction is the
+         finding: a one-pixel nudge of this caption lands it six pixels to the
+         *left*, and the hole goes with it. So the mask bookkeeping is sound and
+         something in the drag is not — which is the fault the recording shows,
+         one layer further down than it looked. */
+      expect(after.left).toBeCloseTo(stencil.getCenterPoint().x, -0.5);
+      expect(after.top).toBeCloseTo(stencil.getCenterPoint().y, -0.5);
+      /* And at the size it was. The same bookkeeping copies the stencil's scale
+         onto the hole, and the stencil on canvas is not built the way the hole
+         is — a class icon's stencil once sat at 0.22 at rest and was handed a 1
+         on the first mousemove, which made its mask four and a half times too
+         big. Whatever the equivalent is for a caption belongs here. */
+      expect({ sx: after.sx, sy: after.sy }).toEqual({ sx: before.sx, sy: before.sy });
+
+      /* And the paint keeps its shape through a drag the length of the reported
+         one. Inverted, so this counts the strip minus the letters: it grows if
+         the holes shrink and shrinks if they spread. Either way it must not
+         move much — 23px sideways inside a strip 138 wide changes what the
+         letters sit over, not how much of the strip is left. */
+      const paint = () => countColour(canvas, GREEN);
+      const still = paint();
+      let widest = still;
+      await dragObject(canvas, stencil, 22, 0, () => {
+        widest = Math.max(widest, paint());
+      });
+      expect(widest).toBeLessThan(Math.round(still * 1.1));
+      expect(paint()).toBeLessThan(Math.round(still * 1.1));
     } finally {
       await teardown();
     }
