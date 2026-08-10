@@ -25,6 +25,7 @@ import {
   moveToProject,
   nameInStack,
   layerLabel,
+  isGradient,
   layoutFingerprint,
   layoutNeedsRestamp,
   nestingShift,
@@ -64,6 +65,7 @@ import {
   type Manifest,
   type Project,
   type ShapeKind,
+  type Paint,
   type ShapeLayer,
   type TextLayer,
 } from "./model";
@@ -565,11 +567,62 @@ export const tileIcons = (tileId: string): ShapeLayer[] =>
     (l): l is ShapeLayer => l.kind === "shape" && l.shape === "icon" && !!l.live,
   );
 
+/** The live shapes on one tile that are not class icons — the rectangles,
+ *  ellipses and polygons a Layout keeps live.
+ *
+ *  They have no per-tile *content*, which is why they had no row here and no
+ *  way into the placing tool: the block of a badge could be moved by nothing
+ *  and coloured by nothing while the icon cutting it could be moved. They own a
+ *  colour now, and the row that carries it carries the place button too. */
+export const tileShapes = (tileId: string): ShapeLayer[] =>
+  drawnOn(tileId).filter(
+    (l): l is ShapeLayer => l.kind === "shape" && l.shape !== "icon" && !!l.live,
+  );
+
 /** This tile's picture for a live image layer — or its class for a live icon
  *  layer, which shares the map — or undefined when it shows the layer's own.
  *  "" is a choice, not an absence: nothing here. */
 export const tileAsset = (tileId: string, layerId: string): string | undefined =>
   app.manifest.tiles[tileId]?.swap?.[layerId];
+
+/** This tile's own fill for a live shape, or undefined when it wears the
+ *  layer's. */
+export const tilePaint = (tileId: string, layerId: string): Paint | undefined =>
+  app.manifest.tiles[tileId]?.paint?.[layerId];
+
+/** Paints this tile's copy of a shared shape. */
+export async function setTilePaint(tileId: string, layerId: string, fill: Paint) {
+  const tile = app.manifest.tiles[tileId];
+  if (!tile) return;
+  await mutate(() => {
+    tile.paint ??= {};
+    tile.paint[layerId] = fill;
+  });
+}
+
+/** Back to the colour the Layout gave it. */
+export async function clearTilePaint(tileId: string, layerId: string) {
+  const tile = app.manifest.tiles[tileId];
+  if (!tile?.paint?.[layerId]) return;
+  await mutate(() => delete tile.paint![layerId]);
+}
+
+/** Every flat colour a live shape wears somewhere on this wall, newest layer
+ *  last — what the swatches offer, so the second tile is a click rather than a
+ *  trip through the picker.
+ *
+ *  Flat colours only: a gradient has no swatch that would tell you what it is,
+ *  and picking one out of a row of squares that all look like a smear is not a
+ *  choice anybody can make. The layer's own is always first. */
+export const tilePaintChoices = (tileId: string, layerId: string): string[] => {
+  const layer = tileShapes(tileId).find((l) => l.id === layerId);
+  const seen = new Set<string>();
+  if (layer && !isGradient(layer.fill)) seen.add(layer.fill);
+  for (const id of app.folderIds)
+    for (const paint of Object.values(app.manifest.tiles[id]?.paint ?? {}))
+      if (!isGradient(paint)) seen.add(paint);
+  return [...seen];
+};
 
 /** Every picture already in play for this layer, newest last — the gallery.
  *

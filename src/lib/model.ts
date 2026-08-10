@@ -373,6 +373,15 @@ export type Tile = {
    *  Layout still owns where the frame is and how big — the mask defines that —
    *  and what moves is the picture inside it, which is the tile's own. */
   frame?: Record<string, Frame>;
+  /** Fill per shared shape layer — the same bargain as a picture's, one kind
+   *  over: the Layout owns the form and where it sits, the tile owns what
+   *  colour it is. A whole `Paint`, so a tile can answer a gradient with a flat
+   *  colour and the other way round.
+   *
+   *  Its own map rather than a third meaning for `swap`, which holds strings:
+   *  a gradient is an object, and widening that map would touch every reader of
+   *  it for one new kind. Optional, like the two above. */
+  paint?: Record<string, Paint>;
   /** Put away: out of Unsorted, into the archive, still on disk and still
    *  carrying whatever was made for it. Absent is the ordinary state — see
    *  archivedIds, and setArchived for why it is only ever true on a tile no
@@ -743,6 +752,7 @@ export function stripTile(t: Tile) {
   t.text = {};
   delete t.swap;
   delete t.frame;
+  delete t.paint;
 }
 
 export const emptyManifest = (): Manifest => ({
@@ -1071,8 +1081,14 @@ export const layerAsset = (swaps: Record<string, string>, layer: ImageLayer) =>
 
 /** A tile's own placement of a shared layer: a nudge, a zoom and a turn, all
  *  relative to what the Layout asked for. Absent is the ordinary state and
- *  means "as the Layout placed it". */
-export type Frame = { x: number; y: number; z: number; a: number };
+ *  means "as the Layout placed it".
+ *
+ *  `zh` is the second axis, and shapes are the only kind that has one. A
+ *  portrait stretched out of proportion on one tile of forty-four is a mistake
+ *  every time; a bar drawn longer on one is a decision. Absent means "the same
+ *  as `z`", which is what every placement written before this stored and what
+ *  every other kind still means. */
+export type Frame = { x: number; y: number; z: number; a: number; zh?: number };
 
 export const NO_FRAME: Frame = { x: 0, y: 0, z: 1, a: 0 };
 
@@ -1092,7 +1108,7 @@ export function framed<L extends Layer>(l: L, f: Frame | undefined): L {
     l.kind === "image"
       ? { scale: l.scale * f.z }
       : l.kind === "shape"
-        ? { w: l.w * f.z, h: l.h * f.z }
+        ? { w: l.w * f.z, h: l.h * (f.zh ?? f.z) }
         : {};
   // The generic is the promise that a framed layer is the kind it went in as;
   // TypeScript cannot see that through a spread, hence the one cast.
@@ -1108,6 +1124,15 @@ export function framed<L extends Layer>(l: L, f: Frame | undefined): L {
  *  nothing to carry. */
 export const layerIcon = (swaps: Record<string, string>, layer: ShapeLayer) =>
   swaps[layer.id] ?? layer.icon;
+
+/** What colour one tile paints a live shape, or the layer's own.
+ *
+ *  `??` for the same reason as everywhere else in this family: an override is
+ *  absent only when its key is absent. There is no "" here to mean "none" — a
+ *  shape with no fill is a shape the Layout drew that way, and a tile saying so
+ *  would be saying nothing at all. */
+export const layerPaint = (paints: Record<string, Paint>, layer: ShapeLayer) =>
+  paints[layer.id] ?? layer.fill;
 
 /** A layer a Layout keeps live on the tiles instead of baking into its stamp.
  *  Text carries its own wording per tile, an image its own picture — the same
@@ -1342,11 +1367,13 @@ export function pruneDeadLayoutRefs(m: Manifest): number {
     for (const l of gone) {
       delete tile.text[l.id];
       delete tile.swap?.[l.id];
-      /* And where the tile put it. Keyed by layer id like the other two, so it
-         has to go with the layer for the same reason — and more sharply: live
-         copies keep the id they came from, so a Layout deleted and stamped
-         again would have brought every old placement back with it. */
+      /* And where the tile put it, and what colour it painted it. Keyed by
+         layer id like the other two, so they have to go with the layer for the
+         same reason — and more sharply: live copies keep the id they came from,
+         so a Layout deleted and stamped again would have brought every old
+         placement and colour back with it. */
       delete tile.frame?.[l.id];
+      delete tile.paint?.[l.id];
     }
     dropped += before - tile.layers.length;
   }

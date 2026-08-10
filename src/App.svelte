@@ -111,6 +111,11 @@
     tileIcons,
     tileImages,
     tileLayers,
+    tilePaint,
+    tilePaintChoices,
+    tileShapes,
+    setTilePaint,
+    clearTilePaint,
     shelfIds,
     snapshots,
     takeSnapshot,
@@ -131,6 +136,7 @@
   import { savePending } from "./lib/project";
   import {
     findLayer,
+    isGradient,
     isLiveCopy,
     layerLabel,
     layerShows,
@@ -1400,6 +1406,45 @@
             onclick={() => void clearTileAsset(id, badge.id)}>↺</button
           >
           {@render placeRow(id, badge)}
+        </div>
+      {/each}
+
+      <!-- The shapes a Layout keeps live. They carry no per-tile content, so
+           they had no row at all — which left the block of a badge unreachable
+           while the icon cutting it could be moved. What a tile owns here is
+           the colour, and the row that carries it carries the way into the
+           placing tool too. -->
+      {#each tileShapes(id) as shape (shape.id)}
+        {@const chosen = tilePaint(id, shape.id)}
+        <p class="sub">{layerLabel(shape)}</p>
+        <div class="gallery indent">
+          {#each tilePaintChoices(id, shape.id) as colour (colour)}
+            <button
+              class="swatch flat"
+              class:on={!isGradient(chosen ?? shape.fill) && (chosen ?? shape.fill) === colour}
+              style="background: {colour}"
+              title={colour === shape.fill ? "The layer's own colour" : `Paint it ${colour}`}
+              aria-label={colour}
+              onclick={() => void setTilePaint(id, shape.id, colour)}
+            ></button>
+          {/each}
+          <!-- The browser's picker, as the "+" that feeds the row — the same
+               place the picture gallery puts its file dialog. -->
+          <label class="swatch pick" title="Pick another colour for this tile">
+            +
+            <input
+              type="color"
+              value={isGradient(chosen ?? shape.fill) ? "#ffffff" : (chosen ?? shape.fill)}
+              oninput={(e) => void setTilePaint(id, shape.id, e.currentTarget.value)}
+            />
+          </label>
+          <button
+            class="swatch"
+            title="Use the layer's own colour again"
+            disabled={chosen === undefined}
+            onclick={() => void clearTilePaint(id, shape.id)}>↺</button
+          >
+          {@render placeRow(id, shape)}
         </div>
       {/each}
     {/if}
@@ -3066,6 +3111,31 @@
   }
   .swatch.none {
     color: #8f88a8;
+  }
+  /* A colour fills its swatch edge to edge — the padding that keeps a picture
+     off the border would show the chequerboard behind it and make every colour
+     look half transparent. */
+  .swatch.flat {
+    padding: 0;
+  }
+  /* The picker sits in a label because a colour input has to be clicked
+     through; the input itself is invisible and the label is the swatch.
+     `border-box` and the border spelled out, because every other swatch is a
+     button and inherits both — without them the label came out 44px beside a
+     row of 40s. */
+  .swatch.pick {
+    position: relative;
+    box-sizing: border-box;
+    border: 1px solid #3a444c;
+    border-radius: 3px;
+    cursor: pointer;
+    color: #8f88a8;
+  }
+  .swatch.pick input {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
   }
   /* The gallery's label and the wording field's label name the same kind of
      thing — a layer on this tile — so they are set the same and start on the

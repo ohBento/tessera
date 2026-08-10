@@ -18,6 +18,7 @@ import {
   isLiveCopy,
   framed,
   layerAsset,
+  layerPaint,
   layerShows,
   offLayouts,
   layerIcon,
@@ -1206,6 +1207,8 @@ export async function buildGrid(
     const swaps = m.tiles[id]?.swap ?? {};
     // Which part of its picture this tile shows — see framed().
     const frames = m.tiles[id]?.frame ?? {};
+    // And what colour it paints a shape — see layerPaint().
+    const paints = m.tiles[id]?.paint ?? {};
     /* A tile can carry a cutter now: a per-tile layer that is masked brings the
      * shape along, because the Layout it came from is not there to look it up
      * in. Same rule as in a Layout — a shape that is cutting something has
@@ -1236,8 +1239,14 @@ export async function buildGrid(
              * bargain: the Layout places and colours the icon once, each
              * portrait says which class it is. */
             raw.kind === "shape" && raw.shape === "icon" && raw.live
-            ? { ...raw, icon: layerIcon(swaps, raw) }
-            : raw,
+            ? { ...raw, icon: layerIcon(swaps, raw), fill: layerPaint(paints, raw) }
+            : /* And this tile's own colour, where a shape has one. An icon
+               * takes it too — it is a shape wearing artwork, and a wall where
+               * each portrait's badge carries its own class colour is the
+               * reason to ask for this at all. */
+              raw.kind === "shape" && raw.live
+              ? { ...raw, fill: layerPaint(paints, raw) }
+              : raw,
         /* isLiveCopy and not `raw.live`: a caption is live whether or not it
          * carries the flag — the ones stamped before the flag existed have
          * none — and a layer the tile owns outright has nothing to differ

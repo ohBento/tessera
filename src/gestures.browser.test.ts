@@ -316,6 +316,56 @@ describe("framing a picture on the wall", () => {
     }
   });
 
+  it("gives a live shape a row of its own, and lets one axis go", async () => {
+    /* A shape carries no per-tile content, so it had no row in the tile list —
+     * and with no row there was no way into the tool. For the badge, that meant
+     * the icon cutting the block could be placed and the block itself could
+     * not. It owns a colour now, and the row that carries the colour carries
+     * the way in.
+     *
+     * And a side handle does what it shows: a bar drawn longer on one portrait
+     * is a decision, unlike a face stretched on one, so `freeScale` decides who
+     * gets the handles and `zh` carries the result. */
+    try {
+      await wall();
+
+      await newLayoutDoc("Balken");
+      await addLayoutShape("rect");
+      const layout = openLayout()!;
+      const bar = layout.layers[0];
+      await setLayerField(bar.id, "perTile", true);
+
+      const tile = app.folderIds[0];
+      await assignTileLayout(tile, layout.id);
+      await closeLayoutDoc();
+      await until(
+        () => ((window as { tesseraWall?: Canvas }).tesseraWall?.getObjects().length ?? 0) > 0,
+        8000,
+        "the wall to come back with its tiles",
+      );
+      const wallCanvas = (window as unknown as { tesseraWall: Canvas }).tesseraWall;
+
+      const cell = cellAt(visibleIds().indexOf(tile));
+      await clickScene(wallCanvas, cell.x + TILE_W / 2, cell.y + TILE_H / 2);
+      await until(() => !!byTitle("Place this on this tile"), 8000, "the shape's own row to open");
+      byTitle("Place this on this tile")!.click();
+      await until(() => !!wallCanvas.getActiveObject(), 8000, "the stand-in to appear");
+
+      const stand = wallCanvas.getActiveObject()!;
+      // Sides as well as corners — the handle that stretches is offered.
+      expect(stand.isControlVisible("mr")).toBe(true);
+      await scaleObject(wallCanvas, stand, "mr", 90, 0);
+      await until(() => !!app.manifest.tiles[tile].frame?.[bar.id], 5000, "the placement to be written");
+
+      const f = app.manifest.tiles[tile].frame![bar.id];
+      expect(f.z).toBeGreaterThan(1.1);
+      // Wider, not taller: the axis nobody touched stayed where it was.
+      expect(f.zh).toBeCloseTo(1, 2);
+    } finally {
+      await teardown();
+    }
+  });
+
   it("takes the frame away when the tile it moved to shows nothing there", async () => {
     /* "Show no picture on this tile" is a real answer, so the layer is still on
      * the tile and still listed — there is simply nothing to stand on. The

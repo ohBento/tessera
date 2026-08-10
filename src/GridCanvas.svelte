@@ -27,6 +27,7 @@
     applyCrop,
     buildGrid,
     cellAt,
+    freeScale,
     gridSize,
     layerSize,
     readBack,
@@ -92,6 +93,10 @@
   let target: { tileId: string; layerId: string } | null = null;
   let stand: fabric.Object | undefined;
   let ghost: fabric.Object | undefined;
+  /** Whether what is being placed may be stretched — see the handles in
+   *  frameAt. Kept here because the live scaling handler has only the stand-in
+   *  to go on, and a stand-in is a plain rectangle whatever it stands for. */
+  let twoAxes = false;
 
   /** The live layers drawn on a tile, newest last — the ones a tile places.
    *
@@ -110,6 +115,7 @@
     if (stand) canvas?.remove(stand);
     if (ghost) canvas?.remove(ghost);
     stand = ghost = undefined;
+    twoAxes = false;
   }
 
   /** The layer as the Layout asks for it on this tile — this tile's picture or
@@ -205,21 +211,21 @@
       hasBorders: true,
       objectCaching: false,
     });
-    /* A caption is offered no handle that resizes it — see framed(). Rotation
-       stays: turning a caption clear of a shoulder is placing it, not restyling
-       it. */
-    if (shown.kind === "text")
-      stand.setControlsVisibility({
-        tl: false,
-        tr: false,
-        bl: false,
-        br: false,
-        ml: false,
-        mr: false,
-        mt: false,
-        mb: false,
-        mtr: true,
-      });
+    /* What each kind may be resized by, offered as handles rather than only
+       enforced on release — a handle you cannot honestly use is one that lies
+       about what the drag will keep.
+       A caption: nothing. The Layout owns the type size, and one caption bigger
+       than the other forty-three reads as a mistake.
+       A rectangle, ellipse or polygon: both axes, sides included. A bar drawn
+       longer on one portrait is a decision.
+       A picture or a class icon: corners only. Their artwork is fitted to the
+       box rather than stretched into it, which is exactly what `freeScale` says
+       and why it excludes icons. */
+    const off = { tl: false, tr: false, bl: false, br: false, ml: false, mr: false, mt: false, mb: false };
+    twoAxes = freeScale(shown);
+    if (shown.kind === "text") stand.setControlsVisibility({ ...off, mtr: true });
+    else if (!twoAxes)
+      stand.setControlsVisibility({ ...off, tl: true, tr: true, bl: true, br: true, mtr: true });
     /* `layerId` so Fabric's own selection event writes back the layer this
        stands for instead of clearing the choice — the tool reads that same
        field to know what to place, and an empty write would take its own frame
@@ -258,13 +264,19 @@
        the frame's own 1px stroke. A plain drag then wrote a zoom of 1.003 on a
        half-tile picture and 1.011 on a caption, and every nudge multiplied it
        again — a picture that grew a little each time it was moved. */
-    const rest = layerSize(base).w;
+    const rest = layerSize(base);
     const width = ((stand.width ?? 0) * (stand.scaleX ?? 1)) / TILE_W;
+    const height = ((stand.height ?? 0) * (stand.scaleY ?? 1)) / TILE_H;
     await setTileFrame(target.tileId, target.layerId, {
       x: back.x - base.x,
       y: back.y - base.y,
-      z: rest ? width / rest : 1,
+      z: rest.w ? width / rest.w : 1,
       a: back.rotation - base.rotation,
+      /* The second axis, and only where there is one to have. Written even when
+         it equals the first, so a shape stretched and then squared back stores
+         the square rather than an absent field the reader would fill in from
+         the width. */
+      ...(freeScale(base) ? { zh: rest.h ? height / rest.h : 1 } : {}),
     });
   }
 
@@ -780,11 +792,16 @@
     for (const ev of ["object:moving", "object:scaling", "object:rotating"] as const)
       canvas.on(ev, (opt) => {
         if (!stand || opt.target !== stand) return;
-        /* One zoom, both axes. A frame stores a single number, so a corner
-           pulled sideways would show a stretch that the release cannot keep —
-           the preview would be lying, which is the fault this app has already
-           shipped twice. */
-        if (ev === "object:scaling") stand.set({ scaleY: stand.scaleX });
+        /* One zoom, both axes — for everything whose artwork is fitted to its
+           box rather than stretched into it. A frame stored a single number, so
+           a corner pulled sideways showed a stretch that the release could not
+           keep, and a preview that lies is the fault this app has already
+           shipped twice.
+           A rectangle, ellipse or polygon is the exception: the box *is* the
+           shape, a Frame carries a second factor for it, and the stretch on
+           screen is what gets written. `freeScale` draws that line already and
+           is what decides which handles were offered above. */
+        if (ev === "object:scaling" && !twoAxes) stand.set({ scaleY: stand.scaleX });
         syncGhost();
       });
 

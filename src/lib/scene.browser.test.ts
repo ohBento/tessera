@@ -14,7 +14,9 @@ import {
   newProject,
   newShapeLayer,
   newTextLayer,
+  type Frame,
   type Layout,
+  type Paint,
   type ShapeLayer,
   type TextLayer,
   type ImageLayer,
@@ -1102,6 +1104,77 @@ describe("a caption held to a height", () => {
 
   it("leaves a caption alone when no height is set", async () => {
     expect(await rowsFor(undefined)).toBe(await rowsFor(undefined));
+  });
+});
+
+describe("a tile's own shape", () => {
+  /* A shape carries no per-tile content of its own, so for a long time a tile
+   * could say nothing about it at all. What it owns now is the colour and, for
+   * a rectangle, ellipse or polygon, the two axes separately — a bar drawn
+   * longer on one portrait is a decision, unlike a face stretched on one. */
+  const wall = async (paint?: Paint, frame?: Frame) => {
+    const m = manifest(1);
+    const id = order(m)[0];
+    const block: ShapeLayer = {
+      ...newShapeLayer("rect"),
+      id: "bar",
+      x: 0.5,
+      y: 0.5,
+      w: 0.4,
+      h: 0.2,
+      fill: "#00ff00",
+      live: true,
+      layoutId: "L1",
+    };
+    m.tiles[id].layers.push(block);
+    if (paint) m.tiles[id].paint = { [block.id]: paint };
+    if (frame) m.tiles[id].frame = { [block.id]: frame };
+    const [bmp] = [...(await renderTiles(view(m), m, testDeps)).values()];
+    return bmp;
+  };
+
+  /** How many sampled pixels carry this channel strongly. */
+  const ink = (bmp: Uint8Array, channel: 0 | 1 | 2) => {
+    let n = 0;
+    for (let y = 0; y < TILE_H; y += 4)
+      for (let x = 0; x < TILE_W; x += 4) if (pixel(bmp, x, y)[channel] > 128) n++;
+    return n;
+  };
+
+  it("paints it the colour the tile chose, in the file the game reads", async () => {
+    /* Read at the bar's own centre rather than counted over the tile: the test
+       portraits behind it are reddish, so a count of "how much red" answers
+       about the face as much as about the bar. */
+    const middle = (bmp: Uint8Array) => pixel(bmp, TILE_W / 2, TILE_H / 2);
+    expect(middle(await wall())).toEqual([0, 255, 0, 255]);
+    expect(middle(await wall("#ff0000"))).toEqual([255, 0, 0, 255]);
+  });
+
+  it("stretches one axis without the other", async () => {
+    /* The rule the placing tool enforces for every other kind — one zoom, both
+     * axes — is lifted here alone, and `zh` is what carries it. Without the
+     * second factor a wider bar would have grown taller too. */
+    const plain = await wall();
+    const wider = await wall(undefined, { x: 0, y: 0, z: 2, a: 0, zh: 1 });
+    const rows = (bmp: Uint8Array) => {
+      let n = 0;
+      for (let y = 0; y < TILE_H; y += 4) if (pixel(bmp, TILE_W / 2, y)[1] > 128) n++;
+      return n;
+    };
+    expect(ink(wider, 1)).toBeGreaterThan(ink(plain, 1) * 1.6);
+    // Twice as wide and exactly as tall: the column through the middle is
+    // untouched.
+    expect(rows(wider)).toBe(rows(plain));
+  });
+
+  it("reads a placement written before the second axis as the same zoom", async () => {
+    /* Every frame stored before `zh` existed meant "both axes together", and
+     * absent has to keep meaning that — otherwise upgrading would silently
+     * square off every shape anyone had already placed. */
+    const both = await wall(undefined, { x: 0, y: 0, z: 1.5, a: 0 });
+    const spelt = await wall(undefined, { x: 0, y: 0, z: 1.5, a: 0, zh: 1.5 });
+    expect(ink(both, 1)).toBe(ink(spelt, 1));
+    expect(ink(both, 1)).toBeGreaterThan(0);
   });
 });
 
