@@ -26,6 +26,7 @@ import {
   openLayout,
   setLayerField,
   saveLayout,
+  toggleLayoutPick,
   setTileAsset,
   visibleIds,
 } from "./lib/editor.svelte";
@@ -118,6 +119,39 @@ async function teardown() {
   if (ui) await unmount(ui);
   ui = undefined;
   host?.remove();
+}
+
+const objectFor = (canvas: Canvas, layerId: string) =>
+  canvas.getObjects().find((o) => (o as { layerId?: string }).layerId === layerId);
+
+/** Press, move, release at scene coordinates — and nothing else. dragObject
+ *  picks the object first and takes its per-pixel hit testing off, which is the
+ *  right thing when the question is what a gesture does to a known object and
+ *  the wrong thing when the question is which object Fabric picks. */
+async function rawDrag(canvas: Canvas, x: number, y: number, dx: number, dy: number) {
+  const el = canvas.upperCanvasEl;
+  const rect = el.getBoundingClientRect();
+  const vt = canvas.viewportTransform;
+  const at = (sx: number, sy: number) => ({
+    x: rect.left + sx * vt[0] + vt[4],
+    y: rect.top + sy * vt[3] + vt[5],
+  });
+  const fire = (type: string, p: { x: number; y: number }, buttons: number) =>
+    el.dispatchEvent(
+      new MouseEvent(type, { clientX: p.x, clientY: p.y, bubbles: true, buttons, button: 0 }),
+    );
+  const frame = () => new Promise((r) => requestAnimationFrame(() => r(null)));
+
+  fire("mousedown", at(x, y), 1);
+  await frame();
+  for (let i = 1; i <= 4; i++) {
+    fire("mousemove", at(x + (dx * i) / 4, y + (dy * i) / 4), 1);
+    canvas.renderAll();
+    await frame();
+  }
+  fire("mouseup", at(x + dx, y + dy), 0);
+  canvas.renderAll();
+  await frame();
 }
 
 /** A green block cut to a class icon — the pair the icons exist for. */
@@ -700,6 +734,17 @@ describe("what a gesture does to a mask", () => {
          the words move and the hole stays until a rebuild, and only pixels can
          tell those apart. The mask is inverted, so the middle of the caption is
          a hole: green there means the paint is drawn where the hole should be. */
+      /* And the handles are where the object is. The report is that the words
+         move while the violet frame stays behind until a rebuild, and Fabric
+         draws that frame from the cached corner coordinates — which only agree
+         with the object's own transform for as long as everything that moves it
+         says so. The snapping in object:moving moves it without Fabric's help,
+         so this is the assertion that would catch a missing setCoords. */
+      const box = stencil.getBoundingRect();
+      const heart = stencil.getCenterPoint();
+      expect(box.left + box.width / 2).toBeCloseTo(heart.x, -0.5);
+      expect(box.top + box.height / 2).toBeCloseTo(heart.y, -0.5);
+
       const mid = stencil.getCenterPoint();
       const dpr = canvas.getRetinaScaling();
       const vt = canvas.viewportTransform;
@@ -712,6 +757,65 @@ describe("what a gesture does to a mask", () => {
           1,
         ).data;
       expect({ r: px[0], g: px[1], b: px[2] }).not.toEqual({ r: 0, g: 255, b: 0 });
+    } finally {
+      await teardown();
+    }
+  });
+
+  it("drags the caption the layer list picked, not whatever is under the pointer", async () => {
+    /* The way a hand does it: pick the caption's row on the right, then press
+     * on the canvas. A stencil is deaf to the pointer until its row is picked,
+     * and the layer it cuts answers clicks per pixel — so if the press lands on
+     * the wrong one of the two, the thing that moves and the thing the violet
+     * frame belongs to come apart. Which is the report: "the text moves, the
+     * frame stays, and Update refreshes it".
+     *
+     * No setActiveObject and no perPixelTargetFind meddling here, unlike
+     * dragObject: the point is to let Fabric choose the target the same way it
+     * does in the app. */
+    try {
+      const canvas = await editor();
+      await addLayoutText();
+      const caption = openLayout()!.layers[0];
+      await setLayerField(caption.id, "text", "Descr");
+      await setLayerField(caption.id, "font", "Impact");
+      await setLayerField(caption.id, "size", 81 / TILE_W);
+      await setLayerField(caption.id, "w", 42 / TILE_W);
+      await setLayerField(caption.id, "h", 714 / TILE_H);
+      await addLayoutShape("rect");
+      const block = openLayout()!.layers.find((l) => l.id !== caption.id)!;
+      await setLayerField(block.id, "fill", "#00ff00");
+      await setLayerField(block.id, "w", 138 / TILE_W);
+      await setLayerField(block.id, "h", 1);
+      await setLayerField(block.id, "maskId", caption.id);
+      await setLayerField(block.id, "maskInvert", true);
+      await until(() =>
+        canvas.getObjects().some((o: FabricObject) => !!o.clipPath?.absolutePositioned),
+      );
+
+      // Picked from the list, exactly as the row's click does it.
+      toggleLayoutPick(caption.id, false);
+      await until(
+        () => canvas.getActiveObject() === objectFor(canvas, caption.id),
+        5000,
+        "the canvas to follow the list",
+      );
+
+      const was = {
+        caption: objectFor(canvas, caption.id)!.getCenterPoint().x,
+        block: objectFor(canvas, block.id)!.getCenterPoint().x,
+      };
+      const start = objectFor(canvas, caption.id)!.getCenterPoint();
+      await rawDrag(canvas, start.x, start.y, 26, 0);
+
+      const now = {
+        caption: objectFor(canvas, caption.id)!.getCenterPoint().x,
+        block: objectFor(canvas, block.id)!.getCenterPoint().x,
+      };
+      // The caption went, the paint stayed, and the frame is on what moved.
+      expect(now.caption - was.caption).toBeGreaterThan(10);
+      expect(now.block).toBeCloseTo(was.block, -0.5);
+      expect(canvas.getActiveObject()).toBe(objectFor(canvas, caption.id));
     } finally {
       await teardown();
     }
