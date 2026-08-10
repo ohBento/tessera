@@ -49,15 +49,20 @@ export const LIMIT = 200;
  *  behaviour untestable without faking time, and one measurement of mine was
  *  wrong by a factor of twenty-five because a background tab throttles
  *  timers. */
-export function checkpoint<T>(h: History<T>, present: T, key?: string) {
+/** Returns whether it pushed a step, which a caller that has to take its own
+ *  checkpoint back needs to know: inside an open run there is nothing of its
+ *  own on the stack, and undoing anyway pops the step before it — an edit that
+ *  threw mid-drag quietly destroyed an unrelated one. */
+export function checkpoint<T>(h: History<T>, present: T, key?: string): boolean {
   const sameRun = key !== undefined && h.runKey === key;
   h.runKey = key;
-  if (sameRun) return;
+  if (sameRun) return false;
 
   h.past.push(present);
   if (h.past.length > LIMIT) h.past.shift();
   // A new edit invalidates anything that was undone: the timeline forked.
   h.future.length = 0;
+  return true;
 }
 
 /** Closes the run in progress, so the next edit starts a new step whatever key

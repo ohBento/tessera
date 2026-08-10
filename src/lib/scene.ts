@@ -18,6 +18,8 @@ import {
   isLiveCopy,
   framed,
   layerAsset,
+  layerShows,
+  offLayouts,
   layerIcon,
   layerText,
   nestingShift,
@@ -1210,8 +1212,13 @@ export async function buildGrid(
      * stopped being a picture and does not draw itself. */
     const own = resolveLayers(m, id);
     const stencils = stencilIds(own);
+    /* Which assignments this tile has switched off. A live copy has no row and
+       no eye of its own, so the eye on its stamp answers for it — see
+       layerShows. A live cutter needs no entry here: it can only cut live
+       layers of the same Layout, so it goes dark exactly when they do. */
+    const off = offLayouts(own);
     for (const raw of own) {
-      if (raw.hidden || raw.space === "grid" || stencils.has(raw.id)) continue;
+      if (!layerShows(raw, off) || raw.space === "grid" || stencils.has(raw.id)) continue;
       /* This tile's own picture, where it has one. Resolved before the object
        * is built rather than inside imageObject, so the swap map stays a wall
        * concern: a Layout has no tiles and nothing to swap. "" is a real
@@ -1258,7 +1265,7 @@ export async function buildGrid(
       const rawCutter = l.maskId ? own.find((x) => x.id === l.maskId) : undefined;
       const cutter =
         rawCutter && isLiveCopy(rawCutter) ? framed(rawCutter, frames[rawCutter.id]) : rawCutter;
-      const cut = cutApplies(l, cutter) && !cutter!.hidden ? cutter : undefined;
+      const cut = cutApplies(l, cutter) && layerShows(cutter!, off) ? cutter : undefined;
       /* A class icon is paint wearing the artwork as its clipPath, and every
        * tile layer is about to be given the cell as its clipPath — Fabric
        * allows one, so the cell would replace the artwork and the icon would

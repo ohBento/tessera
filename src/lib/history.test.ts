@@ -158,6 +158,23 @@ describe("limit", () => {
   });
 });
 
+describe("taking a checkpoint back", () => {
+  it("says whether it pushed one, so a failed edit undoes only its own", () => {
+    /* An edit that throws puts the recorded state back and takes its own
+     * checkpoint off the stack. Inside an open run there is none of its own:
+     * the second and later events of a slider drag or a typed caption collapse
+     * into the step the run opened with. Undoing regardless popped the step
+     * belonging to the edit *before* the drag — one unrelated undo destroyed,
+     * silently, by a failure somewhere else. */
+    const h = emptyHistory<string>();
+    expect(checkpoint(h, "A")).toBe(true);
+    expect(checkpoint(h, "B", "field:x")).toBe(true);
+    // Same run: the step to go back to is still the one it opened with.
+    expect(checkpoint(h, "B2", "field:x")).toBe(false);
+    expect(h.past).toEqual(["A", "B"]);
+  });
+});
+
 describe("snapshots", () => {
   it("keeps whatever object it was handed, so callers must pass a copy", () => {
     // Documents the contract the editor relies on: it deep-copies before

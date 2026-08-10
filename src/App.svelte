@@ -129,7 +129,15 @@
   import { isTyping } from "./lib/geometry";
   import { ICON_NAMES, iconArt } from "./lib/icons";
   import { savePending } from "./lib/project";
-  import { findLayer, isLiveCopy, layerLabel, layoutNeedsRestamp, type Layer } from "./lib/model";
+  import {
+    findLayer,
+    isLiveCopy,
+    layerLabel,
+    layerShows,
+    layoutNeedsRestamp,
+    offLayouts,
+    type Layer,
+  } from "./lib/model";
 
   const editing = $derived(openLayout());
 
@@ -1048,15 +1056,18 @@
   {@const layerId = layer.id}
   {@const on =
     framing && app.selected === layerId && app.selectedTiles.length === 1 && app.selectedTiles[0] === tileId}
+  <!-- Asked, not read: a live copy's own `hidden` is the Layout's answer, and
+       the eye on its stamp is the tile's. Both switch it off. -->
+  {@const shows = layerShows(layer, offLayouts(tileLayers(tileId)))}
   <button
     class="swatch"
     class:on
-    disabled={!!layer.hidden}
-    title={layer.hidden
-      ? "Switched off on this tile — nothing to place"
-      : on
+    disabled={!shows}
+    title={shows
+      ? on
         ? "Placing this on the wall — drag its frame"
-        : "Place this on this tile"}
+        : "Place this on this tile"
+      : "Switched off on this tile — nothing to place"}
     onclick={() => {
       app.selectedTiles = [tileId];
       selectLayer(layerId);

@@ -730,6 +730,21 @@ export type Manifest = {
 
 export const emptyTile = (): Tile => ({ base: null, layers: [], text: {} });
 
+/** Takes a tile's artwork off and leaves the tile itself alone.
+ *
+ *  Named rather than spelled `{ ...emptyTile(), base }` at each call site. That
+ *  was a whitelist of what to keep, and `Tile` has grown `swap`, `frame` and
+ *  `archived` since it was written — each one silently joined the throw-away
+ *  side, and the last of those meant clearing the layers on an archived
+ *  portrait quietly put it back on the wall. This cannot drop a field it does
+ *  not know about. */
+export function stripTile(t: Tile) {
+  t.layers = [];
+  t.text = {};
+  delete t.swap;
+  delete t.frame;
+}
+
 export const emptyManifest = (): Manifest => ({
   version: 7,
   projects: [],
@@ -1119,6 +1134,29 @@ export type LiveLayer = TextLayer | ImageLayer | ShapeLayer;
  *  list's copy said "text" where this one says "a copy" — so a per-tile
  *  picture appeared as a second row for the same layout. */
 export const isLiveCopy = (l: Layer) => !!l.layoutId && (!!l.live || l.kind === "text");
+
+/** Which layouts are switched off on this tile, by the eye on their stamp. */
+export const offLayouts = (layers: Layer[]): Set<string> =>
+  new Set(
+    layers
+      .filter((l) => l.kind === "image" && !l.live && l.hidden && l.layoutId)
+      .map((l) => l.layoutId!),
+  );
+
+/** Whether a layer on a tile draws.
+ *
+ *  A live copy answers to two eyes and owns neither. One is the Layout's, which
+ *  arrives as its own `hidden` because the copy is rebuilt from that layer. The
+ *  other is its stamp's — the only switch the wall has for the whole
+ *  assignment, since live copies have no row of their own (see `stampsOf`).
+ *
+ *  Asked, rather than mirrored onto the copy. Mirroring is what the eye used to
+ *  do, and `syncLiveLayers` rebuilds that copy from the Layout on every "Update
+ *  stamps": the mirrored value was overwritten, and a design switched off came
+ *  back — captions and all, into the file written to the game — with the row
+ *  still saying "hidden". Neither eye wins here; they compose. */
+export const layerShows = (l: Layer, off: Set<string>) =>
+  !l.hidden && !(isLiveCopy(l) && !!l.layoutId && off.has(l.layoutId));
 
 const perTileLayers = (layout: Layout): LiveLayer[] =>
   [...walkLayers(layout.layers)].filter((l): l is LiveLayer => l.kind !== "group" && !!l.perTile);

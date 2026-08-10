@@ -33,7 +33,15 @@
     snapScale,
     type Tagged,
   } from "./lib/scene";
-  import { framed, isLiveCopy, layerAsset, layerText, type Layer } from "./lib/model";
+  import {
+    framed,
+    isLiveCopy,
+    layerAsset,
+    layerShows,
+    layerText,
+    offLayouts,
+    type Layer,
+  } from "./lib/model";
 
   /* On while the placing tool is chosen in App's toolbar. The wall has no other
      mode, and that is deliberate — see the note on frameAt below. */
@@ -90,10 +98,13 @@
    *  Live copies only. A layer the tile owns outright is already draggable on
    *  the wall and has nothing to differ from: editing it *is* editing the
    *  layer. */
-  const placeableOn = (tileId: string) =>
-    (app.manifest.tiles[tileId]?.layers ?? []).filter(
-      (l) => isLiveCopy(l) && !l.hidden && !(l.kind === "image" && !l.asset),
+  const placeableOn = (tileId: string) => {
+    const own = app.manifest.tiles[tileId]?.layers ?? [];
+    const off = offLayouts(own);
+    return own.filter(
+      (l) => isLiveCopy(l) && layerShows(l, off) && !(l.kind === "image" && !l.asset),
     );
+  };
 
   function dropFrameTools() {
     if (stand) canvas?.remove(stand);

@@ -23,6 +23,8 @@ import {
   assignLayoutToSelection,
   assignLayoutToWall,
   canGroupLayers,
+  archived,
+  archiveSelection,
   closeLayoutDoc,
   dropLayoutLayer,
   duplicateLayoutLayers,
@@ -47,6 +49,7 @@ import {
   restoreSnapshot,
   deleteLayoutDoc,
   deleteLayoutLayers,
+  setTileFrame,
   stripSelectedTiles,
   saveToGame,
   snapshots,
@@ -60,13 +63,21 @@ import {
   toggleLayoutPick,
   toggleTile,
 } from "./lib/editor.svelte";
-import { addLayoutImage, assignTileLayout, newLayoutDoc, openLayout } from "./lib/editor.svelte";
+import {
+  addLayoutImage,
+  assignTileLayout,
+  newLayoutDoc,
+  openLayout,
+  saveLayout,
+} from "./lib/editor.svelte";
 import {
   emptyManifest,
   findLayer,
   groupShift,
   isGradient,
   layerLabel,
+  layerShows,
+  offLayouts,
   type ImageLayer,
   type ShapeLayer,
   type TextLayer,
@@ -750,7 +761,12 @@ describe("the wall", () => {
     /* The stamp's row speaks for the copies a Layout keeps beside it — they
      * have no row of their own. Hiding it and leaving those drawn meant the
      * eye did nothing you could see: the caption and the logo stayed on the
-     * wall with nothing left to switch them off. */
+     * wall with nothing left to switch them off.
+     *
+     * Asserted as what draws, not as which flags are set. This test used to
+     * check that `hidden` had been copied onto the live layer, and that copy
+     * was itself the bug below: it pinned the mechanism, so the mechanism could
+     * not be corrected without the test objecting. */
     const a = app.folderIds[0];
     await newLayoutDoc("Mit Text");
     await addLayoutText();
@@ -758,14 +774,83 @@ describe("the wall", () => {
     await setLayerField(caption.id, "perTile", true);
     await assignTileLayout(a, openLayout()!.id);
     await until(() => tileLayers(a).length === 2);
+    const shows = () => {
+      const off = offLayouts(tileLayers(a));
+      return tileLayers(a).map((l) => layerShows(l, off));
+    };
+    expect(shows()).toEqual([true, true]);
 
     const stamp = tileLayers(a).find((l) => l.kind === "image")!;
     await toggleLayerHidden(stamp.id);
-    expect(tileLayers(a).map((l) => !!l.hidden)).toEqual([true, true]);
+    expect(shows()).toEqual([false, false]);
 
     // And back, in one press.
     await toggleLayerHidden(stamp.id);
-    expect(tileLayers(a).map((l) => !!l.hidden)).toEqual([false, false]);
+    expect(shows()).toEqual([true, true]);
+  });
+
+  it("keeps a hidden assignment hidden when the layout is updated", async () => {
+    /* The eye said "off", "Update stamps" was pressed, and the design came
+     * back — captions and all, into the 624x804 file written to the game —
+     * with the row still saying "hidden".
+     *
+     * `syncLiveLayers` rebuilds every live copy from the Layout's own layer, so
+     * anything mirrored onto that copy is overwritten. `hidden` was the one
+     * thing the tile owned there. It is asked for now rather than stored twice:
+     * a copy draws when neither its own eye nor its stamp's is closed. */
+    const a = app.folderIds[0];
+    await newLayoutDoc("Verschwunden");
+    await addLayoutText();
+    const caption = openLayout()!.layers[0];
+    await setLayerField(caption.id, "perTile", true);
+    const layoutId = openLayout()!.id;
+    await assignTileLayout(a, layoutId);
+    await until(() => tileLayers(a).length === 2);
+
+    const stamp = tileLayers(a).find((l) => l.kind === "image")!;
+    await toggleLayerHidden(stamp.id);
+
+    // The design is edited and stamped again, which is the whole loop.
+    await setLayerField(caption.id, "size", 0.14);
+    await saveLayout(layoutId);
+    await until(() => tileLayers(a).length === 2);
+
+    const off = offLayouts(tileLayers(a));
+    expect(tileLayers(a).map((l) => layerShows(l, off))).toEqual([false, false]);
+    // And one press still brings the whole assignment back.
+    await toggleLayerHidden(tileLayers(a).find((l) => l.kind === "image")!.id);
+    const back = offLayouts(tileLayers(a));
+    expect(tileLayers(a).map((l) => layerShows(l, back))).toEqual([true, true]);
+  });
+
+  it("clearing a tile's layers leaves it archived, and keeps its framing out of the way", async () => {
+    /* `{ ...emptyTile(), base }` was a whitelist of what to keep, and `Tile`
+     * has grown `swap`, `frame` and `archived` since it was written — each one
+     * joined the throw-away side in silence. The last of those meant that
+     * clearing the layers on a portrait you had put away quietly brought it
+     * back onto the Unsorted wall. Named `stripTile` now, so it cannot drop a
+     * field it has never heard of. */
+    const a = app.folderIds[0];
+    await newLayoutDoc("Weg damit");
+    await addLayoutText();
+    const caption = openLayout()!.layers[0];
+    await setLayerField(caption.id, "perTile", true);
+    await assignTileLayout(a, openLayout()!.id);
+    await closeLayoutDoc();
+    await until(() => tileLayers(a).length === 2);
+    await setTileFrame(a, caption.id, { x: 0.2, y: 0, z: 1, a: 0 });
+
+    app.selectedTiles = [a];
+    await archiveSelection(true);
+    expect(archived()).toContain(a);
+
+    app.selectedTiles = [a];
+    await stripSelectedTiles();
+    expect(tileLayers(a)).toEqual([]);
+    // Still put away — the clearing was of its artwork, not of the tile.
+    expect(archived()).toContain(a);
+    // And its placement went with the layers it belonged to.
+    expect(app.manifest.tiles[a].frame).toBeUndefined();
   });
 
   it("deleting a stamp takes its live caption with it", async () => {

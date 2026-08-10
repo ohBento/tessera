@@ -13,7 +13,6 @@ import {
   duplicateLayers,
   duplicateLayout,
   emptyManifest,
-  emptyTile,
   cutBy,
   findLayer,
   findList,
@@ -49,7 +48,7 @@ import {
   removeLayerFrom,
   resolveLayers,
   shiftLayer,
-  stampFamily,
+  stripTile,
   stampInto,
   swapPlaced,
   takeOutOfFolder,
@@ -488,8 +487,7 @@ export async function stripSelectedTiles() {
   const stripping = app.selectedTiles.filter((id) => app.manifest.tiles[id]?.layers.length);
   if (!stripping.length) return;
   await mutate(() => {
-    for (const id of stripping)
-      app.manifest.tiles[id] = { ...emptyTile(), base: app.manifest.tiles[id].base };
+    for (const id of stripping) stripTile(app.manifest.tiles[id]);
     /* Said out loud, and saying what actually went. Undressing a wall used to
      * happen in complete silence next to actions that report their count, and
      * the wording and per-tile pictures it also takes are keyed by layer id —
@@ -663,7 +661,7 @@ export async function deleteProject(projectId: string, stripLayers = false) {
     if (stripLayers)
       for (const id of owned) {
         const tile = app.manifest.tiles[id];
-        if (tile) app.manifest.tiles[id] = { ...emptyTile(), base: tile.base };
+        if (tile) stripTile(tile);
       }
     if (app.openProjectId === projectId) {
       app.openProjectId = "";
@@ -718,7 +716,7 @@ async function mutate(fn: () => void, structural = true, run?: string) {
    * inside fn, after this. */
   app.error = "";
   const before = plain(app.manifest);
-  checkpoint(history, before, run);
+  const pushed = checkpoint(history, before, run);
   try {
     fn();
   } catch (e) {
@@ -729,7 +727,11 @@ async function mutate(fn: () => void, structural = true, run?: string) {
     app.manifest = before;
     app.error = `Change failed: ${e}`;
     app.version++;
-    undo(history, before);
+    /* Only what this call put there. Inside an open run — a slider being
+       dragged, a caption being typed — the checkpoint above pushed nothing,
+       and undoing regardless popped the step belonging to the edit before it:
+       one unrelated undo destroyed, silently, by a failure somewhere else. */
+    if (pushed) undo(history, before);
     return;
   }
   if (structural) app.version++;
@@ -786,18 +788,23 @@ export function selectLayer(id: string) {
 
 /** Hides or shows a layer — and, for a stamp, the whole assignment.
  *
- *  The eye on a stamp's row used to switch off the flattened sheet and leave
- *  the captions and logos the Layout keeps live still drawn: they have no row
- *  of their own, so "Hide" appeared to do nothing on exactly the layouts that
- *  carry something editable in the grid. */
+ *  The eye on a stamp's row switches off the flattened sheet and the captions
+ *  and logos the Layout keeps live beside it: they have no row of their own, so
+ *  "Hide" would otherwise appear to do nothing on exactly the layouts that
+ *  carry something editable in the grid.
+ *
+ *  It writes only this layer. The copies are not told — `layerShows` asks the
+ *  stamp on their behalf. Writing it onto them is what this used to do, and
+ *  `syncLiveLayers` rebuilds a copy from the Layout on every "Update stamps":
+ *  the flag was overwritten and a hidden design came back, in the wall and in
+ *  the file written to the game, with this row still saying "hidden". */
 export async function toggleLayerHidden(id: string) {
   const list = listOf(id);
-  const family = list ? stampFamily(list, id) : [];
-  const self = family.find((l) => l.id === id);
+  const self = list?.find((l) => l.id === id);
   if (!self) return;
   const next = !self.hidden;
   await mutate(() => {
-    for (const l of family) l.hidden = next;
+    self.hidden = next;
   });
 }
 
