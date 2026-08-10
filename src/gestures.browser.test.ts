@@ -25,10 +25,11 @@ import {
   newLayoutDoc,
   openLayout,
   setLayerField,
+  saveLayout,
   setTileAsset,
   visibleIds,
 } from "./lib/editor.svelte";
-import { emptyManifest, type TextLayer } from "./lib/model";
+import { emptyManifest, findLayer, type TextLayer } from "./lib/model";
 import { queuePick, resetMockFiles, stashPickedFile } from "./lib/platform";
 import { cellAt } from "./lib/scene";
 import { TILE_H, TILE_W } from "./lib/bmp";
@@ -552,6 +553,92 @@ describe("what a gesture does to a mask", () => {
       await scaleObject(canvas, obj, "br", 60, 60);
       await until(() => countColour(canvas, GREEN) !== before, 3000).catch(() => {});
       expect(countColour(canvas, GREEN)).toBeGreaterThan(before);
+    } finally {
+      await teardown();
+    }
+  });
+
+  it("keeps a dragged caption where it was let go when the stamps are updated", async () => {
+    /* From a screen recording: a caption with a fixed width, used as a mask, on
+     * a Layout stamped across the wall. Dragging it moved it — the X field went
+     * 69 to 92 — and "Update stamps" put it back to 69.
+     *
+     * Driven through the canvas rather than through the model, because a plain
+     * move takes a path of its own: it skips the version bump, so nothing
+     * rebuilds until something else asks for one, and the something else here
+     * is the button that is supposed to keep it. */
+    try {
+      const canvas = await editor();
+      await addLayoutText();
+      const caption = openLayout()!.layers[0];
+      await setLayerField(caption.id, "perTile", true);
+      await setLayerField(caption.id, "text", "TEXT");
+      await setLayerField(caption.id, "w", 0.07);
+      await setLayerField(caption.id, "h", 0.9);
+      await addLayoutShape("rect");
+      const block = openLayout()!.layers.find((l) => l.id !== caption.id)!;
+      await setLayerField(block.id, "perTile", true);
+      await setLayerField(block.id, "fill", "#00ff00");
+      await setLayerField(block.id, "maskId", caption.id);
+      const layoutId = openLayout()!.id;
+      await until(() =>
+        canvas.getObjects().some((o: FabricObject) => !!o.clipPath?.absolutePositioned),
+      );
+
+      const stencil = canvas
+        .getObjects()
+        .find((o) => (o as { layerId?: string }).layerId === caption.id)!;
+      const before = findLayer(openLayout()!.layers, caption.id)!.x;
+      await dragObject(canvas, stencil, 30, 0);
+      await until(
+        () => findLayer(openLayout()!.layers, caption.id)!.x !== before,
+        5000,
+        "the drag to be written",
+      );
+      const moved = findLayer(openLayout()!.layers, caption.id)!.x;
+
+      // Stamped somewhere, or there is nothing for the button to update.
+      await assignTileLayout(app.folderIds[0], layoutId);
+      await saveLayout(layoutId);
+      expect(findLayer(openLayout()!.layers, caption.id)!.x).toBeCloseTo(moved, 6);
+    } finally {
+      await teardown();
+    }
+  });
+
+  it("does not shift a caption's hole the moment it is touched", async () => {
+    /* A caption with a width of its own, used as a mask. Nudging it one pixel
+     * must move the hole one pixel — and the hole is a separate object with
+     * `absolutePositioned`, kept in register by syncMasks while the gesture is
+     * open. Any jump beyond the nudge is that bookkeeping disagreeing with
+     * where the renderer puts the same stencil, which is what a rebuild
+     * afterwards silently corrects: the model was right all along and only the
+     * canvas was wrong, so "it comes back when I press Update". */
+    try {
+      const canvas = await editor();
+      await addLayoutText();
+      const caption = openLayout()!.layers[0];
+      await setLayerField(caption.id, "text", "TEXT");
+      await setLayerField(caption.id, "w", 0.07);
+      await setLayerField(caption.id, "h", 0.9);
+      await addLayoutShape("rect");
+      const block = openLayout()!.layers.find((l) => l.id !== caption.id)!;
+      await setLayerField(block.id, "fill", "#00ff00");
+      await setLayerField(block.id, "maskId", caption.id);
+      await until(() =>
+        canvas.getObjects().some((o: FabricObject) => !!o.clipPath?.absolutePositioned),
+      );
+
+      const cut = canvas.getObjects().find((o: FabricObject) => !!o.clipPath?.absolutePositioned)!;
+      const stencil = canvas
+        .getObjects()
+        .find((o) => (o as { layerId?: string }).layerId === caption.id)!;
+      const before = { left: cut.clipPath!.left ?? 0, top: cut.clipPath!.top ?? 0 };
+
+      await dragObject(canvas, stencil, 1, 0);
+      const after = { left: cut.clipPath!.left ?? 0, top: cut.clipPath!.top ?? 0 };
+      expect(after.left - before.left).toBeCloseTo(1, -0.5);
+      expect(after.top - before.top).toBeCloseTo(0, -0.5);
     } finally {
       await teardown();
     }

@@ -901,6 +901,35 @@ describe("the wall", () => {
     expect(wearing(doomed.id, [a, b])).toEqual([b]);
   });
 
+  it("keeps a moved caption where it was moved to when the stamps are updated", async () => {
+    /* From a screen recording: a caption with a fixed width, used as a mask,
+     * on a Layout stamped across the wall. Dragging it moved it — the X field
+     * went 69 to 92 — and pressing "Update stamps" put it back to 69. The
+     * design snapped to where it had been before the drag, and the only thing
+     * on screen saying so was the picture. */
+    const [a, b] = app.folderIds;
+    await newLayoutDoc("Zurückgesprungen");
+    await addLayoutText();
+    const layout = openLayout()!;
+    const caption = layout.layers[0];
+    await setLayerField(caption.id, "perTile", true);
+    await setLayerField(caption.id, "w", 0.07);
+    await setLayerField(caption.id, "h", 0.9);
+    await addLayoutShape("rect");
+    const block = openLayout()!.layers.find((l) => l.id !== caption.id)!;
+    await setLayerField(block.id, "perTile", true);
+    await setLayerField(block.id, "maskId", caption.id);
+    for (const id of [a, b]) await assignTileLayout(id, layout.id);
+
+    // The drag, as the model sees it.
+    await setLayerField(caption.id, "x", 0.11);
+    await applyLayoutTransform(caption.id, { x: 0.147, y: 0.5, rotation: 0 });
+    expect(findLayer(openLayout()!.layers, caption.id)!.x).toBeCloseTo(0.147, 4);
+
+    await saveLayout(layout.id);
+    expect(findLayer(openLayout()!.layers, caption.id)!.x).toBeCloseTo(0.147, 4);
+  });
+
   it("deleting a stamp takes its live caption with it", async () => {
     /* The defect this replaces: the caption survived, no list showed it —
      * they are hidden because the stamp row speaks for them — and it went on
