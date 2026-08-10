@@ -80,6 +80,25 @@
    * actually starts, so a burst costs two builds instead of thirty. */
   let queued = false;
 
+  /** Whether the pointer is down on this canvas.
+   *
+   *  A rebuild swaps every object out, and a press on a layer picks it — so
+   *  with the selection in the build key, the press that starts a drag
+   *  destroyed the object the drag was about to move. Measured: the caption
+   *  went 0px instead of 24. Held back until the button comes up, at which
+   *  point the effect below runs again on its own, because this is a rune. */
+  let pressed = $state(false);
+
+  /** What the drawn frame depends on. The selection is in it because the picked
+   *  layers are the ones that keep showing the Layout's own wording and class
+   *  while the tile's shows through everywhere else — so a pick changes what is
+   *  drawn, not only what is handled.
+   *
+   *  ponytail: rebuilds on every pick, including picks of layers no tile
+   *  overrides. Narrow it to those if a large Layout starts to feel heavy. */
+  const buildKey = () =>
+    `${app.openLayoutId}:${app.version}:${app.layoutSelection.join(" ")}`;
+
   function rebuild(deps: typeof app.deps) {
     if (queued) return building;
     queued = true;
@@ -87,7 +106,7 @@
       .then(async () => {
         queued = false;
         const layout = openLayout();
-        const key = `${app.openLayoutId}:${app.version}`;
+        const key = buildKey();
         if (!canvas || !deps || !layout) return;
         if (!built) fit();
         rebuilding = true;
@@ -103,7 +122,19 @@
             deps,
             true,
             undefined,
-            bed ? { id: bed, base: $state.snapshot(app.manifest.tiles[bed]?.base ?? null) } : undefined,
+            /* And that tile's own wording, class and pictures up in the layers,
+               so the design is composed against a real portrait instead of
+               against the template's placeholders. Everything but the picked
+               layers, which keep showing the Layout's own — see layoutObjects
+               for why typing depends on that. */
+            bed
+              ? {
+                  id: bed,
+                  base: $state.snapshot(app.manifest.tiles[bed]?.base ?? null),
+                  content: $state.snapshot(app.manifest.tiles[bed]),
+                  except: $state.snapshot(app.layoutSelection),
+                }
+              : undefined,
           );
         } finally {
           rebuilding = false;
@@ -121,9 +152,9 @@
   /* Keyed on the open layout as well as the version: switching documents has to
    * rebuild even when nothing was edited. */
   $effect(() => {
-    const key = `${app.openLayoutId}:${app.version}`;
+    const key = buildKey();
     const deps = app.deps;
-    if (canvas && deps && app.openLayoutId && key !== built) void rebuild(deps);
+    if (canvas && deps && app.openLayoutId && !pressed && key !== built) void rebuild(deps);
   });
 
   /* Everything but a shape is held proportional, and Fabric is told so up
@@ -378,6 +409,7 @@
       if ((opt.transform as { action?: string } | undefined)?.action === "crop") transforming = true;
     });
     canvas.on("mouse:down", (opt) => {
+      pressed = true;
       if (!(opt.e instanceof MouseEvent)) return;
       if (opt.e.button === 1 || spaceHeld) {
         panning = true;
@@ -392,6 +424,7 @@
       last = { x: opt.e.clientX, y: opt.e.clientY };
     });
     canvas.on("mouse:up", () => {
+      pressed = false;
       panning = false;
       canvas!.selection = true;
       // Fabric fires object:modified before mouse:up within the same release,

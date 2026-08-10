@@ -128,7 +128,14 @@ const objectFor = (canvas: Canvas, layerId: string) =>
  *  picks the object first and takes its per-pixel hit testing off, which is the
  *  right thing when the question is what a gesture does to a known object and
  *  the wrong thing when the question is which object Fabric picks. */
-async function rawDrag(canvas: Canvas, x: number, y: number, dx: number, dy: number) {
+async function rawDrag(
+  canvas: Canvas,
+  x: number,
+  y: number,
+  dx: number,
+  dy: number,
+  during?: () => void,
+) {
   const el = canvas.upperCanvasEl;
   const rect = el.getBoundingClientRect();
   const vt = canvas.viewportTransform;
@@ -148,6 +155,7 @@ async function rawDrag(canvas: Canvas, x: number, y: number, dx: number, dy: num
     fire("mousemove", at(x + (dx * i) / 4, y + (dy * i) / 4), 1);
     canvas.renderAll();
     await frame();
+    during?.();
   }
   fire("mouseup", at(x + dx, y + dy), 0);
   canvas.renderAll();
@@ -912,7 +920,13 @@ describe("what a gesture does to a mask", () => {
       const before = stencil.getCenterPoint();
       const originBefore = { x: stencil.originX, y: stencil.originY, w: stencil.width };
       let worst = atRest;
-      await dragObject(canvas, stencil, 24, 16, () => {
+      /* The object the drag actually moved. Picking a layer rebuilds this
+         canvas — the Layout draws the tile's wording everywhere but on the
+         picked layers — so the reference taken above can be a detached copy by
+         the time the pointer goes down. It reads as "expected 0 to be close to
+         24": the live object moved, the one being measured was not on the
+         canvas any more. */
+      const moved = await dragObject(canvas, stencil, 24, 16, () => {
         worst = Math.min(worst, countColour(canvas, GREEN));
       });
       /* The letters keep their weight all the way. A tenth of slack for the
@@ -928,12 +942,51 @@ describe("what a gesture does to a mask", () => {
          caption 224px and blamed the drag: a left-aligned caption holds its
          left edge while its box grows, so setting the wording had walked its
          centre right long before any mouse came near it. */
-      const centre = stencil.getCenterPoint();
+      const centre = moved.getCenterPoint();
       expect(centre.x - before.x).toBeCloseTo(24, -0.5);
       expect(centre.y - before.y).toBeCloseTo(16, -0.5);
       const now = openLayout()!.layers.find((l) => l.id === words.id)!;
       expect((now.x - 0.5) * TILE_W).toBeCloseTo(24, -0.5);
       expect(originBefore.x).toBe("center");
+    } finally {
+      await teardown();
+    }
+  });
+});
+
+describe("a press that picks and drags in the same motion", () => {
+  it("leaves the layer Fabric is moving on the canvas", async () => {
+    /* Picking a layer rebuilds this canvas — the Layout draws the tile's
+     * wording and class on every layer but the picked ones, so which layer is
+     * picked changes what is drawn. A press does the picking and starts the
+     * drag in one motion, and a rebuild answering that pick swaps the object
+     * out from under Fabric's transform: the detached copy follows the mouse,
+     * the one on screen stands still, and the layer only jumps into place when
+     * the release writes the model.
+     *
+     * Measured on the canvas during the gesture, because at rest it looks
+     * right either way. */
+    try {
+      const canvas = await editor();
+      await addLayoutShape("rect");
+      const block = openLayout()!.layers[0];
+      await setLayerField(block.id, "w", 0.3);
+      await setLayerField(block.id, "h", 0.3);
+      await setLayerField(block.id, "x", 0.5);
+      await setLayerField(block.id, "y", 0.5);
+      // Nothing picked, so the press below is what picks it. An insert selects
+      // what it made, and picking it again is what puts it back down.
+      toggleLayoutPick(block.id, false);
+      await until(() => app.layoutSelection.length === 0 && !!objectFor(canvas, block.id));
+      const start = objectFor(canvas, block.id)!.getCenterPoint().x;
+
+      let seen = start;
+      await rawDrag(canvas, TILE_W / 2, TILE_H / 2, 60, 0, () => {
+        const now = objectFor(canvas, block.id);
+        if (now) seen = now.getCenterPoint().x;
+      });
+
+      expect(seen - start).toBeGreaterThan(30);
     } finally {
       await teardown();
     }

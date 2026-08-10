@@ -35,6 +35,7 @@ import {
   type Paint,
   type ShapeLayer,
   type TextLayer,
+  type Tile,
 } from "./model";
 
 /** Which wall to draw: an ordered, dense list of tile ids — position n is grid
@@ -1128,6 +1129,42 @@ const silhouette = (l: Layer): Layer => {
   return bare;
 };
 
+/** One layer as a given tile shows it: its picture, its class and its colour,
+ *  wherever the tile has an answer of its own.
+ *
+ *  Wording is not here — a caption is resolved as it is drawn, because that is
+ *  the first point at which the tile's id is known and "{{id}}" can be filled
+ *  in. Placement is not here either: framed() is a difference from the design,
+ *  and the two callers disagree about whether they want it (see buildLayout).
+ *
+ *  Lifted out of buildGrid so the Layout editor can show a composition against
+ *  a real portrait's content instead of against the template's placeholders.
+ *  One expression rather than two, or the wall and the editor would eventually
+ *  disagree about what a tile looks like — which is the whole reason the editor
+ *  is trusted as a preview at all. */
+export function asTileShows(
+  raw: Layer,
+  swaps: Record<string, string>,
+  paints: Record<string, Paint>,
+): Layer {
+  /* This tile's own picture, where it has one. Resolved before the object is
+   * built rather than inside imageObject, so the swap map stays a wall concern.
+   * "" is a real answer — no picture on this tile — and the layer simply does
+   * not render, which is why callers check the resolved value rather than
+   * whether a key exists. */
+  if (raw.kind === "image" && raw.live) return { ...raw, asset: layerAsset(swaps, raw) };
+  /* And this tile's own class, where it names one. Same map, same bargain: the
+   * Layout places and colours the icon once, each portrait says which class it
+   * is. */
+  if (raw.kind === "shape" && raw.shape === "icon" && raw.live)
+    return { ...raw, icon: layerIcon(swaps, raw), fill: layerPaint(paints, raw) };
+  /* And this tile's own colour, where a shape has one. An icon takes it too —
+   * it is a shape wearing artwork, and a wall where each portrait's badge
+   * carries its own class colour is the reason to ask for this at all. */
+  if (raw.kind === "shape" && raw.live) return { ...raw, fill: layerPaint(paints, raw) };
+  return raw;
+}
+
 /** Fills `canvas` with the whole wall. Backgrounds are inert; layers are
  *  interactive when `interactive` is set (the editor) and not when it is not
  *  (export, previews, golden tests). */
@@ -1233,20 +1270,7 @@ export async function buildGrid(
        * the forty-fourth, and the tile is the only place that can say so. The
        * Layout still owns the design; framed() is a difference from it. */
       const l = framed(
-        raw.kind === "image" && raw.live
-          ? { ...raw, asset: layerAsset(swaps, raw) }
-          : /* And this tile's own class, where it names one. Same map, same
-             * bargain: the Layout places and colours the icon once, each
-             * portrait says which class it is. */
-            raw.kind === "shape" && raw.shape === "icon" && raw.live
-            ? { ...raw, icon: layerIcon(swaps, raw), fill: layerPaint(paints, raw) }
-            : /* And this tile's own colour, where a shape has one. An icon
-               * takes it too — it is a shape wearing artwork, and a wall where
-               * each portrait's badge carries its own class colour is the
-               * reason to ask for this at all. */
-              raw.kind === "shape" && raw.live
-              ? { ...raw, fill: layerPaint(paints, raw) }
-              : raw,
+        asTileShows(raw, swaps, paints),
         /* isLiveCopy and not `raw.live`: a caption is live whether or not it
          * carries the flag — the ones stamped before the flag existed have
          * none — and a layer the tile owns outright has nothing to differ
@@ -1386,8 +1410,18 @@ export async function buildLayout(
    * mosaic where there is one, the game's own portrait otherwise — through the
    * same function the wall uses, so the two cannot disagree about what a tile
    * looks like. Absent for the stamp and the golden tests, which must render
-   * the design and nothing under it. */
-  under?: { id: string; base: Base },
+   * the design and nothing under it.
+   *
+   * `content` carries that tile's own answers up into the layers as well, so a
+   * caption reads "Nachtklinge" rather than "text01" and a badge wears the
+   * class the portrait is. `except` is the layers being edited, which keep
+   * showing the Layout's own — see the note in layoutObjects for why that is
+   * load-bearing rather than a nicety.
+   *
+   * Deliberately not the tile's placement: framed() is one portrait's
+   * departure from the design, and a design shown at somebody's private offset
+   * is a design nobody is editing. */
+  under?: { id: string; base: Base; content?: Tile; except?: string[] },
 ): Promise<void> {
   /* Everything is built before anything is cleared. Emptying the canvas first
    * and then awaiting the pictures leaves it blank for as long as the loading
@@ -1395,10 +1429,26 @@ export async function buildLayout(
    * drag, one blank frame per edit. Held this way the old frame stays up until
    * the new one is ready to replace it in a single pass. */
   const bed = under ? await background(under.base, under.id, deps, { x: 0, y: 0 }) : undefined;
-  const objs = await layoutObjects(layout.layers, deps, interactive, { dx: 0, dy: 0 }, false, 1, {
-    root: layout.layers,
-    stencils,
-  });
+  const over =
+    under?.content && under.id
+      ? {
+          id: under.id,
+          text: under.content.text ?? {},
+          swap: under.content.swap ?? {},
+          paint: under.content.paint ?? {},
+          except: new Set(under.except ?? []),
+        }
+      : undefined;
+  const objs = await layoutObjects(
+    layout.layers,
+    deps,
+    interactive,
+    { dx: 0, dy: 0 },
+    false,
+    1,
+    { root: layout.layers, stencils },
+    over,
+  );
   canvas.remove(...canvas.getObjects());
   if (bed) canvas.add(bed);
   for (const obj of objs) canvas.add(obj);
@@ -1408,6 +1458,16 @@ export async function buildLayout(
 /** What a layer needs to know about masking that its own fields cannot say:
  *  where to look a mask id up, and which shapes have stopped being pictures. */
 type Masking = { root: Layer[]; stencils: Set<string> };
+
+/** The portrait a Layout is being composed against, and the layers that must
+ *  keep showing the Layout's own content while they are edited. */
+type Over = {
+  id: string;
+  text: Record<string, string>;
+  swap: Record<string, string>;
+  paint: Record<string, Paint>;
+  except: Set<string>;
+};
 
 /** Builds the clip path for one layer, or nothing when it has no mask.
  *
@@ -1478,6 +1538,10 @@ async function layoutObjects(
   locked: boolean,
   fade: number,
   masking: Masking,
+  /* One portrait's answers, so the composition is judged against "Nachtklinge"
+   * and a Sorceress badge rather than against "text01" and the placeholder
+   * class. Absent everywhere but the Layout editor. */
+  over?: Over,
 ): Promise<fabric.Object[]> {
   const out: fabric.Object[] = [];
   for (const l of layers) {
@@ -1495,12 +1559,31 @@ async function layoutObjects(
           locked || !!l.locked,
           fade * l.opacity,
           masking,
+          over,
         )),
       );
       continue;
     }
     const placed = { ...l, x: l.x + shift.dx, y: l.y + shift.dy, opacity: l.opacity * fade } as Layer;
-    let obj = await layerObject(placed, deps, { w: TILE_W, h: TILE_H, x: 0, y: 0 }, "", {});
+    /* The layer being edited keeps showing the Layout's own content, and that
+     * exception is load-bearing rather than a nicety. layerText reads the
+     * tile's wording in preference to the layer's, so a caption drawn as
+     * "Nachtklinge" while its own text is being typed swallows every keystroke
+     * — what is on the canvas is what gets written back. And setLayerField
+     * moves a flush caption by a width measured from what is drawn, which would
+     * be the wrong string. The layer under your hands tells the truth about
+     * itself; its neighbours show you the wall. */
+    const mine = over && !over.except.has(l.id) ? over : undefined;
+    const shown = mine ? asTileShows(placed, mine.swap, mine.paint) : placed;
+    // Nothing to draw for a picture this tile turned off, same as on the wall.
+    if (shown.kind === "image" && !shown.asset) continue;
+    let obj = await layerObject(
+      shown,
+      deps,
+      { w: TILE_W, h: TILE_H, x: 0, y: 0 },
+      mine?.id ?? "",
+      mine?.text ?? {},
+    );
     if (!obj) continue;
     const mask = await maskFor(l, deps, masking);
     if (mask) {

@@ -88,6 +88,11 @@ import {
 import { maskChoices, maskOffers } from "./lib/model";
 import { textWidth } from "./lib/scene";
 import {
+  canSaveLayout,
+  openLayoutDoc,
+  tileAsset,
+  tileIcons,
+  tileText,
   keepAllCharacters,
   keepCharacter,
   replaceAllCharacters,
@@ -1794,5 +1799,208 @@ describe("putting the game's own portraits back", () => {
     expect(restorableCount()).toBe(0);
     await restoreProject();
     expect(app.error).toContain("Nothing to put back");
+  });
+});
+
+describe("the dot on a Layout row", () => {
+  it("updates the stamps where it stands, without opening the Layout", async () => {
+    /* The dot was a span inside the name button and its tooltip read "open it
+     * and press Update stamps" — an instruction to go elsewhere, printed on the
+     * exact spot the eye was already on. saveLayout has been keyed by id for a
+     * while, so there was nothing to open. */
+    const [a] = app.folderIds;
+    app.selectedTiles = [a];
+    await newProjectFrom("Konto");
+    queuePick(await magentaSquare("punkt"));
+    await newLayoutDoc("Punkttest");
+    await addLayoutImage();
+    await closeLayoutDoc();
+    const id = layouts()[0].id;
+    await assignTileLayout(a, id);
+    const stamp = () =>
+      app.manifest.tiles[a].layers.find((l) => l.layoutId === id && !l.live) as ImageLayer;
+    const before = stamp().asset;
+
+    // Change the Layout, so the picture on the tile is now older than it.
+    openLayoutDoc(id);
+    await addLayoutText();
+    await closeLayoutDoc();
+    await until(() => canSaveLayout(id));
+
+    const dot = () =>
+      [...document.querySelectorAll("aside button")].find((b) =>
+        (b as HTMLElement).title.startsWith("Stamps are older"),
+      ) as HTMLButtonElement | undefined;
+    await until(() => !!dot());
+    dot()!.click();
+
+    // The mark goes when the work is done, and a different picture is on the
+    // tile — the dot disappearing on its own would prove only that it was hidden.
+    await until(() => !canSaveLayout(id));
+    expect(stamp().asset).not.toBe(before);
+    expect(app.openLayoutId).toBe("");
+    expect(dot()).toBeUndefined();
+  });
+});
+
+describe("the collapsed tile row", () => {
+  const row = (id: string) =>
+    document.querySelector(`[data-tile="${id}"] .grouphead .name`) as HTMLButtonElement | null;
+
+  /** One tile on a wall, wearing a Layout with a caption and a class icon. */
+  async function dressed() {
+    const [a] = app.folderIds;
+    app.selectedTiles = [a];
+    await newProjectFrom("Konto");
+    openProjectView(projects()[0].id);
+    await newLayoutDoc("Zeilentest");
+    await addLayoutText();
+    await addLayoutShape("icon", "Ranger");
+    // Both have to travel to the tiles, or the tile owns neither its wording
+    // nor its class and the row has nothing of its own to show.
+    for (const l of openLayout()!.layers) await setLayerField(l.id, "perTile", true);
+    await closeLayoutDoc();
+    await assignTileLayout(a, layouts()[0].id);
+    /* The list is behind its heading, and the heading is a real button — a test
+     * that reached past it would keep passing after the rows stopped being
+     * reachable. */
+    const heading = [...document.querySelectorAll("aside button")].find((b) =>
+      b.textContent!.includes("On this wall"),
+    ) as HTMLButtonElement;
+    heading.click();
+    await until(() => !!row(a));
+    return a;
+  }
+
+  it("leads with what the tile says and keeps the id on the second line", async () => {
+    /* "40000000005773694" identifies a file and nobody else. At forty-four
+     * portraits the list was a column of digits to be matched against the wall
+     * by counting. */
+    const a = await dressed();
+
+    // Unnamed: the id is still the headline, and it is not printed twice.
+    expect(row(a)!.textContent).toContain(a);
+    expect(row(a)!.querySelector(".usage")!.textContent).not.toContain(a);
+
+    await setTileText(a, tileCaptions(a)[0].id, "Nachtklinge");
+
+    await until(() => !!row(a)?.textContent?.includes("Nachtklinge"));
+    // The number stays: it is what the folder is sorted by, and the only way to
+    // line a row up with a file.
+    expect(row(a)!.querySelector(".usage")!.textContent).toContain(a);
+  });
+
+  it("takes its headline from this tile, never from the Layout's default", async () => {
+    /* The default belongs to every tile wearing that Layout, so a headline read
+     * from it is forty-four rows all saying "text01" — the same column of
+     * identical strings the id was. */
+    const a = await dressed();
+    const caption = tileCaptions(a)[0];
+    expect(caption.text.length).toBeGreaterThan(0);
+
+    expect(row(a)!.textContent).not.toContain(caption.text);
+    expect(row(a)!.textContent).toContain(a);
+  });
+
+  it("opens the class grid for that tile, from the row", async () => {
+    // The class is half of "who is this" and used to be one expand away, so a
+    // wall being dressed was read by opening forty-four rows one at a time.
+    const a = await dressed();
+    const icon = document.querySelector(`[data-tile="${a}"] .grouphead .rowicon`) as HTMLButtonElement;
+    expect(icon).toBeTruthy();
+
+    icon.click();
+    await until(() => !!document.querySelector('[role="dialog"][aria-label="Class icons"]'));
+    // For this tile, not for the layer: picking here must not restyle the
+    // Layout out from under every other portrait wearing it.
+    expect(document.querySelector('[aria-label="Class icons"] h2')!.textContent).toContain(
+      "Class for this tile",
+    );
+
+    const witch = [...document.querySelectorAll(".icongrid button")].find(
+      (b) => (b as HTMLElement).title === "Witch",
+    ) as HTMLButtonElement;
+    witch.click();
+
+    await until(() => tileAsset(a, tileIcons(a)[0].id) === "Witch");
+    // And the Layout's own icon is untouched.
+    expect(tileIcons(a)[0].icon).toBe("Ranger");
+  });
+});
+
+describe("typing a wall's names", () => {
+  /** Three tiles on a wall, all wearing a Layout whose caption is per-tile. */
+  async function three() {
+    const ids = app.folderIds.slice(0, 3);
+    app.selectedTiles = [...ids];
+    await newProjectFrom("Konto");
+    openProjectView(projects()[0].id);
+    await newLayoutDoc("Namen");
+    await addLayoutText();
+    await setLayerField(openLayout()!.layers[0].id, "perTile", true);
+    await closeLayoutDoc();
+    for (const id of ids) await assignTileLayout(id, layouts()[0].id);
+    const heading = [...document.querySelectorAll("aside button")].find((b) =>
+      b.textContent!.includes("On this wall"),
+    ) as HTMLButtonElement;
+    heading.click();
+    await until(() => !!document.querySelector(`[data-tile="${ids[0]}"]`));
+    return ids;
+  }
+
+  const field = (id: string) =>
+    document.querySelector<HTMLInputElement>(`[data-tile="${id}"] .field input`);
+
+  async function typeInto(id: string, text: string) {
+    const input = field(id)!;
+    input.value = text;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await until(() => tileText(id, tileCaptions(id)[0].id) === text);
+  }
+
+  const enter = (id: string, shift = false) =>
+    field(id)!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: shift, bubbles: true }));
+
+  it("carries the cursor into the next tile, and closes the one behind it", async () => {
+    /* Naming a wall is the one job here that is forty-four of the same thing,
+     * and the list is an accordion: without this, every name costs a reach for
+     * the mouse to open the next row. */
+    const [a, b] = await three();
+    document.querySelector<HTMLButtonElement>(`[data-tile="${a}"] .twisty`)!.click();
+    await until(() => !!field(a));
+    await typeInto(a, "Nachtklinge");
+
+    enter(a);
+
+    await until(() => !!field(b));
+    expect(document.activeElement).toBe(field(b));
+    // Closed behind you, or the next row is a metre down the page by tile ten.
+    expect(field(a)).toBeNull();
+  });
+
+  it("goes back on Shift+Enter and stops at both ends", async () => {
+    const [a, b, c] = await three();
+    document.querySelector<HTMLButtonElement>(`[data-tile="${a}"] .twisty`)!.click();
+    await until(() => !!field(a));
+
+    enter(a);
+    await until(() => !!field(b));
+    enter(b, true);
+    await until(() => !!field(a));
+    expect(document.activeElement).toBe(field(a));
+
+    // The first row has nowhere to go back to, and the row stays put.
+    enter(a, true);
+    await until(() => document.activeElement !== field(a));
+    expect(field(a)).toBeTruthy();
+
+    // And the last row does not wrap round to the first: a second pass that
+    // started itself would type over the name just given.
+    document.querySelector<HTMLButtonElement>(`[data-tile="${c}"] .twisty`)!.click();
+    await until(() => !!field(c));
+    enter(c);
+    await until(() => document.activeElement !== field(c));
+    expect(field(c)).toBeTruthy();
+    expect(field(a)).toBeNull();
   });
 });

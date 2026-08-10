@@ -107,6 +107,7 @@
     setTileAsset,
     tileAsset,
     tileCaptions,
+    tileHeadline,
     tileImageChoices,
     tileFrame,
     tileIcons,
@@ -366,6 +367,33 @@
     for (const tile of visibleIds()) open.delete(tile);
     if (!wasOpen) open.add(id);
     open = new Set(open);
+  }
+
+  /** Enter walks the tile list: this row closes, the next one opens, and the
+   *  cursor lands in its wording field. Shift+Enter goes back.
+   *
+   *  Naming a wall is the one job here that is forty-four of the same thing,
+   *  and it was forty-four reaches for the mouse — the list is an accordion, so
+   *  the next row has no field to jump into until something opens it. The row
+   *  is left closed behind you, which is what keeps the next one on screen
+   *  instead of a metre down the page.
+   *
+   *  Within the list the row is in: a drawer's tiles walk that drawer, loose
+   *  ones walk the loose pile. Nothing wraps at the end — a second pass that
+   *  starts itself would type over the first name. */
+  async function stepName(e: KeyboardEvent, from: string, inGroup: string) {
+    e.preventDefault();
+    (e.currentTarget as HTMLInputElement).blur();
+    const list = inGroup ? (folders().find((f) => f.id === inGroup)?.tiles ?? []) : looseIds();
+    const next = list[list.indexOf(from) + (e.shiftKey ? -1 : 1)];
+    if (!next) return;
+    toggleTileRow(next);
+    await tick();
+    const field = document.querySelector<HTMLInputElement>(`[data-tile="${next}"] .field input`);
+    field?.focus();
+    field?.select();
+    // `nearest`, so a row already in view is not yanked to the top of the pane.
+    field?.closest(".group")?.scrollIntoView({ block: "nearest" });
   }
 
   /** The sidebar's scroller, and whether it has travelled far enough that
@@ -1246,6 +1274,8 @@
 {#snippet tileRow(id: string, inGroup: string)}
   {@const own = stampsOf(tileLayers(id))}
   {@const owner = tileProject(id)}
+  {@const said = tileHeadline(id)}
+  {@const badge = tileIcons(id)[0]}
   <div
     class="group"
     role="presentation"
@@ -1269,14 +1299,52 @@
            for nobody. -->
       <canvas class="thumb" width="31" height="40" use:portrait={{ id, ready: !!app.deps }}
       ></canvas>
+      <!-- The class, beside the face. Both answer "who is this", and both used
+           to be one expand away — so a wall being dressed was read by opening
+           forty-four rows one at a time. Pressable, and it opens the same
+           artwork grid the expanded row does: the picture is already the
+           control everywhere else in this app, and a row that shows a class
+           without letting you change it is a row you have to expand anyway. -->
+      {#if badge}
+        {@const showing = tileAsset(id, badge.id) ?? badge.icon}
+        <button
+          class="rowicon"
+          title={showing ? `${showing} — pick another class` : "Pick a class"}
+          onclick={() => {
+            iconTarget = { tile: id, layer: badge.id };
+            iconsOpen = true;
+          }}
+        >
+          {#if showing && iconArt(showing)}
+            {@const art = iconArt(showing)!}
+            <svg viewBox="0 0 {art.w} {art.h}" aria-hidden="true">
+              {#each art.paths as p, i (i)}
+                <path d={p.d} fill="#ffffff" fill-opacity={p.opacity} fill-rule="evenodd" />
+              {/each}
+            </svg>
+          {:else}
+            +
+          {/if}
+        </button>
+      {/if}
       <button
         class="name"
         onclick={(e) => toggleTile(id, { ctrl: e.ctrlKey, shift: e.shiftKey })}
         title="Picks this tile on the wall · Ctrl adds one, Shift takes the range"
       >
-        {id}
+        <!-- What the tile says, not what it is called on disk.
+             "40000000005773694" identifies a file and nobody else, and at
+             forty-four portraits the list was a column of digits to be matched
+             against the wall by counting. The number stays — it is what the
+             folder is sorted by and the only way to line a row up with a file —
+             but as the second line, where the layout count already lives.
+
+             A tile that has not been named keeps the id as its headline, so
+             the row never loses the one thing that always identifies it. -->
+        {said || id}
         <span class="usage">
-          {own.length ? `${own.length} layout(s)` : owner ? "no layout" : "unassigned"}
+          {#if said}{id} &middot;
+          {/if}{own.length ? `${own.length} layout(s)` : owner ? "no layout" : "unassigned"}
         </span>
       </button>
       {#if inGroup}
@@ -1329,6 +1397,7 @@
             value={tileText(id, caption.id) ?? ""}
             placeholder={caption.text}
             oninput={(e) => void setTileText(id, caption.id, e.currentTarget.value)}
+            onkeydown={(e) => e.key === "Enter" && void stepName(e, id, inGroup)}
           />
           <button
             title="Use the layer's default text again"
@@ -2158,27 +2227,39 @@
                      document, unmount this row, and the second click would
                      land on nothing, which is exactly how layouts were
                      unrenamable for a while. -->
+                <!-- The same dot the stamp rows carry, one level up. Those are
+                     inside a tile that has to be expanded to be seen, so
+                     closing a Layout after editing left the wall looking
+                     finished while it was showing older art.
+
+                     And it is the button now. It used to be a span inside the
+                     name, whose tooltip read "open it and press Update stamps"
+                     — an instruction to go somewhere else and press a button,
+                     printed on the exact spot the eye was already on.
+                     saveLayout has been keyed by id for a while, so there was
+                     nothing to open. A button cannot be nested in a button,
+                     which is why it moved out here rather than growing an
+                     onclick where it stood.
+
+                     Before the name, because the name is what gets ellipsised
+                     and a dot behind "…" is no dot at all. -->
+                {#if canSaveLayout(layout.id)}
+                  <button
+                    class="dirty"
+                    disabled={!!app.busy}
+                    title="Stamps are older than this Layout — press to update them"
+                    onclick={() => void saveLayout(layout.id)}>●</button
+                  >
+                {/if}
                 <!-- `inert-name`, because it is the one name button in this
                      sidebar a single click does nothing with, and it looked
                      exactly like the ones that respond. -->
                 <button
                   class="name inert-name"
                   ondblclick={() => (renaming = layout.id)}
-                  title={canSaveLayout(layout.id)
-                    ? "Stamps are older than this Layout — open it and press Update stamps"
-                    : "Double-click to rename — the pencil opens it"}
+                  title="Double-click to rename — the pencil opens it"
                 >
-                  <!-- The same dot the stamp rows carry, one level up. Those
-                       are inside a tile that has to be expanded to be seen, so
-                       closing a Layout after editing left the wall looking
-                       finished while it was showing older art. canSaveLayout
-                       already answers it; this is only where it is asked.
-
-                       Before the name, because the name is what gets
-                       ellipsised and a dot behind "…" is no dot at all. -->{#if canSaveLayout(layout.id)}<span
-                      class="dirty"
-                      title="Stamps are older than this Layout">●&nbsp;</span
-                    >{/if}{layout.name}
+                  {layout.name}
                   <!-- Both numbers, because they answer different questions:
                        the stamps are what a refresh or a delete touches, the
                        tiles are how much of the wall wears the design. One
@@ -3145,6 +3226,22 @@
     height: auto;
     color: #a685ff;
   }
+  /* Beside the portrait, at the portrait's height and no wider than it needs.
+     Not the 32px box the row's other buttons get: this one has to read as a
+     second picture next to the face, not as a control competing with ↩. */
+  .rowicon {
+    flex: none;
+    min-width: 20px;
+    width: 20px;
+    padding: 0;
+    border-color: transparent;
+    background: none;
+    color: #8f88a8;
+  }
+  .rowicon svg {
+    width: 18px;
+    height: 18px;
+  }
   .twisty {
     min-width: 22px;
     padding: 0;
@@ -3267,6 +3364,18 @@
   }
   .dirty {
     color: #ffc45c;
+  }
+  /* The dot on a Layout row is a control, not punctuation — but it has to keep
+     reading as the mark it replaced, so it drops the 32px box every other
+     button in a row gets. A fourth icon beside ✎ ⧉ × would have pushed the
+     name into an ellipsis on a sidebar this narrow. */
+  button.dirty {
+    flex: none;
+    min-width: 0;
+    width: 16px;
+    padding: 0;
+    border-color: transparent;
+    background: none;
   }
   /* On the "?" button, over its top right corner. Positioned against the
      button rather than sitting in its text, so the glyph stays centred and the

@@ -294,13 +294,17 @@ export const bedChoices = () => (openProject()?.order ?? inbox()).slice();
 
 /** The one currently under the sheet.
  *
- *  Chosen for you until you choose: the first tile already wearing this Layout,
- *  since that is the one whose result is being judged; failing that the first
- *  tile of the wall, so a Layout that has never been stamped still has a face
- *  under it. */
+ *  Chosen for you until you choose: the tile picked on the wall, because
+ *  opening a Layout starts with a portrait that looks wrong and the one under
+ *  the sheet should be that portrait. Failing that the first tile already
+ *  wearing this Layout, since that is the one whose result is being judged;
+ *  failing that the first tile of the wall, so a Layout that has never been
+ *  stamped still has a face under it. */
 export const bedFor = (layoutId: string): string => {
   const choices = bedChoices();
   if (bedTile && choices.includes(bedTile)) return bedTile;
+  const picked = app.selectedTiles.find((id) => choices.includes(id));
+  if (picked) return picked;
   const wearing = choices.find((id) =>
     (app.manifest.tiles[id]?.layers ?? []).some((l) => l.layoutId === layoutId),
   );
@@ -576,6 +580,25 @@ export const tileIcons = (tileId: string): ShapeLayer[] =>
   drawnOn(tileId).filter(
     (l): l is ShapeLayer => l.kind === "shape" && l.shape === "icon" && !!l.live,
   );
+
+/** What one tile says, for the row that lists it collapsed.
+ *
+ *  This tile's own wording only, never the Layout's default. The default is
+ *  shared by every tile wearing that Layout, so a headline taken from it is
+ *  forty-four rows all reading "Text" — the exact column of identical strings
+ *  the id used to be. Same distinction the wording field already draws by
+ *  showing the default as a placeholder rather than a value: a tile that has
+ *  not been named says nothing, and gets its id back as a headline.
+ *
+ *  The first caption that carries something, because a Layout can hold several
+ *  and the name is the one at the top. */
+export const tileHeadline = (tileId: string): string => {
+  for (const caption of tileCaptions(tileId)) {
+    const own = tileText(tileId, caption.id)?.trim();
+    if (own) return own;
+  }
+  return "";
+};
 
 /** How many of these tiles wear that Layout. What the menu counts before it
  *  offers to take it off. */

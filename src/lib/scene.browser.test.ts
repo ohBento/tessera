@@ -1234,3 +1234,50 @@ describe("a tile's own placement of a cut layer", () => {
   });
 });
 
+
+describe("a Layout composed over a tile", () => {
+  /* Composing against "text01" and the placeholder class and finding out at the
+   * tenth character that it does not fit is the whole reason this exists. What
+   * the tile says shows through everywhere except on the layers being edited —
+   * see layoutObjects for why that exception is load-bearing. */
+  const sheet = async (except: string[], content: Parameters<typeof buildLayout>[5]) => {
+    const words = { ...newTextLayer(), id: "cap", text: "text01", perTile: true } as TextLayer;
+    words.x = 0.5;
+    words.y = 0.5;
+    const badge = { ...newShapeLayer("icon", "Ranger"), id: "bad", perTile: true } as ShapeLayer;
+    const layout: Layout = { id: "L1", name: "L", layers: [words, badge] };
+    const canvas = new fabric.StaticCanvas(undefined, {
+      width: TILE_W,
+      height: TILE_H,
+      enableRetinaScaling: false,
+    });
+    await buildLayout(canvas, layout, testDeps, false, undefined, { ...content!, except });
+    return canvas;
+  };
+
+  const drawnText = (canvas: fabric.StaticCanvas) =>
+    (canvas.getObjects().find((o) => o instanceof fabric.Textbox) as fabric.Textbox | undefined)?.text;
+
+  const tile = {
+    id: "t0",
+    base: null,
+    content: { ...emptyTile(), text: { cap: "Nachtklinge" }, swap: { bad: "Witch" } },
+  };
+
+  it("draws the tile's wording where the Layout only has a placeholder", async () => {
+    expect(drawnText(await sheet([], tile))).toBe("Nachtklinge");
+  });
+
+  it("gives the picked layer its own text back, so typing has something to type into", async () => {
+    /* layerText reads the tile's wording in preference to the layer's, and what
+     * is on the canvas is what gets written back — a caption drawn as
+     * "Nachtklinge" while its own text is being edited swallows the keystrokes. */
+    expect(drawnText(await sheet(["cap"], tile))).toBe("text01");
+  });
+
+  it("shows the Layout as written when no tile is under it", async () => {
+    // The stamp path and the golden tests render the design and nothing else.
+    expect(drawnText(await sheet([], { id: "t0", base: null }))).toBe("text01");
+  });
+
+});

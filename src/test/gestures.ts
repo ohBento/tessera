@@ -98,6 +98,23 @@ export async function clickScene(canvas: fabric.Canvas, x: number, y: number) {
   await frame();
 }
 
+/** The same layer, on the canvas as it stands now.
+ *
+ *  Picking a layer can rebuild the canvas — the Layout editor draws the tile's
+ *  wording and class everywhere except on the layers being edited, so which
+ *  layer is picked changes what is drawn. Every object is replaced when that
+ *  happens, and a reference taken before the pick then points at something no
+ *  longer on the canvas: the pointer events still land on the live object and
+ *  move it, while the test reads a detached one and sees nothing happen.
+ *
+ *  Measured as "expected 0 to be close to 24". Re-resolved by layerId rather
+ *  than worked around in each test, because the trap is in the harness. */
+const live = (canvas: fabric.Canvas, obj: fabric.Object) => {
+  if (canvas.getObjects().includes(obj)) return obj;
+  const id = (obj as { layerId?: string }).layerId;
+  return canvas.getObjects().find((o) => (o as { layerId?: string }).layerId === id) ?? obj;
+};
+
 /** Picks the object and drags it by (dx, dy) in scene units.
  *
  *  `during` is called after every move with the gesture still open — the state
@@ -116,8 +133,11 @@ export async function dragObject(
   canvas.requestRenderAll();
   await frame();
 
-  const c = obj.getCenterPoint();
+  const target = live(canvas, obj);
+  target.perPixelTargetFind = false;
+  const c = target.getCenterPoint();
   await gesture(canvas, clientAt(canvas, c.x, c.y), clientAt(canvas, c.x + dx, c.y + dy), steps, during);
+  return target;
 }
 
 /** Picks the object and drags one of its scale handles by (dx, dy).
@@ -139,8 +159,11 @@ export async function scaleObject(
   canvas.requestRenderAll();
   await frame();
 
-  obj.setCoords();
-  const point = obj.oCoords?.[corner];
+  // See live(): the pick itself can have replaced this object.
+  const target = live(canvas, obj);
+  target.perPixelTargetFind = false;
+  target.setCoords();
+  const point = target.oCoords?.[corner];
   if (!point) throw new Error(`no "${corner}" handle on this object`);
   await gesture(
     canvas,
