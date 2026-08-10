@@ -676,6 +676,15 @@ describe("what a gesture does to a mask", () => {
          the holes shrink and shrinks if they spread. Either way it must not
          move much — 23px sideways inside a strip 138 wide changes what the
          letters sit over, not how much of the strip is left. */
+      /* Zoomed in and scrolled off the origin, the way the sheet is actually
+         worked on — 149% in the recording. A clipPath with absolutePositioned
+         is placed in scene coordinates and drawn through the viewport, so a
+         viewport that is not the identity is the one thing separating this
+         harness from the report. */
+      canvas.setViewportTransform([1.49, 0, 0, 1.49, -180, -90]);
+      canvas.renderAll();
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+
       const paint = () => countColour(canvas, GREEN);
       const still = paint();
       let widest = still;
@@ -684,6 +693,25 @@ describe("what a gesture does to a mask", () => {
       });
       expect(widest).toBeLessThan(Math.round(still * 1.1));
       expect(paint()).toBeLessThan(Math.round(still * 1.1));
+
+      /* And what is drawn is where the model says it is. Everything above
+         compares Fabric's own numbers with each other, which cannot see a
+         canvas that is painting yesterday's arrangement — the report is that
+         the words move and the hole stays until a rebuild, and only pixels can
+         tell those apart. The mask is inverted, so the middle of the caption is
+         a hole: green there means the paint is drawn where the hole should be. */
+      const mid = stencil.getCenterPoint();
+      const dpr = canvas.getRetinaScaling();
+      const vt = canvas.viewportTransform;
+      const px = canvas.lowerCanvasEl
+        .getContext("2d", { willReadFrequently: true })!
+        .getImageData(
+          Math.round((mid.x * vt[0] + vt[4]) * dpr),
+          Math.round((mid.y * vt[3] + vt[5]) * dpr),
+          1,
+          1,
+        ).data;
+      expect({ r: px[0], g: px[1], b: px[2] }).not.toEqual({ r: 0, g: 255, b: 0 });
     } finally {
       await teardown();
     }
