@@ -4,14 +4,12 @@ import {
   DEFAULT_IMAGE_SCALE,
   DEFAULT_SHAPE_SIZE,
   DEFAULT_TEXT_SIZE,
-  deleteStampCascade,
   dissolveFolder,
   dropOrphanLiveLayers,
   droppedWork,
   folderOf,
   emptyManifest,
   emptyTile,
-  bakeable,
   duplicateLayout,
   findLayer,
   findList,
@@ -43,16 +41,11 @@ import {
   projectOf,
   projectTiles,
   clearBases,
-  pruneDeadLayoutRefs,
   pruneToFolder,
   removeFromProjectToInbox,
-  tilesWearing,
-  refreshStamps,
   relocateLayer,
-  stampInto,
   stencilIds,
   swapPlaced,
-  syncLiveLayers,
   type ImageLayer,
   removeLayerFrom,
   resolveLayers,
@@ -62,6 +55,15 @@ import {
   type Manifest,
   type TextLayer,
 } from "./model";
+import {
+  deleteStampCascade,
+  bakeable,
+  pruneDeadLayoutRefs,
+  tilesWearing,
+  refreshStamps,
+  stampInto,
+  syncLiveLayers,
+} from "./stamps";
 
 /** Three tiles in one project, the shape everything below starts from. */
 const withProject = (): Manifest => {

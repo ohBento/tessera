@@ -15,12 +15,9 @@ import {
   findLayer,
   groupShift,
   isGradient,
-  isLiveCopy,
   framed,
   layerAsset,
   layerPaint,
-  layerShows,
-  offLayouts,
   layerIcon,
   layerText,
   nestingShift,
@@ -37,6 +34,11 @@ import {
   type TextLayer,
   type Tile,
 } from "./model";
+import {
+  isLiveCopy,
+  layerShows,
+  offLayouts,
+} from "./stamps";
 
 /** Which wall to draw: an ordered, dense list of tile ids — position n is grid
  *  slot n — and the layers spread across the whole of it.

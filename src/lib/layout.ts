@@ -6,7 +6,13 @@
 import * as fabric from "fabric";
 
 import { TILE_H, TILE_W } from "./bmp";
-import { bakeable, stencilIds, type Layout } from "./model";
+import {
+  stencilIds,
+  type Layout,
+} from "./model";
+import {
+  bakeable,
+} from "./stamps";
 import { buildLayout, type SceneDeps } from "./scene";
 
 /** Renders a Layout at tile resolution and returns it as PNG bytes.

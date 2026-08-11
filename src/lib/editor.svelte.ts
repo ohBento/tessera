@@ -8,9 +8,6 @@ import { renderLayout } from "./layout";
 import {
   bakeMosaicInto,
   clearBases,
-  deleteStampCascade,
-  isLiveCopy,
-  stampFamily,
   dissolveFolder,
   duplicateLayers,
   duplicateLayout,
@@ -42,8 +39,6 @@ import {
   projectTiles,
   pruneToFolder,
   putInFolder,
-  pruneDeadLayoutRefs,
-  refreshStamps,
   removeFromProjectToInbox,
   relocateLayer,
   restoreProjectInto,
@@ -52,11 +47,8 @@ import {
   shiftLayer,
   stripTile,
   walkLayers,
-  stampInto,
   swapPlaced,
   takeOutOfFolder,
-  syncLiveLayers,
-  tilesWearing,
   unplaceTile,
   type Frame,
   type ImageLayer,
@@ -71,6 +63,16 @@ import {
   type ShapeLayer,
   type TextLayer,
 } from "./model";
+import {
+  deleteStampCascade,
+  isLiveCopy,
+  stampFamily,
+  pruneDeadLayoutRefs,
+  refreshStamps,
+  stampInto,
+  syncLiveLayers,
+  tilesWearing,
+} from "./stamps";
 import {
   defaultDir,
   importAsset,

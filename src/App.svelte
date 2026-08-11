@@ -137,16 +137,8 @@
   import { isTyping } from "./lib/geometry";
   import { ICON_NAMES, iconArt } from "./lib/icons";
   import { savePending } from "./lib/project";
-  import {
-    findLayer,
-    isGradient,
-    isLiveCopy,
-    layerLabel,
-    layerShows,
-    layoutNeedsRestamp,
-    offLayouts,
-    type Layer,
-  } from "./lib/model";
+  import { findLayer, isGradient, layerLabel, layoutNeedsRestamp, type Layer } from "./lib/model";
+  import { isLiveCopy, layerShows, offLayouts } from "./lib/stamps";
 
   const editing = $derived(openLayout());
 

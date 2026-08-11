@@ -79,12 +79,14 @@ import {
   groupShift,
   isGradient,
   layerLabel,
-  layerShows,
-  offLayouts,
   type ImageLayer,
   type ShapeLayer,
   type TextLayer,
 } from "./lib/model";
+import {
+  layerShows,
+  offLayouts,
+} from "./lib/stamps";
 import { maskChoices, maskOffers } from "./lib/model";
 import { textWidth } from "./lib/scene";
 import {

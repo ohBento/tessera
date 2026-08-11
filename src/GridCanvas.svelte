@@ -34,15 +34,8 @@
     snapScale,
     type Tagged,
   } from "./lib/scene";
-  import {
-    framed,
-    isLiveCopy,
-    layerAsset,
-    layerShows,
-    layerText,
-    offLayouts,
-    type Layer,
-  } from "./lib/model";
+  import { framed, layerAsset, layerText, type Layer } from "./lib/model";
+  import { isLiveCopy, layerShows, offLayouts } from "./lib/stamps";
 
   /* On while the placing tool is chosen in App's toolbar. The wall has no other
      mode, and that is deliberate — see the note on frameAt below. */
