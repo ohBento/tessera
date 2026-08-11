@@ -5,9 +5,12 @@ import {
   canRedo,
   canUndo,
   checkpoint,
+  discard,
   emptyHistory,
   endRun,
+  jump,
   redo,
+  timeline,
   undo,
   type History,
 } from "./history";
@@ -196,5 +199,129 @@ describe("snapshots", () => {
     checkpoint(h, live, "Edit");
     live.n = 2;
     expect(h.past[0].state.n).toBe(2);
+  });
+});
+
+describe("the list a history panel draws", () => {
+  /** Three edits: "" -> A -> B -> C, the way the editor drives it. */
+  function three() {
+    const h = emptyHistory<string>();
+    checkpoint(h, "", "First");
+    checkpoint(h, "A", "Second");
+    checkpoint(h, "B", "Third");
+    return h;
+  }
+
+  it("lists every edit newest first, all of them in force", () => {
+    expect(timeline(three())).toEqual([
+      { label: "Third", delta: -1, done: true },
+      { label: "Second", delta: -2, done: true },
+      { label: "First", delta: -3, done: true },
+    ]);
+  });
+
+  it("keeps an undone edit on the list, on the other side of now", () => {
+    /* The point of the panel: what you took back is still there to go forward
+       to, named, rather than a redo button that says nothing. */
+    const h = three();
+    undo(h, "C");
+    expect(timeline(h)).toEqual([
+      { label: "Third", delta: 1, done: false },
+      { label: "Second", delta: -1, done: true },
+      { label: "First", delta: -2, done: true },
+    ]);
+  });
+
+  it("is empty before anything has been done", () => {
+    expect(timeline(emptyHistory<string>())).toEqual([]);
+  });
+
+  it("hands each row the delta that reaches it", () => {
+    /* The contract between the list and jump: clicking a row and passing its
+       own delta lands on that row's state, whichever direction it lies in. */
+    const h = three();
+    expect(jump(h, "C", -2)?.state).toBe("A");
+    // Now standing at A, with Second and Third undone.
+    const rows = timeline(h);
+    expect(rows.map((r) => [r.label, r.delta])).toEqual([
+      ["Third", 2],
+      ["Second", 1],
+      ["First", -1],
+    ]);
+    expect(jump(h, "A", 2)?.state).toBe("C");
+  });
+});
+
+describe("jumping several steps at once", () => {
+  it("lands where a run of single undos would have", () => {
+    const h = emptyHistory<string>();
+    checkpoint(h, "", "First");
+    checkpoint(h, "A", "Second");
+    checkpoint(h, "B", "Third");
+
+    const far = emptyHistory<string>();
+    checkpoint(far, "", "First");
+    checkpoint(far, "A", "Second");
+    checkpoint(far, "B", "Third");
+    let state = "C";
+    for (let i = 0; i < 3; i++) state = undo(far, state)!.state;
+
+    expect(jump(h, "C", -3)?.state).toBe(state);
+    expect(h.past.length).toBe(far.past.length);
+    expect(h.future.map((s) => s.label)).toEqual(far.future.map((s) => s.label));
+  });
+
+  it("stops at the end rather than throwing when asked for too much", () => {
+    /* The list and the stacks are drawn from the same place, so a delta that
+       overshoots means they disagreed — and landing at the end is a better
+       answer to that than an exception halfway through a mutation. */
+    const h = emptyHistory<string>();
+    checkpoint(h, "", "First");
+    expect(jump(h, "A", -9)?.state).toBe("");
+    expect(canUndo(h)).toBe(false);
+  });
+
+  it("does nothing at all when asked for no steps", () => {
+    const h = emptyHistory<string>();
+    checkpoint(h, "", "First");
+    expect(jump(h, "A", 0)).toBeUndefined();
+    expect(h.past.length).toBe(1);
+  });
+});
+
+describe("an edit that failed", () => {
+  it("leaves nothing to redo, because nothing happened", () => {
+    /* mutate rolls a throwing edit back and takes its checkpoint off. It used
+       to do that with undo(), which pops the same entry but *moves* it to the
+       redo stack — so after a failure the app offered to put back an edit that
+       never took place. Nobody saw it while the only witness was a Redo button
+       going live; a history list shows it by name. */
+    const h = emptyHistory<string>();
+    checkpoint(h, "A", "First");
+    checkpoint(h, "B", "Failed edit");
+    discard(h);
+    expect(h.past.map((s) => s.label)).toEqual(["First"]);
+    expect(canRedo(h)).toBe(false);
+    expect(timeline(h)).toEqual([{ label: "First", delta: -1, done: true }]);
+  });
+
+  it("still forks the timeline, because the checkpoint came first", () => {
+    /* Attempting an edit after an undo drops what was waiting to be put back,
+       and that happens whether or not the edit then succeeds: checkpoint
+       clears `future` before `fn` runs, and it cannot know what `fn` is about
+       to do. So a failed edit costs the redo stack.
+
+       Written down rather than fixed. Giving it back means checkpoint
+       remembering what it cleared and discard restoring it — a third field on
+       a proxied object for an error path, and the last field added to this one
+       came with a trap of its own (see runKey). If losing a redo to a failed
+       edit ever bites in practice, that is the shape of the fix. */
+    const h = emptyHistory<string>();
+    checkpoint(h, "A", "First");
+    checkpoint(h, "B", "Second");
+    undo(h, "C");
+    checkpoint(h, "B", "Failed edit");
+    discard(h);
+    expect(h.future).toEqual([]);
   });
 });

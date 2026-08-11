@@ -7,10 +7,13 @@ import {
   canRedo,
   canUndo,
   checkpoint,
+  discard,
   emptyHistory,
   endRun,
   nextRedo,
   nextUndo,
+  jump,
+  timeline,
   redo,
   undo,
 } from "./history";
@@ -832,6 +835,12 @@ export const redoable = () => canRedo(history);
 export const undoLabel = () => nextUndo(history);
 export const redoLabel = () => nextRedo(history);
 
+/** Every edit still remembered, newest first — what the History list draws.
+ *  Reads `app.version` so the list redraws with the rest of the app: the
+ *  stacks are mutated in place, and a reader that watched only them would sit
+ *  on a stale render until something else happened to invalidate it. */
+export const historySteps = () => (app.version, timeline(history));
+
 /** Svelte's proxies do not survive the structured clone that Tauri's IPC and
  *  JSON.stringify perform on them the way a plain object does. */
 const plain = <T>(v: T): T => JSON.parse(JSON.stringify(v));
@@ -875,8 +884,12 @@ async function mutate(label: string, fn: () => void, structural = true, run?: st
     /* Only what this call put there. Inside an open run — a slider being
        dragged, a caption being typed — the checkpoint above pushed nothing,
        and undoing regardless popped the step belonging to the edit before it:
-       one unrelated undo destroyed, silently, by a failure somewhere else. */
-    if (pushed) undo(history, before);
+       one unrelated undo destroyed, silently, by a failure somewhere else.
+
+       Discarded rather than undone: nothing changed, so there is nothing to
+       put back, and undo would have left the failed edit sitting on the redo
+       stack under its own name. */
+    if (pushed) discard(history);
     return;
   }
   if (structural) app.version++;
@@ -920,6 +933,14 @@ async function travel(step: typeof undo<Manifest>, how: "Undone" | "Redone") {
 
 export const undoEdit = () => travel(undo, "Undone");
 export const redoEdit = () => travel(redo, "Redone");
+
+/** Goes to a named step in one move — what clicking a row of the History list
+ *  does. `delta` is the row's own: negative back, positive forward.
+ *
+ *  Shares travel's body rather than looping over undoEdit, so eight steps back
+ *  redraw the wall once and write the file once instead of eight times. */
+export const jumpEdit = (delta: number) =>
+  travel((h, present) => jump(h, present, delta), delta < 0 ? "Undone" : "Redone");
 
 /** The array a layer lives in: the open project's wall-spanning layers, or
  *  whichever tile's own stack holds it.

@@ -79,6 +79,8 @@
     placeTileAt,
     projects,
     redoEdit,
+    historySteps,
+    jumpEdit,
     redoLabel,
     redoable,
     releaseTilesToInbox,
@@ -1702,6 +1704,44 @@
           </button>
         {/if}
 
+        <!-- Every edit still remembered, newest first, with a line where you
+             are standing. Ctrl+Z already says what it will take back, but only
+             one step ahead; this is the same information for all two hundred,
+             and clicking a row goes there in one move instead of holding Ctrl+Z
+             and watching the wall flicker past what you wanted.
+
+             Undone edits stay on the list above the line rather than
+             disappearing, because "what did I just take back" is exactly the
+             question a redo button cannot answer. -->
+        <h2 class="spaced">
+          <button class="head" onclick={() => toggleOpen("history")} aria-expanded={isOpen("history")}>
+            <span class="twisty inline">{isOpen("history") ? "▾" : "▸"}</span>
+            History{#if historySteps().length}&nbsp;({historySteps().length}){/if}
+          </button>
+        </h2>
+        {#if isOpen("history")}
+          {#if !historySteps().length}
+            <p class="empty">Nothing done yet.</p>
+          {:else}
+            <ul>
+              {#each historySteps() as step, i (i)}
+                <!-- The line is drawn on the first row still in force rather
+                     than as a row of its own: a separator that can be clicked
+                     is a row, and there is no state to go to at "now". -->
+                <li class="step" class:undone={!step.done} class:now={step.done && step.delta === -1}>
+                  <button
+                    class="name"
+                    title={step.done
+                      ? `Go back to before "${step.label}"`
+                      : `Put "${step.label}" back`}
+                    onclick={() => void jumpEdit(step.delta)}>{step.label}</button
+                  >
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        {/if}
+
         {#if shelfIds().length}
           <!-- Collected but not placed. Sorting a wall is two jobs — decide
                which portraits belong to it, then decide where each one sits —
@@ -2064,6 +2104,21 @@
   .more {
     color: #6f688a;
     font-size: 11px;
+  }
+
+  /* An edit that has been taken back. Still listed, still clickable — it is
+     the only place that says what a redo would put back — but plainly not in
+     force, the same grey the app already uses for a hidden layer. */
+  .step.undone .name {
+    color: #6f688a;
+    font-style: italic;
+  }
+
+  /* Where you are standing, drawn on the newest edit still in force. A line
+     above it rather than a row of its own: a row can be clicked, and there is
+     no state to travel to at "now". */
+  .step.now {
+    border-top: 1px solid #a685ff;
   }
 
   .shelfrow {
