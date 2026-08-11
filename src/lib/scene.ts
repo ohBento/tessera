@@ -1134,10 +1134,25 @@ async function toTileCanvas(obj: fabric.Object): Promise<HTMLCanvasElement> {
  *  Tile-local coordinates on the way in, so the composite is one tile square
  *  and the caller places the result in its cell afterwards.
  *
- *  ponytail: two offscreen canvases per masked layer per tile, so a wall of
- *  forty-four costs eighty-eight small renders on every rebuild. Only masked
- *  per-tile layers pay it, which is a deliberate and rare arrangement. Cache by
- *  cutter + picture if a real wall ever feels slow. */
+ *  Two offscreen canvases per masked layer per tile, so a wall of forty-four
+ *  costs eighty-eight small renders on every rebuild. Measured (see
+ *  perf.browser.test.ts, "what a mask costs"): 321ms against 156ms for the
+ *  same wall unmasked — a mask roughly doubles the build, about 3.7ms a tile.
+ *
+ *  Left as it is, and the number is why rather than a shrug. Full rebuilds
+ *  stopped being the common case when rebuildTile landed: an edit redraws one
+ *  tile, and the whole wall is only rebuilt when its shape changes — reordered,
+ *  a wall picture moved, a project opened. 321ms there is not a wall anyone
+ *  waits on.
+ *
+ *  The cache this note used to prescribe — key on cutter + picture, the way
+ *  the icon bake in buildGrid does — is worth a caveat before anyone builds
+ *  it. It pays only where two tiles cut the same picture with the same shape,
+ *  and a masked layer that is the same on every tile would be baked into the
+ *  stamp rather than copied live onto each one. So the hit rate depends on
+ *  what people actually build, which the benchmark above cannot tell us: it
+ *  measures the cache's best case, forty-four identical composites. Measure a
+ *  real masked wall before writing the cache, not this one. */
 async function cutToShape(
   l: Layer,
   obj: fabric.Object,

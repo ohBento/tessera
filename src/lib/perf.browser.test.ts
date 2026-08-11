@@ -22,6 +22,7 @@ import {
   emptyTile,
   newImageLayer,
   newProject,
+  newShapeLayer,
   newTextLayer,
   type Manifest,
 } from "./model";
@@ -143,6 +144,61 @@ describe("what a rebuild is spent on", () => {
     } finally {
       await canvas.dispose();
     }
+  }, 120_000);
+});
+
+describe("what a mask costs", () => {
+  /* Settling the guess in cutToShape's ponytail note: a masked per-tile layer
+   * is composited through two offscreen canvases, so a wall pays that per
+   * masked layer per tile, on every rebuild. The note left it alone with
+   * "cache by cutter + picture if a real wall ever feels slow" — a condition
+   * nobody could check without a number. This is the number.
+   *
+   * The comparison is against the same wall with the mask taken off, so
+   * everything else — the pictures, the shapes, the paint — cancels.
+   *
+   * Every tile here cuts the same picture with the same shape, which is the
+   * best case a cache could ever have and not necessarily what anyone builds.
+   * It answers "what does masking cost", not "would caching help" — see the
+   * caveat on cutToShape before treating this number as a case for one. */
+  const masked = (count: number, cut: boolean): Manifest => {
+    const m = emptyManifest();
+    const p = newProject("Masked");
+    p.order = Array.from({ length: count }, (_, i) => `4000000000${String(i).padStart(6, "0")}`);
+    m.projects = [p];
+    for (const id of p.order) {
+      const cutter = { ...newShapeLayer("ellipse"), id: `cut-${id}`, live: true, layoutId: "L1" };
+      cutter.w = 0.5;
+      cutter.h = 0.5;
+      const pic = { ...newImageLayer("block:#00ff00"), id: `pic-${id}`, live: true, layoutId: "L1" };
+      pic.scale = 0.6;
+      if (cut) pic.maskId = cutter.id;
+      m.tiles[id] = { ...emptyTile(), layers: [cutter, pic] };
+    }
+    return m;
+  };
+
+  const build = async (m: Manifest, count: number) => {
+    const canvas = wallCanvas(count);
+    try {
+      await buildGrid(canvas, view(m), m, testDeps, true);
+      const start = performance.now();
+      await buildGrid(canvas, view(m), m, testDeps, true);
+      return performance.now() - start;
+    } finally {
+      await canvas.dispose();
+    }
+  };
+
+  it("compares a masked wall against the same wall unmasked", async () => {
+    const count = 44;
+    const plain = await build(masked(count, false), count);
+    const cut = await build(masked(count, true), count);
+    console.log(
+      `${count} tiles: masked ${cut.toFixed(0)}ms, unmasked ${plain.toFixed(0)}ms ` +
+        `(${(cut / plain).toFixed(1)}x, ${((cut - plain) / count).toFixed(1)}ms per masked tile)`,
+    );
+    expect(cut).toBeLessThan(FREEZE);
   }, 120_000);
 });
 
