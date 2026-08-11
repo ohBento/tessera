@@ -1,13 +1,12 @@
 /* Export renders the same scene the editor shows and moves a 624x804 window
  * across it, once per tile. There is no separate export renderer to keep in
  * sync — that is the whole point. */
-import * as fabric from "fabric";
 import { writeFile } from "./platform";
 
 import { encodeBmp32, TILE_H, TILE_W } from "./bmp";
 import { type Manifest } from "./model";
 import { hashBytes, loadFingerprints, saveFingerprints, tilePath, vaultOriginal } from "./project";
-import { buildGrid, cellAt, type SceneDeps, type Wall } from "./scene";
+import { buildGrid, cellAt, withTileCanvas, type SceneDeps, type Wall } from "./scene";
 
 /** Every placed tile of one wall as finished BMP bytes, keyed by tile id.
  *
@@ -20,14 +19,7 @@ export async function renderTiles(
   m: Manifest,
   deps: SceneDeps,
 ): Promise<Map<string, Uint8Array>> {
-  const canvas = new fabric.StaticCanvas(undefined, {
-    width: TILE_W,
-    height: TILE_H,
-    // Without this the backing store is multiplied by devicePixelRatio and
-    // getImageData hands back a differently sized buffer than encodeBmp32 wants.
-    enableRetinaScaling: false,
-  });
-  try {
+  return withTileCanvas(async (canvas) => {
     await buildGrid(canvas, wall, m, deps);
     const ctx = canvas.getElement().getContext("2d")!;
     const ids = wall.ids;
@@ -40,11 +32,7 @@ export async function renderTiles(
       out.set(id, encodeBmp32(ctx.getImageData(0, 0, TILE_W, TILE_H).data));
     }
     return out;
-  } finally {
-    // Fabric v6 disposes asynchronously; not awaiting it leaves the element
-    // half torn down and quietly corrupts the next canvas built on it.
-    await canvas.dispose();
-  }
+  });
 }
 
 /** Writes the rendered tiles into the game folder, vaulting each pristine

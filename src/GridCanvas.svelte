@@ -24,14 +24,15 @@
   import { TILE_H, TILE_W } from "./lib/bmp";
   import { cellIndexAt, cellsIn, isTyping, snapBox, type Guide } from "./lib/geometry";
   import {
-    applyCrop,
     buildGrid,
     cellAt,
     freeScale,
+    ghostImage,
     gridSize,
     layerSize,
     readBack,
     snapScale,
+    standRect,
     type Tagged,
   } from "./lib/scene";
   import { framed, layerAsset, layerText, type Layer } from "./lib/model";
@@ -160,21 +161,9 @@
     /* The ghost is a picture's alone. It exists because a mask hides most of
        what is being dragged; a caption and an icon draw themselves whole, so
        the frame is enough and a second faint copy would only be in the way.
-       ponytail: if a masked caption turns out to need one, the honest fix is
-       to render the layer through scene.ts rather than to load its file here. */
-    const drawn =
-      shown.kind === "image"
-        ? await fabric.FabricImage.fromURL(await app.deps.asset(shown.asset))
-        : undefined;
-    /* Trimmed and flipped the way the renderer does it, or the frame is the
-       shape of the whole file rather than of the part on the tile — four times
-       too tall on a picture cropped to a strip — and the ghost shows pixels the
-       wall does not. Crop first, then measure: `scale` is the width of what is
-       left, which is the whole point of the crop/scale distinction. */
-    if (drawn && shown.kind === "image") {
-      applyCrop(drawn, shown.crop);
-      drawn.set({ flipX: !!shown.flipX, flipY: !!shown.flipY });
-    }
+       ponytail: if a masked caption turns out to need one, extend ghostImage
+       in scene.ts — the renderer's reading of a layer lives there, not here. */
+    const drawn = shown.kind === "image" ? await ghostImage(shown, app.deps) : undefined;
     const height = drawn ? width * ((drawn.height || 1) / (drawn.width || 1)) : size.h * TILE_H;
 
     dropFrameTools();
@@ -191,19 +180,7 @@
       canvas.add(drawn);
     }
 
-    stand = new fabric.Rect({
-      ...place,
-      width,
-      height,
-      fill: "rgba(0,0,0,0.001)",
-      stroke: "#a685ff",
-      strokeWidth: 1,
-      strokeUniform: true,
-      selectable: true,
-      evented: true,
-      hasBorders: true,
-      objectCaching: false,
-    });
+    stand = standRect(place, width, height);
     /* What each kind may be resized by, offered as handles rather than only
        enforced on release — a handle you cannot honestly use is one that lies
        about what the drag will keep.

@@ -4,7 +4,14 @@
  *
  * Coordinates are grid pixels: the whole wall is COLS x rows tiles of
  * TILE_W x TILE_H. A tile is a window onto that, which is all "export tile n"
- * means — same scene, different viewportTransform. */
+ * means — same scene, different viewportTransform.
+ *
+ * Drawable objects are constructed here and only here. `new fabric.Rect`, a
+ * Textbox, `FabricImage.fromURL` and the cache-averse settings they need
+ * (see the objectCaching note near the cell clipping) do not belong in other
+ * files: a canvas component keeps its Canvas/Point/selection plumbing, but
+ * what gets drawn is built in this one, or the next cache trap lands in a
+ * file that has never heard of it. */
 import * as fabric from "fabric";
 
 import { TILE_H, TILE_W } from "./bmp";
@@ -98,6 +105,30 @@ export type SceneDeps = {
   asset: (name: string) => Promise<string>;
 };
 
+/** A tile-sized offscreen canvas, handed to `fn` and disposed however it ends.
+ *
+ *  The two offscreen renderers (BMP export, Layout stamp) share it so the
+ *  quirks live once:
+ *  - retina scaling off, or the backing store is multiplied by
+ *    devicePixelRatio and getImageData hands back a differently sized buffer
+ *    than encodeBmp32 wants;
+ *  - Fabric v6+ disposes asynchronously, and not awaiting it leaves the
+ *    element half torn down and quietly corrupts the next canvas built on it. */
+export async function withTileCanvas<T>(
+  fn: (canvas: fabric.StaticCanvas) => Promise<T>,
+): Promise<T> {
+  const canvas = new fabric.StaticCanvas(undefined, {
+    width: TILE_W,
+    height: TILE_H,
+    enableRetinaScaling: false,
+  });
+  try {
+    return await fn(canvas);
+  } finally {
+    await canvas.dispose();
+  }
+}
+
 /** Trims a picture to the part its layer shows.
  *
  *  Fabric's own cropX/cropY with width/height, which is a window onto the
@@ -181,6 +212,53 @@ async function imageObject(
     });
   }
   return img;
+}
+
+/* --- The placing tool's furniture — see GridCanvas. Built here rather than
+ * there so the renderer's own reading of a layer (crop, flip) and the
+ * cache-averse settings stay in the file that documents them. --- */
+
+/** The whole of a dragged picture, for the faint ghost a mask makes necessary.
+ *
+ *  Trimmed and flipped the way the renderer draws it, or the ghost is the
+ *  shape of the whole file rather than of the part on the tile — four times
+ *  too tall on a picture cropped to a strip — and shows pixels the wall does
+ *  not. Crop first, then measure: `scale` is the width of what is left, which
+ *  is the whole point of the crop/scale distinction. */
+export async function ghostImage(
+  l: Layer & { kind: "image" },
+  deps: SceneDeps,
+): Promise<fabric.FabricImage> {
+  const img = await fabric.FabricImage.fromURL(await deps.asset(l.asset));
+  applyCrop(img, l.crop);
+  img.set({ flipX: !!l.flipX, flipY: !!l.flipY });
+  return img;
+}
+
+/** The transparent stand-in the placing tool drags: the layer itself is baked
+ *  and clipped into its cell, so grabbing it would take the mask along — what
+ *  is dragged is a plain rectangle at the layer's place.
+ *
+ *  objectCaching off for the reason the cell clipping spells out below: a
+ *  cached object is drawn from a bitmap rendered before the latest change. */
+export function standRect(
+  place: { originX: "center"; originY: "center"; left: number; top: number; angle: number },
+  width: number,
+  height: number,
+): fabric.Rect {
+  return new fabric.Rect({
+    ...place,
+    width,
+    height,
+    fill: "rgba(0,0,0,0.001)",
+    stroke: "#a685ff",
+    strokeWidth: 1,
+    strokeUniform: true,
+    selectable: true,
+    evented: true,
+    hasBorders: true,
+    objectCaching: false,
+  });
 }
 
 /** Rounded corners and a frame, baked into the picture's own pixels.
