@@ -12,6 +12,7 @@
  * it drags anything.
  *
  * The styling half of the same story is rows.css. */
+import { visibleIds } from "./editor.svelte";
 import type { Layer } from "./model";
 
 /* --- Which rows are open ------------------------------------------------ */
@@ -51,9 +52,9 @@ export const reveal = (id: string) => {
  *  same set and stay independent of each other. A row carries the wording
  *  fields and the picture gallery now, so two of them open at once is a list
  *  you have to scroll past to reach the next id. */
-export function toggleTileRow(id: string, siblings: string[]) {
+export function toggleTileRow(id: string) {
   const wasOpen = rows.open.has(id);
-  for (const tile of siblings) rows.open.delete(tile);
+  for (const tile of visibleIds()) rows.open.delete(tile);
   if (!wasOpen) rows.open.add(id);
   replace();
 }

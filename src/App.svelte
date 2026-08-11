@@ -8,6 +8,8 @@
   import { latestRelease, releasePage } from "./lib/update";
 
   import ContextMenu, { type Item } from "./ContextMenu.svelte";
+  import RowIcon from "./RowIcon.svelte";
+  import TileRow from "./TileRow.svelte";
   import GridCanvas from "./GridCanvas.svelte";
   import LayoutCanvas from "./LayoutCanvas.svelte";
   import Properties from "./Properties.svelte";
@@ -300,6 +302,13 @@
      inserts a new layer. */
   let iconTarget = $state<{ tile?: string; layer: string } | null>(null);
 
+  /* How a tile row reaches the class grid. One sheet serves the window, so the
+     rows ask for it rather than each keeping their own. */
+  const openIcons = (target: { tile: string; layer: string }) => {
+    iconTarget = target;
+    iconsOpen = true;
+  };
+
   /** What the sheet lists. Written out rather than derived from the handler:
    *  half of these are canvas gestures that no handler declares, and a list
    *  that could drift is still better than a list nobody can find. */
@@ -370,7 +379,7 @@
     // used to sit under is gone, the drawers live in Tiles now.
     const path = drawer ? [drawer.id] : ["tiles"];
     if (path.some((key) => !isOpen(key))) for (const key of path) reveal(key);
-    if (picked.length === 1 && !isOpen(picked[0])) tileRowToggle(picked[0]);
+    if (picked.length === 1 && !isOpen(picked[0])) toggleTileRow(picked[0]);
     // After the row exists, not before — opening it is what creates it.
     void tick().then(() =>
       document.querySelector(`[data-tile="${first}"]`)?.scrollIntoView({ block: "nearest" }),
@@ -380,7 +389,7 @@
   /* The accordion needs to know which rows count as siblings, and only the
      wall knows that. Spelled once here rather than at each of the three call
      sites, so the answer cannot differ between them. */
-  const tileRowToggle = (id: string) => toggleTileRow(id, visibleIds());
+
 
   /** Enter walks the tile list: this row closes, the next one opens, and the
    *  cursor lands in its wording field. Shift+Enter goes back.
@@ -400,7 +409,7 @@
     const list = inGroup ? (folders().find((f) => f.id === inGroup)?.tiles ?? []) : looseIds();
     const next = list[list.indexOf(from) + (e.shiftKey ? -1 : 1)];
     if (!next) return;
-    tileRowToggle(next);
+    toggleTileRow(next);
     await tick();
     const field = document.querySelector<HTMLInputElement>(`[data-tile="${next}"] .field input`);
     field?.focus();
@@ -823,7 +832,7 @@
           title={layer.hidden ? "Show" : "Hide"}
           onclick={() => toggleLayoutLayerHidden(layer.id)}
         >
-          {@render eyeIcon(!!layer.hidden)}
+          <RowIcon name="eye" on={!!layer.hidden} />
         </button>
         <button
           class="eye"
@@ -831,7 +840,7 @@
           title={layer.locked ? "Unlock" : "Lock"}
           onclick={() => toggleLayerLocked(layer.id)}
         >
-          {@render lockIcon(!!layer.locked)}
+          <RowIcon name="lock" on={!!layer.locked} />
         </button>
         {#if renaming === layer.id}
           <!-- svelte-ignore a11y_autofocus -->
@@ -881,474 +890,11 @@
   </ul>
 {/snippet}
 
-<!-- Monochrome and drawn here, not typed as emoji. An emoji is rendered by the
-     system font in its own colours, which fights every theme it lands in and
-     changes shape between machines. These take currentColor and stay put. -->
-{#snippet eyeIcon(hidden: boolean)}
-  <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
-    <path
-      d="M1 7c1.8-2.7 3.8-4 6-4s4.2 1.3 6 4c-1.8 2.7-3.8 4-6 4s-4.2-1.3-6-4z"
-      fill="none"
-      stroke="currentColor"
-      stroke-width="1.2"
-    />
-    {#if hidden}
-      <line x1="2.5" y1="11.5" x2="11.5" y2="2.5" stroke="currentColor" stroke-width="1.2" />
-    {:else}
-      <circle cx="7" cy="7" r="1.9" fill="currentColor" />
-    {/if}
-  </svg>
-{/snippet}
 
-<!-- A crop frame with a picture's diagonal inside it — the mark every editor
-     uses for "which part of this shows". Shared by the tool in the rail and by
-     the button beside each of a tile's own layers, because pressing either
-     starts the same thing. -->
-{#snippet placeIcon(size: number)}
-  <svg width={size} height={size} viewBox="0 0 17 17" aria-hidden="true">
-    <path d="M4.5 1 V12.5 H16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-    <path d="M1 4.5 H12.5 V16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-    <path d="M6.5 10.5 L8.8 7.6 L10.4 9.4 L12 7.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" opacity="0.8" />
-  </svg>
-{/snippet}
 
-<!-- Where a tile says "this one, here". The tool needs a tile and one of its
-     live layers; both are on this row already, so the button hands it the pair
-     and switches the mode on rather than asking for three clicks in two places.
-     Beside it the way back: the layer as the Layout placed it. -->
-{#snippet placeRow(tileId: string, layer: Layer)}
-  {@const layerId = layer.id}
-  {@const on =
-    framing && app.selected === layerId && app.selectedTiles.length === 1 && app.selectedTiles[0] === tileId}
-  <!-- Asked, not read: a live copy's own `hidden` is the Layout's answer, and
-       the eye on its stamp is the tile's. Both switch it off. -->
-  {@const shows = layerShows(layer, offLayouts(tileLayers(tileId)))}
-  <button
-    class="swatch"
-    class:on
-    disabled={!shows}
-    title={shows
-      ? on
-        ? "Placing this on the wall — drag its frame"
-        : "Place this on this tile"
-      : "Switched off on this tile — nothing to place"}
-    onclick={() => {
-      app.selectedTiles = [tileId];
-      selectLayer(layerId);
-      framing = true;
-    }}
-  >
-    {@render placeIcon(13)}
-  </button>
-  <button
-    class="swatch"
-    title="Put it back where the Layout placed it"
-    disabled={!tileFrame(tileId, layerId)}
-    onclick={() => void clearTileFrame(tileId, layerId)}>⤢</button
-  >
-{/snippet}
 
-{#snippet lockIcon(locked: boolean)}
-  <!-- Three differences at once, because one was not enough to read at a
-       glance: the shackle closes, the body fills, and the button takes the
-       accent colour. The old icon changed only by whether a 1.6px leg reached
-       the body, which at 14px is a hairline nobody can see. -->
-  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-    <path
-      d={locked ? "M5.4 7.4V5.4a2.6 2.6 0 0 1 5.2 0v2" : "M5.4 7.4V5a2.6 2.6 0 0 1 5.2 0v0.6"}
-      fill="none"
-      stroke="currentColor"
-      stroke-width="1.5"
-      stroke-linecap="round"
-    />
-    <rect
-      x="2.75"
-      y="7.4"
-      width="10.5"
-      height="6.6"
-      rx="1.4"
-      fill={locked ? "currentColor" : "none"}
-      stroke="currentColor"
-      stroke-width="1.5"
-    />
-  </svg>
-{/snippet}
 
-<!-- The stamps on one holder — a group's stack or a single tile's own. Same
-     row either way, so `drop` is the only thing that differs: which list the
-     reorder writes back to. -->
-{#snippet stampRows(rows: Layer[], drop: (moving: string, beforeId: string | null) => void)}
-  <ul class="indent">
-    {#each rows as layer (layer.id)}
-      <li
-        class:selected={app.selected === layer.id}
-        aria-current={app.selected === layer.id ? "true" : undefined}
-        class:drop-before={drag.on?.id === layer.id && drag.on.where === "before"}
-        class:drop-after={drag.on?.id === layer.id && drag.on.where === "after"}
-        draggable="true"
-        ondragstart={(e) => startDrag(e, layer.id)}
-        ondragover={(e) => over(e, layer.id, false)}
-        ondragleave={() => drag.on?.id === layer.id && (drag.on = null)}
-        ondragend={endDrag}
-        ondrop={(e) => {
-          e.preventDefault();
-          const spot = drag.on;
-          const moving = drag.id;
-          endDrag();
-          if (!spot || !moving) return;
-          drop(moving, landing(rows, spot.id, spot.where, null).beforeId);
-        }}
-      >
-        <button
-          class="eye"
-          title={layer.hidden ? "Show" : "Hide"}
-          onclick={() => toggleLayerHidden(layer.id)}
-        >
-          {@render eyeIcon(!!layer.hidden)}
-        </button>
-        <button
-          class="eye"
-          class:on={layer.locked}
-          title={layer.locked ? "Unlock" : "Lock"}
-          onclick={() => toggleLayerLocked(layer.id)}
-        >
-          {@render lockIcon(!!layer.locked)}
-        </button>
-        <button
-          class="name"
-          class:dimmed={layer.hidden}
-          onclick={() => selectLayer(layer.id)}
-          ondblclick={() => layer.layoutId && openLayoutDoc(layer.layoutId)}
-          title={layer.layoutId ? "Double-click opens the layout" : "Select this layer"}
-        >
-<!-- Marker before the name, not after: the name is what gets
-               ellipsised when the row runs out of width, and a dot hidden
-               behind "…" is the same as no dot at all. -->{#if stampDirty(layer)}<span
-              class="dirty"
-              title="Layout changed — press Update stamps">●&nbsp;</span
-            >{/if}{stampName(layer)}
-        </button>
-        <button title="Delete" onclick={() => deleteLayer(layer.id)}>×</button>
-      </li>
-    {/each}
-  </ul>
-{/snippet}
 
-<!-- One tile, everywhere a tile is listed. Loose on the wall or put away in a
-     group, it is the same row with the same reach — sorting a portrait into a
-     drawer used to strip it of its wording fields and its picture gallery,
-     which made the drawer a place work went to die.
-
-     `inGroup` is the drawer holding it, "" when it is loose. The only
-     difference it makes is the way out: back to the pile, or off the wall. -->
-{#snippet tileRow(id: string, inGroup: string)}
-  {@const own = stampsOf(tileLayers(id))}
-  {@const owner = tileProject(id)}
-  {@const said = tileHeadline(id)}
-  {@const badge = tileIcons(id)[0]}
-  <div
-    class="group"
-    role="presentation"
-    data-tile={id}
-    onmouseenter={() => (app.hoverTile = id)}
-    onmouseleave={() => app.hoverTile === id && (app.hoverTile = "")}
-  >
-    <div
-      class="grouphead"
-      class:selected={app.selectedTiles.includes(id)}
-      aria-current={app.selectedTiles.includes(id) ? "true" : undefined}
-    >
-      <button class="twisty" onclick={() => tileRowToggle(id)}>
-        {isOpen(id) ? "▾" : "▸"}
-      </button>
-      <!-- The face, not the number. "40000000005773694" identifies a file and
-           nobody else; at sixty-eight portraits the list was a column of digits
-           to be matched against the wall by counting. The game's own picture,
-           deliberately, even where a mosaic is baked over the tile: this
-           answers "who is this", and a slice of some wall-wide image answers it
-           for nobody. -->
-      <canvas class="thumb" width="31" height="40" use:portrait={{ id, ready: !!app.deps }}
-      ></canvas>
-      <!-- The class, beside the face. Both answer "who is this", and both used
-           to be one expand away — so a wall being dressed was read by opening
-           forty-four rows one at a time. Pressable, and it opens the same
-           artwork grid the expanded row does: the picture is already the
-           control everywhere else in this app, and a row that shows a class
-           without letting you change it is a row you have to expand anyway. -->
-      {#if badge}
-        {@const showing = tileAsset(id, badge.id) ?? badge.icon}
-        <button
-          class="rowicon"
-          title={showing ? `${showing} — pick another class` : "Pick a class"}
-          onclick={() => {
-            iconTarget = { tile: id, layer: badge.id };
-            iconsOpen = true;
-          }}
-        >
-          {#if showing && iconArt(showing)}
-            {@const art = iconArt(showing)!}
-            <svg viewBox="0 0 {art.w} {art.h}" aria-hidden="true">
-              {#each art.paths as p, i (i)}
-                <path d={p.d} fill="#ffffff" fill-opacity={p.opacity} fill-rule="evenodd" />
-              {/each}
-            </svg>
-          {:else}
-            +
-          {/if}
-        </button>
-      {/if}
-      <button
-        class="name"
-        onclick={(e) => toggleTile(id, { ctrl: e.ctrlKey, shift: e.shiftKey })}
-        title="Picks this tile on the wall · Ctrl adds one, Shift takes the range"
-      >
-        <!-- What the tile says, not what it is called on disk.
-             "40000000005773694" identifies a file and nobody else, and at
-             forty-four portraits the list was a column of digits to be matched
-             against the wall by counting. The number stays — it is what the
-             folder is sorted by and the only way to line a row up with a file —
-             but as the second line, where the layout count already lives.
-
-             A tile that has not been named keeps the id as its headline, so
-             the row never loses the one thing that always identifies it. -->
-        {said || id}
-        <span class="usage">
-          {#if said}{id} &middot;
-          {/if}{own.length ? `${own.length} layout(s)` : owner ? "no layout" : "unassigned"}
-        </span>
-      </button>
-      {#if inGroup}
-        <!-- Out of the drawer, back among the loose ones. It never left the
-             wall, so this is the only way out a filed tile needs. -->
-        <button title="Back to the loose pile" onclick={() => fileTile(id, "")}>↓</button>
-      {:else if owner && app.openProjectId}
-        <!-- Off the grid, not out of the project: the tile keeps
-             every layer and only gives up its slot, and the tiles
-             after it close the gap. -->
-        <button title="Off the wall, onto the shelf" onclick={() => unplace(id)}
-          >↩</button
-        >
-      {/if}
-    </div>
-
-    {#if isOpen(id)}
-      {@render stampRows(
-        own,
-        (moving, beforeId) => void dropTileLayer(id, moving, beforeId),
-      )}
-      <select
-        class="indent assign"
-        disabled={!layouts().length || !!app.busy}
-        onchange={(e) => {
-          const layoutId = e.currentTarget.value;
-          e.currentTarget.value = "";
-          if (layoutId) void assignTileLayout(id, layoutId);
-        }}
-      >
-        <option value="">+ Assign layout…</option>
-        {#each layouts() as layout (layout.id)}
-          <option value={layout.id}>{layout.name}</option>
-        {/each}
-      </select>
-
-      <!-- What this tile alone says and shows. In the row rather
-           than in a panel below the list: with forty-four rows,
-           editing the first one meant scrolling past all of them
-           and back. Here the fields cannot be further away than
-           the row they belong to. -->
-      {#each tileCaptions(id) as caption (caption.id)}
-        <label class="field indent">
-          <span>{layerLabel(caption)}</span>
-          <!-- The default shows as a placeholder, not as a value:
-               typing over a real value and clearing a field look
-               identical, and only one of them should mean "this
-               tile says nothing". -->
-          <input
-            value={tileText(id, caption.id) ?? ""}
-            placeholder={caption.text}
-            oninput={(e) => void setTileText(id, caption.id, e.currentTarget.value)}
-            onkeydown={(e) => e.key === "Enter" && void stepName(e, id, inGroup)}
-          />
-          <button
-            title="Use the layer's default text again"
-            disabled={tileText(id, caption.id) === undefined}
-            onclick={() => void clearTileText(id, caption.id)}>↺</button
-          >
-          {@render placeRow(id, caption)}
-        </label>
-      {/each}
-
-      {#each tileImages(id) as pic (pic.id)}
-        {@const chosen = tileAsset(id, pic.id)}
-        <p class="sub">{layerLabel(pic)}</p>
-        <!-- A gallery rather than a file dialog per tile: class
-             logos repeat across a wall, so from the second tile
-             on the picture is almost always one already
-             imported. The dialog stays, as the "+" that feeds
-             the gallery. -->
-        <div class="gallery indent">
-          {#each tileImageChoices(id, pic.id) as asset (asset)}
-            <button
-              class="swatch"
-              class:on={(chosen ?? pic.asset) === asset}
-              title={asset === pic.asset
-                ? "The layer's own picture"
-                : "Use this picture"}
-              onclick={() => void setTileAsset(id, pic.id, asset)}
-            >
-              {#await assetUrl(asset) then url}
-                <img src={url} alt="" />
-              {/await}
-            </button>
-          {/each}
-          <button
-            class="swatch"
-            title="Pick a new picture…"
-            onclick={() => void pickTileImage(id, pic.id)}
-          >
-            +
-          </button>
-          <!-- A circle with a slash: the sign for "none of them",
-               which is a choice here and not the absence of one. -->
-          <button
-            class="swatch none"
-            class:on={chosen === ""}
-            title="Show no picture on this tile"
-            onclick={() => void setTileAsset(id, pic.id, "")}
-          >
-            <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
-              <circle
-                cx="9"
-                cy="9"
-                r="7"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.6"
-              />
-              <line
-                x1="4"
-                y1="14"
-                x2="14"
-                y2="4"
-                stroke="currentColor"
-                stroke-width="1.6"
-              />
-            </svg>
-          </button>
-          <button
-            class="swatch"
-            title="Use the layer's own picture again"
-            disabled={chosen === undefined}
-            onclick={() => void clearTileAsset(id, pic.id)}>↺</button
-          >
-          <!-- Placing it, and the way back from a placing that went wrong. No
-               numbers beside them: the frame on the wall is where placing is
-               done, and a row of fields here would ask why moving has them and
-               everything else does not. -->
-          {@render placeRow(id, pic)}
-        </div>
-      {/each}
-
-      <!-- Which class this portrait is. The same map as the pictures above and
-           the same bargain — the Layout placed and coloured the icon once, the
-           tile names the class — but the choices need no importing, so it is
-           the artwork grid rather than a gallery of what happens to be in
-           play. -->
-      {#each tileIcons(id) as badge (badge.id)}
-        {@const chosen = tileAsset(id, badge.id)}
-        {@const showing = chosen ?? badge.icon}
-        <!-- "Class", not the layer's name. An icon layer is auto-named after
-             the class it was made with — Witch01 — so the layer's name over a
-             tile showing Ranger asserted a class the tile does not have, forty
-             times down the list. The name is still reachable in the Layout;
-             here the question is which class this portrait is. -->
-        <p class="sub">Class</p>
-        <div class="gallery indent">
-          <button
-            class="swatch art"
-            title={chosen
-              ? `${chosen} — pick another class`
-              : showing
-                ? `${showing}, from the layer — pick a class for this tile`
-                : "Pick a class"}
-            onclick={() => {
-              iconTarget = { tile: id, layer: badge.id };
-              iconsOpen = true;
-            }}
-          >
-            {#if showing && iconArt(showing)}
-              {@const art = iconArt(showing)!}
-              <svg viewBox="0 0 {art.w} {art.h}" aria-hidden="true">
-                {#each art.paths as p, i (i)}
-                  <path d={p.d} fill="#ffffff" fill-opacity={p.opacity} fill-rule="evenodd" />
-                {/each}
-              </svg>
-            {:else}
-              +
-            {/if}
-          </button>
-          <button
-            class="swatch none"
-            class:on={chosen === ""}
-            title="Show no icon on this tile"
-            onclick={() => void setTileAsset(id, badge.id, "")}
-          >
-            <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
-              <circle cx="9" cy="9" r="7" fill="none" stroke="currentColor" stroke-width="1.6" />
-              <line x1="4" y1="14" x2="14" y2="4" stroke="currentColor" stroke-width="1.6" />
-            </svg>
-          </button>
-          <button
-            class="swatch"
-            title="Use the layer's own class again"
-            disabled={chosen === undefined}
-            onclick={() => void clearTileAsset(id, badge.id)}>↺</button
-          >
-          {@render placeRow(id, badge)}
-        </div>
-      {/each}
-
-      <!-- The shapes a Layout keeps live. They carry no per-tile content, so
-           they had no row at all — which left the block of a badge unreachable
-           while the icon cutting it could be moved. What a tile owns here is
-           the colour, and the row that carries it carries the way into the
-           placing tool too. -->
-      {#each tileShapes(id) as shape (shape.id)}
-        {@const chosen = tilePaint(id, shape.id)}
-        <p class="sub">{layerLabel(shape)}</p>
-        <div class="gallery indent">
-          {#each tilePaintChoices(id, shape.id) as colour (colour)}
-            <button
-              class="swatch flat"
-              class:on={!isGradient(chosen ?? shape.fill) && (chosen ?? shape.fill) === colour}
-              style="background: {colour}"
-              title={colour === shape.fill ? "The layer's own colour" : `Paint it ${colour}`}
-              aria-label={colour}
-              onclick={() => void setTilePaint(id, shape.id, colour)}
-            ></button>
-          {/each}
-          <!-- The browser's picker, as the "+" that feeds the row — the same
-               place the picture gallery puts its file dialog. -->
-          <label class="swatch pick" title="Pick another colour for this tile">
-            +
-            <input
-              type="color"
-              value={isGradient(chosen ?? shape.fill) ? "#ffffff" : (chosen ?? shape.fill)}
-              oninput={(e) => void setTilePaint(id, shape.id, e.currentTarget.value)}
-            />
-          </label>
-          <button
-            class="swatch"
-            title="Use the layer's own colour again"
-            disabled={chosen === undefined}
-            onclick={() => void clearTilePaint(id, shape.id)}>↺</button
-          >
-          {@render placeRow(id, shape)}
-        </div>
-      {/each}
-    {/if}
-  </div>
-{/snippet}
 
 <main>
   <header>
@@ -1631,7 +1177,7 @@
           ? "Placing: pick a tile, then one of its own layers in the list — drag it, corners zoom, the top handle turns. Escape leaves"
           : "Place a tile's own layers — its picture, caption or class icon"}
       >
-        {@render placeIcon(17)}
+        <RowIcon name="place" size={17} />
       </button>
       <span class="gap"></span>
       <!-- Framed mountain and sun, the icon every editor uses for a picture —
@@ -1885,7 +1431,7 @@
                   title={layer.hidden ? "Show" : "Hide"}
                   onclick={() => toggleLayerHidden(layer.id)}
                 >
-                  {@render eyeIcon(!!layer.hidden)}
+                  <RowIcon name="eye" on={!!layer.hidden} />
                 </button>
                 <button
                   class="eye"
@@ -1893,7 +1439,7 @@
                   title={layer.locked ? "Unlock" : "Lock"}
                   onclick={() => toggleLayerLocked(layer.id)}
                 >
-                  {@render lockIcon(!!layer.locked)}
+                  <RowIcon name="lock" on={!!layer.locked} />
                 </button>
                 <button class="name" class:dimmed={layer.hidden} onclick={() => selectLayer(layer.id)}>
                   {layerLabel(layer)}
@@ -2250,7 +1796,7 @@
             {#if isOpen(folder.id)}
               <div class="indent">
                 {#each folder.tiles as id (id)}
-                  {@render tileRow(id, folder.id)}
+                  <TileRow {id} inGroup={folder.id} bind:framing {openIcons} />
                 {/each}
               </div>
             {/if}
@@ -2273,7 +1819,7 @@
           {#if isOpen("tiles")}
             <div class="indent">
               {#each looseIds() as id (id)}
-                {@render tileRow(id, "")}
+                <TileRow {id} inGroup="" bind:framing {openIcons} />
               {/each}
             </div>
           {/if}
