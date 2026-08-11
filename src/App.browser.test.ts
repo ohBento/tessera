@@ -91,6 +91,7 @@ import { maskChoices, maskOffers } from "./lib/model";
 import { textWidth } from "./lib/scene";
 import {
   canSaveLayout,
+  undoLabel,
   openLayoutDoc,
   tileAsset,
   tileIcons,
@@ -2004,5 +2005,52 @@ describe("typing a wall's names", () => {
     await until(() => document.activeElement !== field(c));
     expect(field(c)).toBeTruthy();
     expect(field(a)).toBeNull();
+  });
+});
+
+
+describe("undo that says what it takes back", () => {
+  const byPrefix = (prefix: string) =>
+    [...document.querySelectorAll("button")].find((b) =>
+      (b as HTMLElement).title.startsWith(prefix),
+    ) as HTMLButtonElement;
+
+  it("names the step on the button before it is pressed, and in the line after", async () => {
+    /* Ctrl+Z is the one action with no target: every other edit tells you what
+     * it touched by touching it, and this one can reach anywhere on the wall. */
+    await newLayoutDoc("Namenstest");
+    await addLayoutText();
+
+    await until(() => !!byPrefix("Undo "));
+    expect(byPrefix("Undo ").title).toContain("add caption");
+
+    await undoEdit();
+
+    expect(app.error).toBe("Undone: Add caption");
+    // And the same edit is what the other button now offers to put back.
+    expect(byPrefix("Redo ").title).toContain("add caption");
+  });
+
+  it("names the gesture, not its last keystroke", async () => {
+    /* Typing collapses into one step, and the step is named by the edit that
+     * opened the run — take the newest name and it ends up called after the
+     * last letter rather than after the thing you did. */
+    const [a] = app.folderIds;
+    app.selectedTiles = [a];
+    await newProjectFrom("Konto");
+    await newLayoutDoc("Tippen");
+    await addLayoutText();
+    await setLayerField(openLayout()!.layers[0].id, "perTile", true);
+    await closeLayoutDoc();
+    await assignTileLayout(a, layouts()[0].id);
+    const caption = tileCaptions(a)[0];
+
+    for (const word of ["N", "Na", "Nac", "Nacht"]) await setTileText(a, caption.id, word);
+
+    expect(undoLabel()).toBe("Type caption");
+    await undoEdit();
+    // One press takes the whole word back, not one letter.
+    expect(tileText(a, caption.id)).toBeUndefined();
+    expect(app.error).toBe("Undone: Type caption");
   });
 });

@@ -9,9 +9,16 @@
  * Nothing here knows what a manifest is, which is what keeps it testable
  * without a filesystem, a canvas or a browser. */
 
+/** A state, and the name of the edit at its boundary.
+ *
+ *  The label belongs to the edit that *replaced* this state, which is what
+ *  makes one string serve both directions: popping it off `past` undoes that
+ *  edit, and the entry pushed onto `future` in its place redoes the same one. */
+export type Step<T> = { state: T; label: string };
+
 export type History<T> = {
-  past: T[];
-  future: T[];
+  past: Step<T>[];
+  future: Step<T>[];
   /** What the run in progress is for — see `checkpoint`. */
   runKey?: string;
 };
@@ -53,12 +60,16 @@ export const LIMIT = 200;
  *  checkpoint back needs to know: inside an open run there is nothing of its
  *  own on the stack, and undoing anyway pops the step before it — an edit that
  *  threw mid-drag quietly destroyed an unrelated one. */
-export function checkpoint<T>(h: History<T>, present: T, key?: string): boolean {
+export function checkpoint<T>(h: History<T>, present: T, label: string, key?: string): boolean {
   const sameRun = key !== undefined && h.runKey === key;
   h.runKey = key;
+  /* The first edit of a run names the step. A run is one gesture — a slider
+   * dragged, a caption typed — so its later edits are the same action
+   * continuing, and taking the newest name would leave the step called after
+   * the last keystroke rather than after the thing you did. */
   if (sameRun) return false;
 
-  h.past.push(present);
+  h.past.push({ state: present, label });
   if (h.past.length > LIMIT) h.past.shift();
   // A new edit invalidates anything that was undone: the timeline forked.
   h.future.length = 0;
@@ -75,21 +86,33 @@ export const endRun = (h: History<unknown>) => {
   h.runKey = undefined;
 };
 
-/** The state to go back to, or undefined at the start of history. */
-export function undo<T>(h: History<T>, present: T): T | undefined {
-  if (!h.past.length) return undefined;
+/** The step to go back to, or undefined at the start of history. */
+export function undo<T>(h: History<T>, present: T): Step<T> | undefined {
+  const step = h.past.pop();
+  if (!step) return undefined;
   endRun(h);
-  h.future.push(present);
-  return h.past.pop();
+  // Same label the other way round: what this takes back is what a redo puts
+  // back, so the two entries name one edit rather than two.
+  h.future.push({ state: present, label: step.label });
+  return step;
 }
 
-/** The state to go forward to, or undefined if nothing was undone. */
-export function redo<T>(h: History<T>, present: T): T | undefined {
-  if (!h.future.length) return undefined;
+/** The step to go forward to, or undefined if nothing was undone. */
+export function redo<T>(h: History<T>, present: T): Step<T> | undefined {
+  const step = h.future.pop();
+  if (!step) return undefined;
   endRun(h);
-  h.past.push(present);
-  return h.future.pop();
+  h.past.push({ state: present, label: step.label });
+  return step;
 }
 
 export const canUndo = (h: History<unknown>) => h.past.length > 0;
 export const canRedo = (h: History<unknown>) => h.future.length > 0;
+
+/** What the next press would take back, or put back — "" for neither.
+ *
+ *  So a button can say what it is about to do *before* it is pressed. Ctrl+Z on
+ *  a wall of forty-four portraits is otherwise a guess, and the guess is only
+ *  checked by making it. */
+export const nextUndo = (h: History<unknown>) => h.past.at(-1)?.label ?? "";
+export const nextRedo = (h: History<unknown>) => h.future.at(-1)?.label ?? "";

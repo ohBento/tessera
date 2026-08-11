@@ -3,7 +3,17 @@ import { open as pickFile } from "./platform";
 
 import { saveTiles } from "./export";
 import { coverScale, gridSize, mosaicBakeCrops } from "./geometry";
-import { canRedo, canUndo, checkpoint, emptyHistory, endRun, redo, undo } from "./history";
+import {
+  canRedo,
+  canUndo,
+  checkpoint,
+  emptyHistory,
+  endRun,
+  nextRedo,
+  nextUndo,
+  redo,
+  undo,
+} from "./history";
 import { renderLayout } from "./layout";
 import {
   bakeMosaicInto,
@@ -359,7 +369,7 @@ export function wall(): { ids: string[]; gridLayers: Layer[] } {
 export async function archiveSelection(away: boolean) {
   const ids = [...app.selectedTiles];
   if (!ids.length) return;
-  await mutate(() => {
+  await mutate("Archive tiles", () => {
     setArchived(app.manifest, ids, away);
     clearAll();
   });
@@ -390,7 +400,7 @@ export const shelfIds = () => openProject()?.shelf ?? [];
 export async function placeTileAt(tileId: string, beforeId: string | null) {
   const p = openProject();
   if (!p) return;
-  await mutate(() => placeTile(p, tileId, beforeId));
+  await mutate("Place tile", () => placeTile(p, tileId, beforeId));
 }
 
 /** Takes a tile off the grid without giving up the project. Its layers stay:
@@ -398,7 +408,7 @@ export async function placeTileAt(tileId: string, beforeId: string | null) {
 export async function unplace(tileId: string) {
   const p = openProject();
   if (!p) return;
-  await mutate(() => unplaceTile(p, tileId));
+  await mutate("Take tile off the wall", () => unplaceTile(p, tileId));
 }
 
 /* --- Cosmetic folders. Drawers in the tile list, nothing more: dissolving one
@@ -415,7 +425,7 @@ export const looseIds = () => {
 export async function newFolderHere(name: string) {
   const p = openProject();
   if (!p) return;
-  await mutate(() => {
+  await mutate("New folder", () => {
     const f = newFolder(name.trim() || `Folder ${p.folders.length + 1}`);
     // The picked tiles go straight in: making a drawer is something you do
     // *to* a selection, and an empty one would then have to be filled by hand.
@@ -427,20 +437,20 @@ export async function newFolderHere(name: string) {
 export async function renameFolder(folderId: string, name: string) {
   const f = folders().find((x) => x.id === folderId);
   if (!f || !name.trim() || f.name === name.trim()) return;
-  await mutate(() => (f.name = name.trim()), true, `folder:${folderId}`);
+  await mutate("Rename folder", () => (f.name = name.trim()), true, `folder:${folderId}`);
 }
 
 export async function removeFolder(folderId: string) {
   const p = openProject();
   if (!p) return;
-  await mutate(() => dissolveFolder(p, folderId));
+  await mutate("Dissolve folder", () => dissolveFolder(p, folderId));
 }
 
 /** Puts a tile into a drawer, or back on the loose pile when `folderId` is "". */
 export async function fileTile(tileId: string, folderId: string) {
   const p = openProject();
   if (!p) return;
-  await mutate(() => (folderId ? putInFolder(p, folderId, tileId) : takeOutOfFolder(p, tileId)));
+  await mutate("File tile", () => (folderId ? putInFolder(p, folderId, tileId) : takeOutOfFolder(p, tileId)));
 }
 
 /** Files every picked tile into one group, in a single step.
@@ -451,7 +461,7 @@ export async function fileSelectionInto(folderId: string) {
   const p = openProject();
   const moving = [...app.selectedTiles];
   if (!p || !moving.length) return;
-  await mutate(() => {
+  await mutate("File tiles", () => {
     for (const id of moving) putInFolder(p, folderId, id);
   });
 }
@@ -462,7 +472,7 @@ export async function fileSelectionInto(folderId: string) {
 export async function moveTilesToProject(projectId: string) {
   const moving = [...app.selectedTiles];
   if (!moving.length) return;
-  await mutate(() => {
+  await mutate("Move tiles to project", () => {
     for (const id of moving) moveToProject(app.manifest, id, projectId);
     clearAll();
   });
@@ -475,7 +485,7 @@ export async function moveTilesToProject(projectId: string) {
 export async function releaseTilesToInbox() {
   const leaving = app.selectedTiles.filter((id) => projectOf(app.manifest, id));
   if (!leaving.length) return;
-  await mutate(() => {
+  await mutate("Release tiles to Unsorted", () => {
     for (const id of leaving) removeFromProjectToInbox(app.manifest, id, false);
     clearAll();
   });
@@ -502,7 +512,7 @@ export const strippableCount = () =>
 export async function stripSelectedTiles() {
   const stripping = app.selectedTiles.filter((id) => app.manifest.tiles[id]?.layers.length);
   if (!stripping.length) return;
-  await mutate(() => {
+  await mutate("Clear layers", () => {
     for (const id of stripping) stripTile(app.manifest.tiles[id]);
     /* Said out loud, and saying what actually went. Undressing a wall used to
      * happen in complete silence next to actions that report their count, and
@@ -514,7 +524,7 @@ export async function stripSelectedTiles() {
 
 export async function newProjectFrom(name: string) {
   const free = inboxIds(app.manifest, app.selectedTiles);
-  await mutate(() => {
+  await mutate("New project", () => {
     const p = newProject(name.trim() || `Project ${app.manifest.projects.length + 1}`);
     // Straight onto the grid, in the order they sit on the inbox wall: the
     // point of building a project from a selection is to have a wall, not a
@@ -566,7 +576,7 @@ export async function setTileFrame(tileId: string, layerId: string, f: Frame) {
      proxied object, so the write lands outside the proxy and only reaches the
      screen because `mutate` bumps the version afterwards. The compiler says so;
      it is worth not relying on. */
-  await mutate(() => {
+  await mutate("Place layer on tile", () => {
     tile.frame ??= {};
     tile.frame[layerId] = f;
   });
@@ -576,7 +586,7 @@ export async function setTileFrame(tileId: string, layerId: string, f: Frame) {
 export async function clearTileFrame(tileId: string, layerId: string) {
   const tile = app.manifest.tiles[tileId];
   if (!tile?.frame || tile.frame[layerId] === undefined) return;
-  await mutate(() => delete tile.frame![layerId]);
+  await mutate("Reset placement", () => delete tile.frame![layerId]);
 }
 
 /** The live class icons on one tile. Same bargain again: the Layout owns where
@@ -623,7 +633,7 @@ export const wearing = (layoutId: string, ids: string[]) =>
 export async function removeLayoutFrom(layoutId: string, ids: string[]) {
   const targets = wearing(layoutId, ids);
   if (!targets.length) return;
-  await mutate(() => {
+  await mutate("Remove layout", () => {
     for (const id of targets) {
       const tile = app.manifest.tiles[id];
       const stamps = tile.layers.filter((l) => l.layoutId === layoutId && !isLiveCopy(l));
@@ -669,7 +679,7 @@ export const tilePaint = (tileId: string, layerId: string): Paint | undefined =>
 export async function setTilePaint(tileId: string, layerId: string, fill: Paint) {
   const tile = app.manifest.tiles[tileId];
   if (!tile) return;
-  await mutate(() => {
+  await mutate("Recolour shape", () => {
     tile.paint ??= {};
     tile.paint[layerId] = fill;
   });
@@ -679,7 +689,7 @@ export async function setTilePaint(tileId: string, layerId: string, fill: Paint)
 export async function clearTilePaint(tileId: string, layerId: string) {
   const tile = app.manifest.tiles[tileId];
   if (!tile?.paint?.[layerId]) return;
-  await mutate(() => delete tile.paint![layerId]);
+  await mutate("Reset colour", () => delete tile.paint![layerId]);
 }
 
 /** Every flat colour a live shape wears somewhere on this wall, newest layer
@@ -720,7 +730,7 @@ export function tileImageChoices(tileId: string, layerId: string): string[] {
 export async function setTileAsset(tileId: string, layerId: string, asset: string) {
   const tile = app.manifest.tiles[tileId];
   if (!tile) return;
-  await mutate(() => {
+  await mutate("Change picture", () => {
     // The map is optional on Tile, so a manifest written before per-tile
     // pictures existed has to grow one on first use. Two statements — see
     // setTileFrame for why the one-liner is a trap on a reactive proxy.
@@ -734,7 +744,7 @@ export async function setTileAsset(tileId: string, layerId: string, asset: strin
 export async function clearTileAsset(tileId: string, layerId: string) {
   const tile = app.manifest.tiles[tileId];
   if (!tile?.swap || tile.swap[layerId] === undefined) return;
-  await mutate(() => delete tile.swap![layerId]);
+  await mutate("Reset picture", () => delete tile.swap![layerId]);
 }
 
 /** Imports a picture and gives it to this one tile. */
@@ -761,7 +771,7 @@ export const tileText = (tileId: string, layerId: string): string | undefined =>
 export async function setTileText(tileId: string, layerId: string, text: string) {
   const tile = app.manifest.tiles[tileId];
   if (!tile || tile.text[layerId] === text) return;
-  await mutate(() => (tile.text[layerId] = text), true, `text:${tileId}:${layerId}`);
+  await mutate("Type caption", () => (tile.text[layerId] = text), true, `text:${tileId}:${layerId}`);
 }
 
 /** Drops the override so the tile follows the layer's default again — the only
@@ -769,13 +779,13 @@ export async function setTileText(tileId: string, layerId: string, text: string)
 export async function clearTileText(tileId: string, layerId: string) {
   const tile = app.manifest.tiles[tileId];
   if (!tile || !(layerId in tile.text)) return;
-  await mutate(() => delete tile.text[layerId]);
+  await mutate("Reset caption", () => delete tile.text[layerId]);
 }
 
 export async function renameProject(projectId: string, name: string) {
   const p = app.manifest.projects.find((x) => x.id === projectId);
   if (!p || !name.trim() || p.name === name.trim()) return;
-  await mutate(() => (p.name = name.trim()), true, `rename:${projectId}`);
+  await mutate("Rename project", () => (p.name = name.trim()), true, `rename:${projectId}`);
 }
 
 /** Deletes a project. `stripLayers` also undresses every tile it owned — the
@@ -783,7 +793,7 @@ export async function renameProject(projectId: string, name: string) {
  *  characters or for the wall that is going. Either way the tiles return to the
  *  inbox, and one Ctrl+Z brings project and layers back together. */
 export async function deleteProject(projectId: string, stripLayers = false) {
-  await mutate(() => {
+  await mutate("Delete project", () => {
     const at = app.manifest.projects.findIndex((p) => p.id === projectId);
     if (at < 0) return;
     const owned = projectTiles(app.manifest.projects[at]);
@@ -806,7 +816,7 @@ export async function deleteProject(projectId: string, stripLayers = false) {
 export async function swapTilePlaces(a: string, b: string) {
   const p = openProject();
   if (!p) return;
-  await mutate(() => swapPlaced(p, a, b));
+  await mutate("Swap tiles", () => swapPlaced(p, a, b));
 }
 
 /* Reactive so the toolbar can grey the buttons out. Exported so a test can
@@ -816,6 +826,11 @@ export async function swapTilePlaces(a: string, b: string) {
 export const history = $state(emptyHistory<Manifest>());
 export const undoable = () => canUndo(history);
 export const redoable = () => canRedo(history);
+
+/** What the next press would take back, or put back. For the buttons, so they
+ *  can say it before they are pressed rather than after. */
+export const undoLabel = () => nextUndo(history);
+export const redoLabel = () => nextRedo(history);
 
 /** Svelte's proxies do not survive the structured clone that Tauri's IPC and
  *  JSON.stringify perform on them the way a plain object does. */
@@ -838,7 +853,7 @@ const plain = <T>(v: T): T => JSON.parse(JSON.stringify(v));
  *  one of these per pointer event; without it, a single drag filled a fifth of
  *  the two-hundred-step history and could only be taken back one notch at a
  *  time. */
-async function mutate(fn: () => void, structural = true, run?: string) {
+async function mutate(label: string, fn: () => void, structural = true, run?: string) {
   /* Cleared here rather than left to time out: the status line has one slot,
    * and a note from three actions ago ("12 tile(s) written") sat there hiding
    * the live selection count and its "clear" link until something
@@ -846,7 +861,7 @@ async function mutate(fn: () => void, structural = true, run?: string) {
    * inside fn, after this. */
   app.error = "";
   const before = plain(app.manifest);
-  const pushed = checkpoint(history, before, run);
+  const pushed = checkpoint(history, before, label, run);
   try {
     fn();
   } catch (e) {
@@ -884,22 +899,27 @@ const layerExists = (id: string) => !!id && !!listOf(id);
  *  had not worked. */
 let closedByDelete = "";
 
-async function travel(step: typeof undo<Manifest>) {
+async function travel(step: typeof undo<Manifest>, how: "Undone" | "Redone") {
   const there = step(history, plain(app.manifest));
   if (!there) return;
   const chosen = app.selected;
-  app.manifest = there;
+  app.manifest = there.state;
   app.selected = layerExists(chosen) ? chosen : "";
-  if (closedByDelete && there.projects.some((p) => p.id === closedByDelete)) {
+  if (closedByDelete && there.state.projects.some((p) => p.id === closedByDelete)) {
     app.openProjectId = closedByDelete;
     closedByDelete = "";
   }
   app.version++;
+  /* Said out loud, because Ctrl+Z is the one action with no target: every other
+   * edit tells you what it touched by touching it, and this one can reach
+   * anywhere on the wall. Before persist, so a failed save still gets the last
+   * word. */
+  app.error = `${how}: ${there.label}`;
   await persist();
 }
 
-export const undoEdit = () => travel(undo);
-export const redoEdit = () => travel(redo);
+export const undoEdit = () => travel(undo, "Undone");
+export const redoEdit = () => travel(redo, "Redone");
 
 /** The array a layer lives in: the open project's wall-spanning layers, or
  *  whichever tile's own stack holds it.
@@ -933,7 +953,9 @@ export async function toggleLayerHidden(id: string) {
   const self = list?.find((l) => l.id === id);
   if (!self) return;
   const next = !self.hidden;
-  await mutate(() => {
+  // Named after what it does, not after the control: "Undone: toggle layer"
+  // makes you work out which way it went.
+  await mutate(next ? "Hide layer" : "Show layer", () => {
     self.hidden = next;
   });
 }
@@ -948,7 +970,7 @@ export async function deleteLayer(id: string) {
   const list = listOf(id);
   const layer = list && findLayer(list, id);
   if (!list || !layer) return;
-  await mutate(() => {
+  await mutate("Delete layer", () => {
     // A group dissolves and hands its members back (removeLayerFrom); anything
     // else goes through the cascade, which is a no-op beyond the layer itself
     // unless that layer is a stamp.
@@ -1109,7 +1131,7 @@ export async function addGridImage() {
     // The copy into assets/ happens before the checkpoint: it touches the disk,
     // not the document, so undo has nothing to take back there.
     const asset = await importAsset(app.dir, path);
-    await mutate(() => {
+    await mutate("Add wall picture", () => {
       const layer = newImageLayer(asset);
       nameInStack(layer, project.gridLayers);
       layer.space = "grid";
@@ -1139,7 +1161,7 @@ export async function applyTransform(
   const list = listOf(obj.layerId) ?? app.manifest.tiles[obj.tileId]?.layers ?? [];
   const layer = findLayer(list, obj.layerId);
   if (!layer) return;
-  await mutate(() => {
+  await mutate("Move layer", () => {
     layer.x = patch.x;
     layer.y = patch.y;
     layer.rotation = patch.rotation;
@@ -1191,7 +1213,7 @@ export async function coverTheWall() {
   await run("fit", async () => {
     const bmp = await loadAsset(app.dir, layer.asset);
     const scale = coverScale({ w: bmp.width, h: bmp.height }, gridSize(p.order.length));
-    await mutate(() => {
+    await mutate("Cover the wall", () => {
       layer.scale = scale;
       layer.x = 0.5;
       layer.y = 0.5;
@@ -1213,7 +1235,7 @@ export async function clearMosaic() {
   const n = bakedCount();
   if (!n) return;
   const ids = visibleIds();
-  await mutate(() => {
+  await mutate("Clear wall picture", () => {
     clearBases(app.manifest, ids);
     app.error = `${n} portrait(s) restored`;
   });
@@ -1238,7 +1260,7 @@ export async function bakeMosaic() {
       app.error = "The picture does not fully cover any tile";
       return;
     }
-    await mutate(() => {
+    await mutate("Apply wall picture", () => {
       bakeMosaicInto(app.manifest, project, layer.id, layer.asset, crops);
       app.selected = "";
     });
@@ -1254,7 +1276,7 @@ export const layouts = () => app.manifest.layouts;
 export const openLayout = () => app.manifest.layouts.find((l) => l.id === app.openLayoutId);
 
 export async function newLayoutDoc(name: string) {
-  await mutate(() => {
+  await mutate("New layout", () => {
     const l = newLayout(name.trim() || `Layout ${app.manifest.layouts.length + 1}`);
     app.manifest.layouts.push(l);
     app.openLayoutId = l.id;
@@ -1290,7 +1312,7 @@ export async function duplicateLayoutDoc(id: string) {
   let name = `${layout.name} Copy`;
   for (let n = 2; taken.has(name); n++) name = `${layout.name} Copy ${n}`;
 
-  await mutate(() => {
+  await mutate("Duplicate layout", () => {
     const copy = duplicateLayout($state.snapshot(layout), name);
     app.manifest.layouts.push(copy);
     app.openLayoutId = copy.id;
@@ -1302,7 +1324,7 @@ export async function duplicateLayoutDoc(id: string) {
  *  put on any tile. One mutation, so Ctrl+Z brings the layout back with all of
  *  its stamps still in place. */
 export async function deleteLayoutDoc(id: string) {
-  await mutate(() => {
+  await mutate("Delete layout", () => {
     const at = app.manifest.layouts.findIndex((l) => l.id === id);
     if (at >= 0) app.manifest.layouts.splice(at, 1);
     pruneDeadLayoutRefs(app.manifest);
@@ -1313,7 +1335,7 @@ export async function deleteLayoutDoc(id: string) {
 export async function renameLayout(id: string, name: string) {
   const layout = app.manifest.layouts.find((l) => l.id === id);
   if (!layout || !name.trim() || layout.name === name.trim()) return;
-  await mutate(() => (layout.name = name.trim()));
+  await mutate("Rename layout", () => (layout.name = name.trim()));
 }
 
 /** A layer by id in whichever document holds it: the open Layout's own list,
@@ -1333,7 +1355,7 @@ export async function renameLayer(id: string, name: string) {
    * (Escape restores the label, blur still fires) wrote that fallback in as a
    * real name and burned an undo step on nothing. */
   if (next === (layer.name ?? "") || next === layerLabel(layer)) return;
-  await mutate(() => (layer.name = next || undefined));
+  await mutate("Rename layer", () => (layer.name = next || undefined));
 }
 
 /** Locking takes a layer out of Fabric's hit testing (makeInteractive in
@@ -1341,7 +1363,7 @@ export async function renameLayer(id: string, name: string) {
 export async function toggleLayerLocked(id: string) {
   const layer = anyLayer(id);
   if (!layer) return;
-  await mutate(() => (layer.locked = !layer.locked));
+  await mutate("Lock or unlock layer", () => (layer.locked = !layer.locked));
 }
 
 /** Picks one layer, from the canvas or from a plain list click.
@@ -1366,7 +1388,7 @@ export function selectLayoutLayer(id: string) {
 export async function toggleLayoutLayerHidden(id: string) {
   const l = findLayer(openLayout()?.layers ?? [], id);
   if (!l) return;
-  await mutate(() => (l.hidden = !l.hidden));
+  await mutate("Show or hide layer", () => (l.hidden = !l.hidden));
 }
 
 /** Deletes layers. On a group this dissolves it instead, handing the members
@@ -1379,7 +1401,7 @@ export async function toggleLayoutLayerHidden(id: string) {
 export async function deleteLayoutLayers(ids: string[]) {
   const layout = openLayout();
   if (!layout || !ids.length) return;
-  await mutate(() => {
+  await mutate("Delete layers", () => {
     for (const id of ids) removeLayerFrom(findList(layout.layers, id) ?? layout.layers, id);
     app.layoutSelection = app.layoutSelection.filter((x) => !ids.includes(x));
     if (ids.includes(app.layoutSelected)) app.layoutSelected = "";
@@ -1395,7 +1417,7 @@ export async function addLayoutImage() {
   if (typeof path !== "string") return;
   await run("import", async () => {
     const asset = await importAsset(app.dir, path);
-    await mutate(() => {
+    await mutate("Add picture", () => {
       const l = newImageLayer(asset);
       nameInStack(l, layout.layers);
       layout.layers.push(l);
@@ -1414,7 +1436,7 @@ export async function addLayoutImage() {
 export async function addLayoutText() {
   const layout = openLayout();
   if (!layout) return;
-  await mutate(() => {
+  await mutate("Add caption", () => {
     const l = newTextLayer();
     // Dead centre, not the 0.9 a tile caption defaults to: a Layout is a blank
     // sheet, and something dropped at the bottom edge reads as misplaced.
@@ -1432,7 +1454,7 @@ export async function addLayoutText() {
 export async function addLayoutShape(shape: ShapeKind, icon?: string) {
   const layout = openLayout();
   if (!layout) return;
-  await mutate(() => {
+  await mutate("Add shape", () => {
     const l = newShapeLayer(shape, icon);
     nameInStack(l, layout.layers);
     layout.layers.push(l);
@@ -1485,7 +1507,11 @@ export async function setLayerField(id: string, key: LayerField, value: unknown)
       ? findLayer(openLayout()?.layers ?? [], value)
       : undefined;
   const follow = !!cutter?.perTile && !(layer as unknown as Layer).perTile;
+  /* The field's own name, spaced out: this one setter stands behind every
+   * slider, swatch and dropdown in the panel, so a single label for the lot
+   * would read "Change property" forty different ways. */
   await mutate(
+    `Change ${String(key).replace(/([A-Z])/g, " $1").toLowerCase()}`,
     () => {
       layer[key] = value;
       if (follow) layer.perTile = true;
@@ -1506,7 +1532,7 @@ export async function setLayerField(id: string, key: LayerField, value: unknown)
 export async function resetCrop(id: string) {
   const layer = anyLayer(id);
   if (layer?.kind !== "image" || !layer.crop) return;
-  await mutate(() => uncrop(layer), true);
+  await mutate("Reset crop", () => uncrop(layer), true);
 }
 
 /** Writes a finished drag/scale/rotate back into a Layout's own layer. A plain
@@ -1539,7 +1565,7 @@ export async function applyLayoutTransform(
      found; this makes the release the moment it is settled rather than the
      moment it is left wrong, and costs one rebuild per mask drag. */
   const cuts = [...walkLayers(layout.layers)].some((l) => l.maskId === layerId);
-  await mutate(() => {
+  await mutate("Move layer", () => {
     layer.x = patch.x - shift.dx;
     layer.y = patch.y - shift.dy;
     layer.rotation = patch.rotation;
@@ -1645,7 +1671,7 @@ export async function groupLayoutLayers() {
   const layout = openLayout();
   if (!layout || !canGroupLayers()) return;
   const picked = new Set(app.layoutSelection);
-  await mutate(() => {
+  await mutate("Group layers", () => {
     const members = layout.layers.filter((l) => picked.has(l.id));
     /* The group goes where the *topmost* member was, so nothing that was
      * above a member ends up below the group. findIndex gives the bottom-most
@@ -1692,7 +1718,7 @@ export async function moveLayersIntoGroup(groupId: string, layerIds: string[]) {
   const moving = layerIds.filter((id) => id !== groupId && !own.has(id));
   if (!moving.length) return;
 
-  await mutate(() => {
+  await mutate("Move layers into group", () => {
     const target = groupShift(group);
     const taken: Layer[] = [];
     for (const id of moving) {
@@ -1722,7 +1748,7 @@ export async function dropLayoutLayer(id: string, parentId: string | null, befor
   // neither an undo step nor a save.
   const trial = plain(layout.layers) as Layer[];
   if (!relocateLayer(trial, id, parentId, beforeId)) return;
-  await mutate(() => {
+  await mutate("Reorder layers", () => {
     relocateLayer(layout.layers, id, parentId, beforeId);
     setLayoutSelection([id]);
   });
@@ -1737,7 +1763,7 @@ async function dropInto(layers: Layer[] | undefined, id: string, beforeId: strin
   // a save.
   const trial = plain(layers) as Layer[];
   if (!relocateLayer(trial, id, null, beforeId)) return;
-  await mutate(() => {
+  await mutate("Move layer into group", () => {
     relocateLayer(layers, id, null, beforeId);
     app.selected = id;
   });
@@ -1762,7 +1788,7 @@ export async function duplicateLayoutLayers() {
     .filter((l): l is Layer => !!l);
   if (!picked.length) return;
 
-  await mutate(() => {
+  await mutate("Duplicate layers", () => {
     const copies = duplicateLayers(picked);
     /* Each copy goes back into the list its original came out of. A selection
      * can name a layer nested in a group — the list wires the same handlers to
@@ -1790,7 +1816,7 @@ async function stampOnto(into: { layers: Layer[] } | undefined, layoutId: string
   if (!into || !layout || !app.deps) return;
   await run("stamp", async () => {
     const { asset, seen } = await stampAsset(layout);
-    await mutate(() => {
+    await mutate("Stamp layout", () => {
       stampInto(into, layoutId, asset);
       // After the stamp, so a live caption sits on top of the picture it was
       // composed over rather than behind it.
@@ -1843,7 +1869,7 @@ async function assignLayoutTo(layoutId: string, ids: string[]) {
   if (!layout || !app.deps || !ids.length) return;
   await run("stamp", async () => {
     const { asset, seen } = await stampAsset(layout);
-    await mutate(() => {
+    await mutate("Assign layout", () => {
       let landed = 0;
       for (const id of ids) {
         const tile = app.manifest.tiles[id];
@@ -1890,7 +1916,7 @@ export async function saveLayout(layoutId: string) {
   if (!layout || !app.deps || !canSaveLayout(layoutId)) return;
   await run("save", async () => {
     const { asset, seen } = await stampAsset(layout);
-    await mutate(() => {
+    await mutate("Update stamps", () => {
       const n = refreshStamps(app.manifest, layoutId, asset);
       // Live captions travel with the stamp: repositioning or restyling one in
       // the Layout has to reach everywhere it is used, the same as the picture.
@@ -1936,7 +1962,7 @@ export async function replaceCharacter(id: string) {
     await dropVaultCopy(app.dir, id);
     app.vaulted = app.vaulted.filter((x) => x !== id);
     forgetOriginal(id);
-    await mutate(() => removeFromProjectToInbox(app.manifest, id, true));
+    await mutate("Replace character", () => removeFromProjectToInbox(app.manifest, id, true));
     app.changedTiles = app.changedTiles.filter((x) => x !== id);
   });
 }
@@ -1980,7 +2006,7 @@ export async function replaceAllCharacters() {
       await dropVaultCopy(app.dir, id);
       forgetOriginal(id);
     }
-    await mutate(() => {
+    await mutate("Replace characters", () => {
       for (const id of ids) removeFromProjectToInbox(app.manifest, id, true);
     });
     app.changedTiles = [];
@@ -2156,7 +2182,7 @@ export async function restoreSnapshot(ref: SnapshotRef) {
        * teaching undo about state that lives outside the manifest, which is a
        * bigger machine than the bug. Left deliberately, written down here. */
       await saveFingerprints(app.dir, snap.prints);
-      await mutate(() => {
+      await mutate("Restore snapshot", () => {
         app.manifest = stored;
         /* Inside the mutation, so the sweep is part of the same undo step. A
          * snapshot predates any layout deleted since it was taken, and putting
@@ -2193,7 +2219,7 @@ export async function restoreSnapshot(ref: SnapshotRef) {
     const released = heldNow.filter((id) => !owned.has(id)).length;
 
     let taken = 0;
-    await mutate(() => {
+    await mutate("Restore snapshot", () => {
       taken = restoreProjectInto(app.manifest, stored, ref.projectId);
       // Same reason as the document-wide route above.
       pruneDeadLayoutRefs(app.manifest);

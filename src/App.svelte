@@ -79,6 +79,7 @@
     placeTileAt,
     projects,
     redoEdit,
+    redoLabel,
     redoable,
     releaseTilesToInbox,
     remainingFor,
@@ -132,6 +133,7 @@
     toggleLayoutPick,
     toggleTile,
     undoEdit,
+    undoLabel,
     undoable,
   } from "./lib/editor.svelte";
   import { isTyping } from "./lib/geometry";
@@ -1841,8 +1843,22 @@
       {#snippet tool(label: string, glyph: string, run: () => void, off: boolean)}
         <button title={label} disabled={off || !!app.busy} onclick={run}>{glyph}</button>
       {/snippet}
-      {@render tool("Undo (Ctrl+Z)", "↶", () => void undoEdit(), !undoable())}
-      {@render tool("Redo (Ctrl+Y)", "↷", () => void redoEdit(), !redoable())}
+      <!-- Named, so the button says what it is about to take back rather than
+           leaving you to press it and find out. Ctrl+Z on a wall of forty-four
+           portraits can reach anywhere; every other edit tells you what it
+           touched by touching it. -->
+      {@render tool(
+        undoLabel() ? `Undo ${undoLabel().toLowerCase()} (Ctrl+Z)` : "Undo (Ctrl+Z)",
+        "↶",
+        () => void undoEdit(),
+        !undoable(),
+      )}
+      {@render tool(
+        redoLabel() ? `Redo ${redoLabel().toLowerCase()} (Ctrl+Y)` : "Redo (Ctrl+Y)",
+        "↷",
+        () => void redoEdit(),
+        !redoable(),
+      )}
       <span class="gap"></span>
       <!-- The wall's one mode, and the only button in this rail that stays
            pressed. Its own group under the undo pair, away from the insert
