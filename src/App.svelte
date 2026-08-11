@@ -232,6 +232,28 @@
     newer = await latestRelease();
   });
 
+  /** Why the link did not open, "" while nothing has gone wrong.
+   *
+   *  Beside the link rather than in the status line, because the sheet covers
+   *  that line — a message the press itself hides is no better than none. */
+  let linkFailed = $state("");
+
+  /** Opens the release page, and says so when it cannot.
+   *
+   *  It was `void openUrl(...)`, which turned a rejection into an unhandled
+   *  promise nobody sees: the capability granted the command but put no URL in
+   *  its scope, so the plugin answered ForbiddenUrl and pressing the link did
+   *  nothing at all, for two releases. The scope is fixed and pinned by a test;
+   *  this is the half that makes the next such failure say something. */
+  async function openRelease() {
+    linkFailed = "";
+    try {
+      await openUrl(releasePage);
+    } catch (e) {
+      linkFailed = `Could not open the browser — ${releasePage} (${e})`;
+    }
+  }
+
   /** Whether the keyboard sheet is up.
    *
    *  Every one of these is discoverable only by being told: a drag that swaps
@@ -2566,9 +2588,10 @@
     <p class="build">
       Tessera {version}
       {#if newer}
-        · <button class="link" onclick={() => void openUrl(releasePage)}
-          >{newer} is out — release notes</button
-        >
+        · <button class="link" onclick={openRelease}>{newer} is out — release notes</button>
+      {/if}
+      {#if linkFailed}
+        <span class="failed">{linkFailed}</span>
       {/if}
     </p>
     <button onclick={() => (keysOpen = false)}>Close</button>
@@ -3035,6 +3058,14 @@
     background: none;
     color: #a685ff;
     text-decoration: underline;
+  }
+  /* On its own line under the link: the URL is in it, and wrapping it into the
+     version line would push the version out of sight. */
+  .failed {
+    display: block;
+    margin-top: 4px;
+    color: #ff8a8a;
+    overflow-wrap: anywhere;
   }
   aside {
     position: relative;

@@ -7,7 +7,10 @@
     "core:default",
     "dialog:allow-ask",
     "dialog:allow-open",
-    "opener:allow-open-url",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://github.com/ohBento/tessera/*" }]
+    },
     "window-state:default",
     "fs:allow-document-read-recursive",
     "fs:allow-document-write-recursive",
