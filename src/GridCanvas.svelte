@@ -24,15 +24,20 @@
   import { TILE_H, TILE_W } from "./lib/bmp";
   import { cellIndexAt, cellsIn, isTyping, snapBox, type Guide } from "./lib/geometry";
   import {
-    applyCrop,
     buildGrid,
     cellAt,
     freeScale,
+    ghostImage,
     gridSize,
     layerSize,
     readBack,
+    rebuildTile,
     snapScale,
+    soleTileChange,
+    standRect,
+    wallPrint,
     type Tagged,
+    type WallPrint,
   } from "./lib/scene";
   import { framed, layerAsset, layerText, type Layer } from "./lib/model";
   import { isLiveCopy, layerShows, offLayouts } from "./lib/stamps";
@@ -160,21 +165,9 @@
     /* The ghost is a picture's alone. It exists because a mask hides most of
        what is being dragged; a caption and an icon draw themselves whole, so
        the frame is enough and a second faint copy would only be in the way.
-       ponytail: if a masked caption turns out to need one, the honest fix is
-       to render the layer through scene.ts rather than to load its file here. */
-    const drawn =
-      shown.kind === "image"
-        ? await fabric.FabricImage.fromURL(await app.deps.asset(shown.asset))
-        : undefined;
-    /* Trimmed and flipped the way the renderer does it, or the frame is the
-       shape of the whole file rather than of the part on the tile — four times
-       too tall on a picture cropped to a strip — and the ghost shows pixels the
-       wall does not. Crop first, then measure: `scale` is the width of what is
-       left, which is the whole point of the crop/scale distinction. */
-    if (drawn && shown.kind === "image") {
-      applyCrop(drawn, shown.crop);
-      drawn.set({ flipX: !!shown.flipX, flipY: !!shown.flipY });
-    }
+       ponytail: if a masked caption turns out to need one, extend ghostImage
+       in scene.ts — the renderer's reading of a layer lives there, not here. */
+    const drawn = shown.kind === "image" ? await ghostImage(shown, app.deps) : undefined;
     const height = drawn ? width * ((drawn.height || 1) / (drawn.width || 1)) : size.h * TILE_H;
 
     dropFrameTools();
@@ -191,19 +184,7 @@
       canvas.add(drawn);
     }
 
-    stand = new fabric.Rect({
-      ...place,
-      width,
-      height,
-      fill: "rgba(0,0,0,0.001)",
-      stroke: "#a685ff",
-      strokeWidth: 1,
-      strokeUniform: true,
-      selectable: true,
-      evented: true,
-      hasBorders: true,
-      objectCaching: false,
-    });
+    stand = standRect(place, width, height);
     /* What each kind may be resized by, offered as handles rather than only
        enforced on release — a handle you cannot honestly use is one that lies
        about what the drag will keep.
@@ -373,6 +354,24 @@
    * per event, each drawing a state already several changes stale. */
   let queued = false;
 
+  /* --- Redrawing one tile instead of the wall.
+   *
+   * A full build costs about three milliseconds a tile and runs on every edit,
+   * so a wall of three hundred froze for the best part of a second every time
+   * a caption moved. Almost always one tile changed and two hundred and ninety
+   * nine were redrawn identically.
+   *
+   * Which tile that is gets answered by comparing what is drawn against what
+   * should be (wallPrint/soleTileChange), rather than by asking forty mutating
+   * functions to declare what they touched. A mutation nobody remembered to
+   * annotate cannot go wrong, because the comparison never asked it. The rule
+   * that makes the comparison sound, and the reasons the answer is a timid
+   * one, are in scene.ts beside the code that applies it. --- */
+
+  /** What is on the canvas now, or null when that is not known — before the
+   *  first build, and after any build that did not finish. */
+  let drawn: WallPrint | null = null;
+
   function rebuild(deps: typeof app.deps) {
     if (queued) return building;
     queued = true;
@@ -392,7 +391,17 @@
            * has to be the same list the hit-testing below reads, not a second
            * derivation that could disagree by one. */
           const view = $state.snapshot(wall());
-          await buildGrid(canvas, view, $state.snapshot(app.manifest), deps, true);
+          const m = $state.snapshot(app.manifest);
+          const print = wallPrint(view, m);
+          const one = soleTileChange(drawn, print);
+          /* Forgotten before the build, not after it: a build that throws
+             leaves the canvas in a state nothing here can describe, and the
+             next pass has to start from a full one rather than trust a
+             fingerprint for a wall that was never finished. */
+          drawn = null;
+          if (one) await rebuildTile(canvas, one, view, m, deps, true);
+          else await buildGrid(canvas, view, m, deps, true);
+          drawn = print;
         } finally {
           rebuilding = false;
         }
