@@ -2509,6 +2509,7 @@
        property inherits, so declaring it here covers every control. */
     color-scheme: dark;
   }
+
   /* Nothing styled focus, so keyboard users got the browser's own ring: amber,
      hard against the element, on a dark surface accented in cyan. This is the
      app's accent with an offset, so it reads as part of the interface and can
@@ -2518,40 +2519,47 @@
     outline: 2px solid #a685ff;
     outline-offset: 1px;
   }
+
   main {
     display: flex;
     flex-direction: column;
     height: 100vh;
   }
+
   .body {
     display: flex;
     flex: 1;
     min-height: 0;
   }
+
   .stage {
     display: flex;
     flex: 1;
     min-width: 0;
     min-height: 0;
   }
+
   /* While a shelved tile is being carried, so the wall reads as a target
      rather than as scenery the drag happens to be over. */
   .stage.dropping {
     outline: 2px dashed #a685ff;
     outline-offset: -4px;
   }
+
   .home {
     flex: 1;
     min-width: 0;
     overflow-y: auto;
     padding: 24px;
   }
+
   .cards {
     display: flex;
     flex-wrap: wrap;
     gap: 12px;
     margin-bottom: 16px;
   }
+
   .card {
     display: flex;
     flex-direction: column;
@@ -2561,41 +2569,44 @@
     padding: 12px;
     text-align: left;
   }
+
   .card:hover {
     border-color: #a685ff;
   }
+
   /* The inbox is where a newly created character turns up, so it leads and
      says so — the projects are arrangements, this one is a to-do. */
   .card.inbox {
     border-color: #4a3a78;
     background: #17122b;
   }
+
   .cardname {
     font-size: 14px;
     color: #e3dbff;
   }
+
   .cardsub {
     color: #8f88a8;
     font-size: 11px;
   }
+
   .strip {
     display: flex;
     align-items: center;
     gap: 3px;
     margin-top: 6px;
   }
-  .thumb {
-    flex: none;
-    border-radius: 2px;
-    background: #0e0b16;
-  }
+
   .more {
     color: #6f688a;
     font-size: 11px;
   }
+
   .shelfrow {
     cursor: grab;
   }
+
   /* Amber, not the app's blue: this is the one thing on the page that wants an
      answer before anything else is worth doing. */
   .alert {
@@ -2606,19 +2617,23 @@
     border-radius: 4px;
     background: #1e1a10;
   }
+
   .alerthead {
     margin: 0 0 4px;
     color: #ffc45c;
   }
+
   .alert ul {
     margin-top: 8px;
   }
+
   /* The two mass answers, shoulder to shoulder above the per-tile list. */
   .alert .row {
     display: flex;
     gap: 6px;
     margin-top: 8px;
   }
+
   .badge {
     margin-left: 6px;
     padding: 1px 6px;
@@ -2627,18 +2642,7 @@
     color: #e3dbff;
     font-size: 10px;
   }
-  /* Hidden rather than unrendered: the list is short enough that keeping it in
-     the DOM costs nothing, and the rows keep their scroll position. */
-  ul.collapsed {
-    display: none;
-  }
-  h2 .twisty.inline {
-    height: auto;
-    min-width: 16px;
-    padding: 0;
-    font-size: 11px;
-    vertical-align: baseline;
-  }
+
   header {
     display: flex;
     align-items: center;
@@ -2646,47 +2650,7 @@
     padding: 6px 8px;
     border-bottom: 1px solid #241e3a;
   }
-  button {
-    font: inherit;
-    padding: 4px 10px;
-    border: 1px solid #3a444c;
-    border-radius: 3px;
-    background: #1d1832;
-    color: inherit;
-    cursor: pointer;
-  }
-  button:disabled {
-    opacity: 0.45;
-    cursor: default;
-  }
-  /* The one act per document that pushes work outward — Update stamps on a
-     Layout, Write to game on the wall — wears the ramp the app is named after
-     now. Everything else stays a quiet raised button, which is what keeps
-     this one legible as "the" action rather than "an" action. */
-  .primary {
-    border-color: transparent;
-    background: linear-gradient(90deg, #8f6bff, #ff5fa8);
-    /* Dark ink, not the mock-up's white: white measures 3.3:1 against the
-       ramp's midpoint and this is the label that must always be readable. */
-    color: #140f1e;
-    font-weight: 600;
-  }
-  /* And it gives the ramp back when it cannot be pressed. Faded to 0.45 the
-     gradient was still the loudest thing on the screen, so on Home the eye
-     went straight to "Write to game" — the one button there that does
-     nothing. A disabled action should read as an action that is not available,
-     not as the one to reach for. */
-  .primary:disabled {
-    border-color: #3a444c;
-    background: #1d1832;
-    color: inherit;
-    font-weight: inherit;
-  }
-  /* No hand cursor on a name that only answers a double-click: the pointer is
-     the promise, and here there is nothing behind a single press. */
-  .inert-name {
-    cursor: default;
-  }
+
   /* Its own column in the row, so the sheet keeps the space it had — and no
      surface of its own: the tools column beside it is separated by one hairline
      and nothing else, and a second shade here would invent a panel the app does
@@ -2699,6 +2663,7 @@
     min-height: 0;
     border-right: 1px solid #241e3a;
   }
+
   .bedstrip {
     display: flex;
     flex-direction: column;
@@ -2707,6 +2672,7 @@
     overflow-y: auto;
     min-height: 0;
   }
+
   .bed {
     padding: 3px;
     border: 1px solid transparent;
@@ -2714,13 +2680,16 @@
     background: none;
     line-height: 0;
   }
+
   .bed.on {
     border-color: #a685ff;
   }
+
   /* A tile already carrying this layout — the ones worth checking first. */
   .bed.wearing {
     box-shadow: inset 0 0 0 2px #3a2b5e;
   }
+
   .bedtoggle {
     flex: none;
     padding: 2px 5px;
@@ -2729,6 +2698,7 @@
     border-radius: 0;
     background: none;
   }
+
   .sheetback {
     position: fixed;
     inset: 0;
@@ -2736,6 +2706,7 @@
     background: rgb(0 0 0 / 0.5);
     border: 0;
   }
+
   .sheet {
     position: fixed;
     z-index: 31;
@@ -2750,6 +2721,7 @@
     background: #17122b;
     box-shadow: 0 10px 40px rgb(0 0 0 / 0.5);
   }
+
   /* Six across fits the 32 classes in six rows without a scroll on a 1280
      window, and 72px leaves the thinner icons — a bow, a pair of daggers —
      readable rather than merely present. */
@@ -2759,6 +2731,7 @@
     gap: 8px;
     margin-bottom: 14px;
   }
+
   .icongrid button {
     display: flex;
     flex-direction: column;
@@ -2767,52 +2740,63 @@
     padding: 6px 4px;
     background: #241d3f;
   }
+
   .icongrid button:hover {
     background: #2f2652;
   }
+
   /* The class in force, marked the way the picture gallery marks the picture in
      force — the same sign for the same fact. */
   .icongrid button.on {
     border-color: #a685ff;
     box-shadow: inset 0 0 0 1px #a685ff;
   }
+
   .sheet .filter {
     width: 100%;
     margin-bottom: 8px;
   }
+
   .icongrid .art {
     display: block;
     width: 72px;
     height: 72px;
   }
+
   .icongrid .name {
     font-size: 11px;
     color: #b9b2d4;
   }
+
   .sheet h2 {
     margin: 0 0 12px;
   }
+
   .sheet dl {
     display: grid;
     grid-template-columns: auto 1fr;
     gap: 6px 18px;
     margin: 0 0 14px;
   }
+
   .sheet dt {
     color: #e3dbff;
     font-family: ui-monospace, monospace;
     font-size: 12px;
     white-space: nowrap;
   }
+
   .sheet dd {
     margin: 0;
     color: #8f88a8;
     font-size: 12px;
   }
+
   .status {
     margin-left: auto;
     color: #8f88a8;
   }
+
   .docs {
     display: flex;
     gap: 2px;
@@ -2820,6 +2804,7 @@
     padding-right: 8px;
     border-right: 1px solid #241e3a;
   }
+
   .tools {
     flex: none;
     display: grid;
@@ -2830,6 +2815,7 @@
     border-right: 1px solid #241e3a;
     overflow-y: auto;
   }
+
   .tools button {
     display: inline-flex;
     align-items: center;
@@ -2839,11 +2825,13 @@
     font: 15px/1 ui-sans-serif, system-ui, sans-serif;
     color: #d9d4e8;
   }
+
   /* Same fade as every other disabled control — three different values across
      two files made "unavailable" look like three different states. */
   .tools button:disabled {
     opacity: 0.45;
   }
+
   /* Every button says so under the pointer. Most did not: the rail, the header
      and the sidebar each styled their own and the rest stayed flat, so half the
      controls in this app gave no sign they were controls at all. One rule,
@@ -2852,29 +2840,12 @@
   :global(button:not(:disabled):hover) {
     background: #2f2652;
   }
-  /* A section head is the whole line, not the triangle on it. Only the arrow
-     answered a click, so a list you could collapse looked like a list you
-     could not — and the word beside it looked like a label rather than the way
-     in. Full width so the pointer finds it anywhere along the row. */
-  h2 > button.head {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    width: 100%;
-    padding: 2px 4px;
-    border: 0;
-    background: none;
-    font: inherit;
-    color: inherit;
-    text-align: left;
-  }
-  h2 > button.head:hover {
-    background: #241e3a;
-  }
+
   .tools .gap {
     grid-column: 1 / -1;
     height: 6px;
   }
+
   /* A mode reads as pressed, not as hovered: filled, outlined in the accent,
      and it stays that way with the pointer somewhere else entirely. The tool
      buttons beside it do something and are done; this one is a state. */
@@ -2884,6 +2855,7 @@
     box-shadow: inset 0 0 0 1px #a685ff;
     color: #efeaff;
   }
+
   /* A glyph, not a word: it sits inside the document group but is not a
      document, and the tabs beside it are the ones that should carry the reading
      weight. Same height as those tabs so the row keeps one baseline. */
@@ -2893,11 +2865,13 @@
     font: 14px/1 ui-sans-serif, system-ui, sans-serif;
     color: #8f88a8;
   }
+
   .docs button.active {
     border-color: #a685ff;
     background: #2a2244;
     color: #e3dbff;
   }
+
   .link {
     padding: 0 4px;
     border-color: transparent;
@@ -2905,6 +2879,7 @@
     color: #a685ff;
     text-decoration: underline;
   }
+
   /* On its own line under the link: the URL is in it, and wrapping it into the
      version line would push the version out of sight. */
   .failed {
@@ -2913,6 +2888,7 @@
     color: #ff8a8a;
     overflow-wrap: anywhere;
   }
+
   aside {
     position: relative;
     width: 300px;
@@ -2921,6 +2897,7 @@
     padding: 8px;
     border-left: 1px solid #241e3a;
   }
+
   /* The browser's own scrollbar is a bright slab in a dark app. Chromium draws
      this one, and Chromium is the only engine this ships on. */
   aside::-webkit-scrollbar,
@@ -2928,10 +2905,12 @@
     width: 10px;
     height: 10px;
   }
+
   aside::-webkit-scrollbar-track,
   .stage ::-webkit-scrollbar-track {
     background: transparent;
   }
+
   aside::-webkit-scrollbar-thumb,
   .stage ::-webkit-scrollbar-thumb {
     border: 2px solid transparent;
@@ -2939,11 +2918,13 @@
     background: #322a4c;
     background-clip: content-box;
   }
+
   aside::-webkit-scrollbar-thumb:hover,
   .stage ::-webkit-scrollbar-thumb:hover {
     background: #453a66;
     background-clip: content-box;
   }
+
   .totop {
     position: sticky;
     bottom: 4px;
@@ -2960,274 +2941,11 @@
     color: #8f88a8;
     cursor: pointer;
   }
+
   .totop:hover {
     color: #e2dded;
   }
-  h2 {
-    margin: 0 0 6px;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: #8f88a8;
-  }
-  h2.spaced {
-    margin-top: 18px;
-  }
-  .empty {
-    margin: 0;
-    color: #6f688a;
-  }
-  ul {
-    margin: 0;
-    padding: 0;
-    list-style: none;
-  }
-  li {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    padding: 2px;
-    border-radius: 3px;
-  }
-  /* A bar as well as a tint. The tint alone was 1.4:1 against the panel — the
-     faintest signal a list can give, and it was the only one, so a picked row
-     and its neighbours read the same at a glance. The bar is what survives
-     being glanced at, and it is a shape rather than a shade, so the row does
-     not depend on telling two dark greys apart. */
-  li.selected,
-  .grouphead.selected {
-    background: #2b2347;
-    box-shadow: inset 3px 0 0 #a685ff;
-  }
-  /* Rows are clickable and said nothing at all under the pointer. `:has` picks
-     the innermost hovered row: layer rows nest, and without it a hover on a
-     child lit its parent up as well. */
-  li:hover:not(.selected):not(:has(li:hover)) {
-    background: #211b38;
-  }
-  /* A line where the row would land, and a frame when it would land inside —
-     an insertion point has to be visible before the mouse is released or the
-     drop is a guess. box-shadow rather than a border, so nothing shifts by a
-     pixel as the marker moves from row to row. */
-  li.drop-before {
-    box-shadow: inset 0 2px 0 #a685ff;
-  }
-  li.drop-after {
-    box-shadow: inset 0 -2px 0 #a685ff;
-  }
-  li.drop-into {
-    box-shadow: inset 0 0 0 2px #a685ff;
-  }
-  li[draggable="true"] {
-    cursor: grab;
-  }
-  /* The same target size as the toolbar. A row's controls are hit as often as
-     a tool is, and they were half the size — 32px is one number for the whole
-     app rather than one per panel. The name button is exempt: it stretches to
-     the row and its height comes from the line. */
-  li button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 32px;
-    height: 32px;
-    padding: 0 6px;
-    font-size: 15px;
-  }
-  .name {
-    flex: 1;
-    min-width: 0;
-    /* Left-aligned and elastic, unlike the square icon buttons above — and
-       block, so a two-line row (name plus its usage count) is not squashed
-       into one flex line. */
-    display: block;
-    overflow: hidden;
-    text-align: left;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: inherit;
-    border-color: transparent;
-    background: none;
-  }
-  .dimmed {
-    color: #6f688a;
-  }
-  .usage {
-    display: block;
-    color: #6f688a;
-    font-size: 11px;
-  }
-  .wide {
-    width: 100%;
-    height: 32px;
-    margin-top: 6px;
-  }
-  .eye {
-    border-color: transparent;
-    background: none;
-  }
-  /* The accent the rest of the app uses for "this is switched on". A locked
-     layer is a state worth spotting from across the list, not a shape to
-     squint at. */
-  .eye.on {
-    color: #a685ff;
-  }
-  .group {
-    margin-bottom: 6px;
-    border-bottom: 1px solid #1b1630;
-  }
-  /* On the head, not the whole group. Tile rows are groups nested inside the
-     section's group, so a hover on one row also hovered its ancestor and the
-     entire block lit up — which read as "everything is marked". */
-  .grouphead:hover:not(.selected) {
-    background: #211b38;
-  }
-  .grouphead {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    padding: 2px;
-  }
-  .grouphead button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 32px;
-    height: 32px;
-    padding: 0 6px;
-    font-size: 15px;
-  }
-  .grouphead .name {
-    display: block;
-    height: auto;
-    color: #a685ff;
-  }
-  /* Beside the portrait, at the portrait's height and no wider than it needs.
-     Not the 32px box the row's other buttons get: this one has to read as a
-     second picture next to the face, not as a control competing with ↩. */
-  .rowicon {
-    flex: none;
-    min-width: 20px;
-    width: 20px;
-    padding: 0;
-    border-color: transparent;
-    background: none;
-    color: #8f88a8;
-  }
-  .rowicon svg {
-    width: 18px;
-    height: 18px;
-  }
-  .twisty {
-    min-width: 22px;
-    padding: 0;
-    border-color: transparent;
-    background: none;
-    color: #8f88a8;
-  }
-  /* Thumbnails on the app's chequerboard rather than on flat colour: a class
-     logo is usually transparent, and on a dark panel a dark logo is a dark
-     square. */
-  .gallery {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 3px;
-    margin-bottom: 6px;
-  }
-  .swatch {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 40px;
-    height: 40px;
-    padding: 2px;
-    background:
-      linear-gradient(45deg, #221c36 25%, transparent 25%) 0 0 / 10px 10px,
-      linear-gradient(-45deg, #221c36 25%, transparent 25%) 0 5px / 10px 10px,
-      #16112a;
-  }
-  .swatch img {
-    max-width: 100%;
-    max-height: 100%;
-    object-fit: contain;
-  }
-  /* A class icon fills its swatch the way a picture does. Scoped to the icon
-     swatch and not to `.swatch svg`: that also matched the "no picture" glyph
-     in the gallery above, which carries its own 18px size and arrived at 34. */
-  .swatch.art svg {
-    width: 100%;
-    height: 100%;
-  }
-  .swatch.on {
-    border-color: #a685ff;
-    box-shadow: inset 0 0 0 1px #a685ff;
-  }
-  .swatch.none {
-    color: #8f88a8;
-  }
-  /* A colour fills its swatch edge to edge — the padding that keeps a picture
-     off the border would show the chequerboard behind it and make every colour
-     look half transparent. */
-  .swatch.flat {
-    padding: 0;
-  }
-  /* The picker sits in a label because a colour input has to be clicked
-     through; the input itself is invisible and the label is the swatch.
-     `border-box` and the border spelled out, because every other swatch is a
-     button and inherits both — without them the label came out 44px beside a
-     row of 40s. */
-  .swatch.pick {
-    position: relative;
-    box-sizing: border-box;
-    border: 1px solid #3a444c;
-    border-radius: 3px;
-    cursor: pointer;
-    color: #8f88a8;
-  }
-  .swatch.pick input {
-    position: absolute;
-    inset: 0;
-    opacity: 0;
-    cursor: pointer;
-  }
-  /* The gallery's label and the wording field's label name the same kind of
-     thing — a layer on this tile — so they are set the same and start on the
-     same column. It used to be a small-caps subtitle sitting one notch to the
-     left, which read as a heading over the row rather than a label in it. */
-  .sub {
-    margin: 4px 0 2px 18px;
-    color: #8f88a8;
-    font-size: 11px;
-  }
-  .indent {
-    margin-left: 18px;
-  }
-  .assign {
-    width: calc(100% - 18px);
-    height: 32px;
-    margin: 2px 0 6px;
-    font: inherit;
-    padding: 0 6px;
-    border: 1px solid #3a444c;
-    border-radius: 3px;
-    background: #1d1832;
-    color: #8f88a8;
-  }
-  .rename {
-    flex: 1;
-    min-width: 0;
-    /* Border included, or the field is two pixels taller than the button it
-       replaces and every row it opens in jumps down and back. */
-    box-sizing: border-box;
-    height: 32px;
-    font: inherit;
-    padding: 0 6px;
-    border: 1px solid #a685ff;
-    border-radius: 3px;
-    background: #0e0b16;
-    color: inherit;
-  }
+
   /* The header's copy has to match the tab it stands in for, not the sidebar
      rows the rule above is cut for. Measured: a tab is 28.19px tall and that
      32px + 2px of border is 34, so renaming a Layout grew the whole top row by
@@ -3239,21 +2957,7 @@
     height: auto;
     padding: 4px 10px;
   }
-  .dirty {
-    color: #ffc45c;
-  }
-  /* The dot on a Layout row is a control, not punctuation — but it has to keep
-     reading as the mark it replaced, so it drops the 32px box every other
-     button in a row gets. A fourth icon beside ✎ ⧉ × would have pushed the
-     name into an ellipsis on a sidebar this narrow. */
-  button.dirty {
-    flex: none;
-    min-width: 0;
-    width: 16px;
-    padding: 0;
-    border-color: transparent;
-    background: none;
-  }
+
   /* On the "?" button, over its top right corner. Positioned against the
      button rather than sitting in its text, so the glyph stays centred and the
      mark reads as a badge on the control instead of punctuation after it.
@@ -3262,6 +2966,7 @@
   .reload.help {
     position: relative;
   }
+
   .fresh {
     position: absolute;
     top: 2px;
@@ -3271,6 +2976,7 @@
     border-radius: 50%;
     background: #ff4d4d;
   }
+
   /* The version line: quiet, and the same grey every other aside in this app
      is set in. */
   .build {
@@ -3278,6 +2984,7 @@
     color: #8f88a8;
     font-size: 11px;
   }
+
   .build .link {
     padding: 0;
     border: 0;
@@ -3286,30 +2993,5 @@
     font: inherit;
     text-decoration: underline;
     cursor: pointer;
-  }
-  .field {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    margin-bottom: 4px;
-  }
-  .field > span:first-child {
-    flex: none;
-    width: 56px;
-    overflow: hidden;
-    color: #8f88a8;
-    font-size: 11px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .field input {
-    flex: 1;
-    min-width: 0;
-    font: inherit;
-    padding: 2px 4px;
-    border: 1px solid #3a444c;
-    border-radius: 3px;
-    background: #0e0b16;
-    color: inherit;
   }
 </style>

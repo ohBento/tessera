@@ -1,5 +1,10 @@
 import { mount } from "svelte";
 import App from "./App.svelte";
+/* The row vocabulary the sidebar's three lists share — see rows.css. Loaded
+ * here rather than from a component so it belongs to none of them: Svelte
+ * scopes a component's styles, and a shared rule kept inside one list is a
+ * rule the next list has to copy. */
+import "./rows.css";
 
 /* Dev-only handle on the running app. The browser has no OS file dialog to
  * drive, so without this there is no way to get a picture into a Layout from

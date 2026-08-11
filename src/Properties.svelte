@@ -963,6 +963,11 @@
     text-transform: uppercase;
     color: #8f88a8;
   }
+  /* Deliberately wider than the row in rows.css: this panel is a column of
+     nothing but fields, where a tile row fits one among a gallery and a stack
+     of buttons. Scoped, so it wins over the shared rule without touching it.
+     Said out loud because the two spellings were an accident until now —
+     4px here and 6px there, neither knowing about the other. */
   .field {
     display: flex;
     align-items: center;

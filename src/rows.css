@@ -1,0 +1,449 @@
+/* The vocabulary a sidebar row is built from.
+ *
+ * A plain stylesheet rather than a component's <style>, because three lists
+ * draw the same row — the tiles, the projects, the layers of an open Layout —
+ * and Svelte scopes a component's styles to that component. Kept inside one,
+ * every list extracted from App would need its own copy, and copies of a rule
+ * drift: this file starts life with .field spelled twice in the codebase at
+ * two different gaps, which nothing noticed because no test reads CSS.
+ *
+ * What belongs here is what a *row* is made of. The shell around the rows —
+ * the stage, the sheet, the toolbar, the cards on the overview — stays in
+ * App.svelte, where nothing else can accidentally match it.
+ */
+
+.thumb {
+  flex: none;
+  border-radius: 2px;
+  background: #0e0b16;
+}
+
+/* Hidden rather than unrendered: the list is short enough that keeping it in
+   the DOM costs nothing, and the rows keep their scroll position. */
+ul.collapsed {
+  display: none;
+}
+
+h2 .twisty.inline {
+  height: auto;
+  min-width: 16px;
+  padding: 0;
+  font-size: 11px;
+  vertical-align: baseline;
+}
+
+button {
+  font: inherit;
+  padding: 4px 10px;
+  border: 1px solid #3a444c;
+  border-radius: 3px;
+  background: #1d1832;
+  color: inherit;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* The one act per document that pushes work outward — Update stamps on a
+   Layout, Write to game on the wall — wears the ramp the app is named after
+   now. Everything else stays a quiet raised button, which is what keeps
+   this one legible as "the" action rather than "an" action. */
+.primary {
+  border-color: transparent;
+  background: linear-gradient(90deg, #8f6bff, #ff5fa8);
+  /* Dark ink, not the mock-up's white: white measures 3.3:1 against the
+     ramp's midpoint and this is the label that must always be readable. */
+  color: #140f1e;
+  font-weight: 600;
+}
+
+/* And it gives the ramp back when it cannot be pressed. Faded to 0.45 the
+   gradient was still the loudest thing on the screen, so on Home the eye
+   went straight to "Write to game" — the one button there that does
+   nothing. A disabled action should read as an action that is not available,
+   not as the one to reach for. */
+.primary:disabled {
+  border-color: #3a444c;
+  background: #1d1832;
+  color: inherit;
+  font-weight: inherit;
+}
+
+/* No hand cursor on a name that only answers a double-click: the pointer is
+   the promise, and here there is nothing behind a single press. */
+.inert-name {
+  cursor: default;
+}
+
+/* A section head is the whole line, not the triangle on it. Only the arrow
+   answered a click, so a list you could collapse looked like a list you
+   could not — and the word beside it looked like a label rather than the way
+   in. Full width so the pointer finds it anywhere along the row. */
+h2 > button.head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 2px 4px;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+}
+
+h2 > button.head:hover {
+  background: #241e3a;
+}
+
+h2 {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #8f88a8;
+}
+
+h2.spaced {
+  margin-top: 18px;
+}
+
+.empty {
+  margin: 0;
+  color: #6f688a;
+}
+
+ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+li {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 3px;
+}
+
+/* A bar as well as a tint. The tint alone was 1.4:1 against the panel — the
+   faintest signal a list can give, and it was the only one, so a picked row
+   and its neighbours read the same at a glance. The bar is what survives
+   being glanced at, and it is a shape rather than a shade, so the row does
+   not depend on telling two dark greys apart. */
+li.selected,
+.grouphead.selected {
+  background: #2b2347;
+  box-shadow: inset 3px 0 0 #a685ff;
+}
+
+/* Rows are clickable and said nothing at all under the pointer. `:has` picks
+   the innermost hovered row: layer rows nest, and without it a hover on a
+   child lit its parent up as well. */
+li:hover:not(.selected):not(:has(li:hover)) {
+  background: #211b38;
+}
+
+/* A line where the row would land, and a frame when it would land inside —
+   an insertion point has to be visible before the mouse is released or the
+   drop is a guess. box-shadow rather than a border, so nothing shifts by a
+   pixel as the marker moves from row to row. */
+li.drop-before {
+  box-shadow: inset 0 2px 0 #a685ff;
+}
+
+li.drop-after {
+  box-shadow: inset 0 -2px 0 #a685ff;
+}
+
+li.drop-into {
+  box-shadow: inset 0 0 0 2px #a685ff;
+}
+
+li[draggable="true"] {
+  cursor: grab;
+}
+
+/* The same target size as the toolbar. A row's controls are hit as often as
+   a tool is, and they were half the size — 32px is one number for the whole
+   app rather than one per panel. The name button is exempt: it stretches to
+   the row and its height comes from the line. */
+li button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 6px;
+  font-size: 15px;
+}
+
+.name {
+  flex: 1;
+  min-width: 0;
+  /* Left-aligned and elastic, unlike the square icon buttons above — and
+     block, so a two-line row (name plus its usage count) is not squashed
+     into one flex line. */
+  display: block;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: inherit;
+  border-color: transparent;
+  background: none;
+}
+
+.dimmed {
+  color: #6f688a;
+}
+
+.usage {
+  display: block;
+  color: #6f688a;
+  font-size: 11px;
+}
+
+.wide {
+  width: 100%;
+  height: 32px;
+  margin-top: 6px;
+}
+
+.eye {
+  border-color: transparent;
+  background: none;
+}
+
+/* The accent the rest of the app uses for "this is switched on". A locked
+   layer is a state worth spotting from across the list, not a shape to
+   squint at. */
+.eye.on {
+  color: #a685ff;
+}
+
+.group {
+  margin-bottom: 6px;
+  border-bottom: 1px solid #1b1630;
+}
+
+/* On the head, not the whole group. Tile rows are groups nested inside the
+   section's group, so a hover on one row also hovered its ancestor and the
+   entire block lit up — which read as "everything is marked". */
+.grouphead:hover:not(.selected) {
+  background: #211b38;
+}
+
+.grouphead {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+}
+
+.grouphead button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 6px;
+  font-size: 15px;
+}
+
+.grouphead .name {
+  display: block;
+  height: auto;
+  color: #a685ff;
+}
+
+/* Beside the portrait, at the portrait's height and no wider than it needs.
+   Not the 32px box the row's other buttons get: this one has to read as a
+   second picture next to the face, not as a control competing with ↩. */
+.rowicon {
+  flex: none;
+  min-width: 20px;
+  width: 20px;
+  padding: 0;
+  border-color: transparent;
+  background: none;
+  color: #8f88a8;
+}
+
+.rowicon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.twisty {
+  min-width: 22px;
+  padding: 0;
+  border-color: transparent;
+  background: none;
+  color: #8f88a8;
+}
+
+/* Thumbnails on the app's chequerboard rather than on flat colour: a class
+   logo is usually transparent, and on a dark panel a dark logo is a dark
+   square. */
+.gallery {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-bottom: 6px;
+}
+
+.swatch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 2px;
+  background:
+    linear-gradient(45deg, #221c36 25%, transparent 25%) 0 0 / 10px 10px,
+    linear-gradient(-45deg, #221c36 25%, transparent 25%) 0 5px / 10px 10px,
+    #16112a;
+}
+
+.swatch img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+/* A class icon fills its swatch the way a picture does. Scoped to the icon
+   swatch and not to `.swatch svg`: that also matched the "no picture" glyph
+   in the gallery above, which carries its own 18px size and arrived at 34. */
+.swatch.art svg {
+  width: 100%;
+  height: 100%;
+}
+
+.swatch.on {
+  border-color: #a685ff;
+  box-shadow: inset 0 0 0 1px #a685ff;
+}
+
+.swatch.none {
+  color: #8f88a8;
+}
+
+/* A colour fills its swatch edge to edge — the padding that keeps a picture
+   off the border would show the chequerboard behind it and make every colour
+   look half transparent. */
+.swatch.flat {
+  padding: 0;
+}
+
+/* The picker sits in a label because a colour input has to be clicked
+   through; the input itself is invisible and the label is the swatch.
+   `border-box` and the border spelled out, because every other swatch is a
+   button and inherits both — without them the label came out 44px beside a
+   row of 40s. */
+.swatch.pick {
+  position: relative;
+  box-sizing: border-box;
+  border: 1px solid #3a444c;
+  border-radius: 3px;
+  cursor: pointer;
+  color: #8f88a8;
+}
+
+.swatch.pick input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* The gallery's label and the wording field's label name the same kind of
+   thing — a layer on this tile — so they are set the same and start on the
+   same column. It used to be a small-caps subtitle sitting one notch to the
+   left, which read as a heading over the row rather than a label in it. */
+.sub {
+  margin: 4px 0 2px 18px;
+  color: #8f88a8;
+  font-size: 11px;
+}
+
+.indent {
+  margin-left: 18px;
+}
+
+.assign {
+  width: calc(100% - 18px);
+  height: 32px;
+  margin: 2px 0 6px;
+  font: inherit;
+  padding: 0 6px;
+  border: 1px solid #3a444c;
+  border-radius: 3px;
+  background: #1d1832;
+  color: #8f88a8;
+}
+
+.rename {
+  flex: 1;
+  min-width: 0;
+  /* Border included, or the field is two pixels taller than the button it
+     replaces and every row it opens in jumps down and back. */
+  box-sizing: border-box;
+  height: 32px;
+  font: inherit;
+  padding: 0 6px;
+  border: 1px solid #a685ff;
+  border-radius: 3px;
+  background: #0e0b16;
+  color: inherit;
+}
+
+.dirty {
+  color: #ffc45c;
+}
+
+/* The dot on a Layout row is a control, not punctuation — but it has to keep
+   reading as the mark it replaced, so it drops the 32px box every other
+   button in a row gets. A fourth icon beside ✎ ⧉ × would have pushed the
+   name into an ellipsis on a sidebar this narrow. */
+button.dirty {
+  flex: none;
+  min-width: 0;
+  width: 16px;
+  padding: 0;
+  border-color: transparent;
+  background: none;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.field > span:first-child {
+  flex: none;
+  width: 56px;
+  overflow: hidden;
+  color: #8f88a8;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.field input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  padding: 2px 4px;
+  border: 1px solid #3a444c;
+  border-radius: 3px;
+  background: #0e0b16;
+  color: inherit;
+}
