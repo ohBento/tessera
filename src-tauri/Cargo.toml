@@ -1,6 +1,6 @@
 [package]
 name = "tessera"
-version = "0.17.0"
+version = "0.18.0"
 description = "Portrait editor for Black Desert Online"
 authors = ["wsau"]
 license = "MIT"
