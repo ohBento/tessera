@@ -19,7 +19,6 @@ import {
   findLayer,
   findList,
   groupShift,
-  holdersUsingLayout,
   inboxIds,
   archivedIds,
   setArchived,
@@ -57,7 +56,7 @@ import {
   swapPlaced,
   takeOutOfFolder,
   syncLiveLayers,
-  tilesUsingLayout,
+  tilesWearing,
   unplaceTile,
   type Frame,
   type ImageLayer,
@@ -337,8 +336,13 @@ export const archived = () => archivedIds(app.manifest, app.folderIds);
  *  it asking "or is it the archive". */
 export const onArchive = () => app.openProjectId === ARCHIVE;
 
-/** The archive's stand-in id. Deliberately not a valid project id. */
-export const ARCHIVE = " archive";
+/** The archive's stand-in id. Deliberately not a valid project id.
+ *
+ *  The NUL is written as an escape rather than typed into the file. A raw one
+ *  in the source makes git call this whole file binary — no diff, no blame, and
+ *  grep answering "Binary file matches" instead of a line number. Same string
+ *  at runtime. */
+export const ARCHIVE = "\u0000archive";
 
 /** What the canvas and the export are pointed at. The inbox is a wall too: the
  *  unclaimed tiles, with no picture spread over them — and so is the archive. */
@@ -1863,21 +1867,17 @@ export const tileLayers = (tileId: string) => app.manifest.tiles[tileId]?.layers
  *  and what says whether a tile is still sitting in the inbox. */
 export const tileProject = (tileId: string) => projectOf(app.manifest, tileId);
 
-/** How many places hold a stamp of this Layout — what a refresh re-renders and
- *  what a delete leaves behind, so both are counted in the unit they act on. */
-export const layoutUsage = (layoutId: string) => holdersUsingLayout(app.manifest, layoutId).length;
-
-/** How many portraits carry it — the other half of the picture, and the one a
- *  wall of tiles reads first. Shown beside the group count rather than instead
- *  of it: the two answer different questions and neither implies the other. */
-export const layoutTiles = (layoutId: string) => tilesUsingLayout(app.manifest, layoutId);
+/** How many portraits carry this Layout — what a refresh re-renders and what a
+ *  delete leaves behind, which since groups lost their shared stack is one
+ *  number rather than two. It was shown as two, and they were always equal. */
+export const layoutTiles = (layoutId: string) => tilesWearing(app.manifest, layoutId).length;
 
 /** Whether saving would do anything: the Layout has to be stamped somewhere,
  *  and changed since. Offering it otherwise gives a button that re-renders an
  *  identical picture and looks like it did nothing. */
 export function canSaveLayout(layoutId: string): boolean {
   const layout = app.manifest.layouts.find((l) => l.id === layoutId);
-  return !!layout && !!layoutUsage(layoutId) && layoutNeedsRestamp(layout);
+  return !!layout && !!layoutTiles(layoutId) && layoutNeedsRestamp(layout);
 }
 
 /** Re-renders once and refreshes every existing stamp of this Layout across
@@ -1892,7 +1892,7 @@ export async function saveLayout(layoutId: string) {
       const n = refreshStamps(app.manifest, layoutId, asset);
       // Live captions travel with the stamp: repositioning or restyling one in
       // the Layout has to reach everywhere it is used, the same as the picture.
-      for (const h of holdersUsingLayout(app.manifest, layoutId)) syncLiveLayers(h, layout);
+      for (const tile of tilesWearing(app.manifest, layoutId)) syncLiveLayers(tile, layout);
       layout.stamped = seen;
       app.error = `${n} stamp(s) updated`;
     });

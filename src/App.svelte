@@ -64,7 +64,6 @@
     layoutGroups,
     looseIds,
     layoutTiles,
-    layoutUsage,
     layouts,
     moveLayersIntoGroup,
     moveTilesToProject,
@@ -599,15 +598,14 @@
    *  undo step brings the lot back, but it is still a wall-wide change, which
    *  is worth saying out loud first. */
   async function removeLayout(id: string, name: string) {
-    const used = layoutUsage(id);
+    const used = layoutTiles(id);
     /* Asked either way. An unstamped Layout is not a cheap thing — it is a
        design somebody built and has not put on a wall yet — and it was one
        click from gone while a stamped one got a dialog. */
     const message = used
-      ? // Both units again: the deletion is counted per stamp, but what it is
-        // visible on is tiles.
-        `"${name}" is stamped ${used} time(s), on ${layoutTiles(id)} tile(s). ` +
-        `Deleting it removes those stamps from the tiles too.`
+      ? // One unit. This used to name stamps and tiles separately, and the two
+        // numbers were equal by construction — see tilesWearing.
+        `"${name}" is on ${used} tile(s). Deleting it removes those stamps too.`
       : `Delete the layout "${name}"? It is not on any tile yet.`;
     if (!(await confirmed(message, "Delete layout?"))) return;
     await deleteLayoutDoc(id);
@@ -1706,14 +1704,14 @@
         class="primary"
         onclick={() => saveLayout(editing.id)}
         disabled={!canSaveLayout(editing.id) || !!app.busy}
-        title={layoutUsage(editing.id)
-          ? `Applies the changes to ${layoutUsage(editing.id)} stamp(s)`
+        title={layoutTiles(editing.id)
+          ? `Applies the changes to ${layoutTiles(editing.id)} tile(s)`
           : "Not stamped anywhere yet"}
       >
         <!-- Not "Save": the Layout is written to disk on every edit, so a
              save button would promise something that already happened. What
              this does is re-render and swap the picture in every stamp. -->
-        Update stamps{#if layoutUsage(editing.id)}&nbsp;({layoutUsage(editing.id)}){/if}
+        Update stamps{#if layoutTiles(editing.id)}&nbsp;({layoutTiles(editing.id)}){/if}
       </button>
     {:else}
       <!-- Every button below acts on the wall in front of you, and on the
@@ -2287,9 +2285,10 @@
                        tiles are how much of the wall wears the design. One
                        group of fifteen tiles used to read "stamped 1 time". -->
                   <span class="usage">
-                    {layoutUsage(layout.id)
-                      ? `${layoutUsage(layout.id)} stamp(s) · ${layoutTiles(layout.id)} tile(s)`
-                      : "unused"}
+                    <!-- One number. It read "1 stamp(s) · 1 tile(s)" because
+                         the two were the same count wearing different words —
+                         see tilesWearing. -->
+                    {layoutTiles(layout.id) ? `${layoutTiles(layout.id)} tile(s)` : "unused"}
                   </span>
                 </button>
               {/if}

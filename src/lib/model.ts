@@ -53,7 +53,13 @@ type Common = {
    * that is the only reason there is no "tile" value to write: a second name
    * for "not set" is a value nobody can ever be sure got assigned. Only
    * meaningful on a project-scope layer; a tile-local one has no wall to
-   * span. */
+   * span.
+   *
+   * It sits on Common because that is where the flags live, not because every
+   * kind honours it: buildGrid draws grid-space *pictures* and skips the rest,
+   * so a shape or a caption marked this way is silently undrawable. Nothing
+   * creates one — addGridImage is the only writer and it makes an image — so
+   * this is a note for whoever widens it, not a defect to chase. */
   space?: "grid";
   /* A soft halo behind the layer. With no offset it is a glow — one feature
    * covers both, which is why there is no separate glow field. Optional here
@@ -762,38 +768,27 @@ export const emptyManifest = (): Manifest => ({
   layouts: [],
 });
 
-/** Somewhere a stamp can sit, paired with the tiles it reaches.
+/** Every tile carrying a stamp of this layout — what "Update stamps" has to
+ *  refresh, and what is left wearing a picture nobody can regenerate if the
+ *  layout is deleted.
  *
- *  There are two such places and they are deliberately not the same type: a
- *  group's stack, and one tile's own. Everything that acts on stamps — refresh,
- *  count, delete — has to reach both, and having each of them ask "wall or
- *  tile?" separately is how one of the two quietly gets left out. */
-export type StampHolder = { layers: Layer[]; tiles: string[] };
-
-/** Every such place in the document — one tile's own stack, and that is now the
- *  only kind. Kept as a named concept because refresh, count and delete all ask
- *  the same question, and asking it three times separately is how one of them
- *  quietly stops matching the others. */
-function stampHolders(m: Manifest): StampHolder[] {
-  return Object.entries(m.tiles).map(([id, t]) => ({ layers: t.layers, tiles: [id] }));
-}
-
-/** Every place holding a stamp of this layout — what "Update stamps" has to
- *  refresh, and how many pictures are left behind if the layout is deleted. */
-export function holdersUsingLayout(m: Manifest, layoutId: string): StampHolder[] {
-  return stampHolders(m).filter((h) =>
-    h.layers.some((l) => l.kind === "image" && l.layoutId === layoutId),
+ *  There used to be a StampHolder here, a `{ layers, tiles }` pair, from when a
+ *  stamp could also sit on a group's shared stack. Groups lost theirs, so every
+ *  holder was one tile and `tiles` was a one-element literal — which made "how
+ *  many stamps" and "how many portraits" the same number by construction, and
+ *  the Layout row printed it twice ("1 stamp(s) · 1 tile(s)"). Checked before
+ *  removing it: no v6 document brings the old shape back either, because toV7
+ *  clones overlay layers onto each tile before anything counts them.
+ *
+ *  `!l.live` for the reason stampInto and refreshStamps both state: a live copy
+ *  is a per-tile picture or a cutter that travelled, not a stamp. It cannot
+ *  change the answer today — a live copy only ever exists beside its stamp — so
+ *  this is here to keep the three predicates saying the same thing rather than
+ *  to fix a count. */
+export function tilesWearing(m: Manifest, layoutId: string): Tile[] {
+  return Object.values(m.tiles).filter((t) =>
+    t.layers.some((l) => l.kind === "image" && l.layoutId === layoutId && !l.live),
   );
-}
-
-/** How many portraits actually carry this layout.
- *
- *  The other number — how many places hold a stamp — is what a refresh or a
- *  delete touches, but it says nothing about how much of the wall is at stake:
- *  one group of fifteen tiles read as "stamped 1 time" while fifteen portraits
- *  wore the design. */
-export function tilesUsingLayout(m: Manifest, layoutId: string): number {
-  return holdersUsingLayout(m, layoutId).reduce((n, h) => n + h.tiles.length, 0);
 }
 
 /** Puts a rendered stamp of `layoutId` into a layer stack — a group's or one
@@ -830,8 +825,8 @@ export function stampInto(into: { layers: Layer[] }, layoutId: string, asset: st
  *  to update everywhere at once, not be re-stamped by hand at each. */
 export function refreshStamps(m: Manifest, layoutId: string, asset: string): number {
   let n = 0;
-  for (const h of stampHolders(m)) {
-    for (const l of h.layers) {
+  for (const tile of Object.values(m.tiles)) {
+    for (const l of tile.layers) {
       /* `!l.live` for the reason stampInto states: a live copy is a per-tile
          picture or a cutter that travelled, and pointing it at the flattened
          sheet would replace what the tile chose. syncLiveLayers happened to
@@ -1391,8 +1386,14 @@ export function pruneDeadLayoutRefs(m: Manifest): number {
  *  Invisible ones, at that: the list hides live captions because the stamp row
  *  speaks for them, and with no stamp row nothing did. Four tiles on the real
  *  wall carried captions that rendered, could not be selected, and could not be
- *  deleted. Run on load, so a wall repairs itself rather than needing the user
- *  to go looking. */
+ *  deleted.
+ *
+ *  Runs in the v6→v7 migration and nowhere else — the comment here used to say
+ *  "on load, so a wall repairs itself", which stopped being true when migrate
+ *  learned to return a v7 document untouched. A wall that acquires an orphan
+ *  today keeps it: the delete paths have taken the copies along since 0.11.0,
+ *  so nothing is expected to make one, and there is no sweep left to catch it
+ *  if something does. */
 export function dropOrphanLiveLayers(tile: Tile): number {
   const stamped = new Set(
     tile.layers.filter((l) => l.kind === "image" && l.layoutId && !l.live).map((l) => l.layoutId),

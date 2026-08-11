@@ -43,11 +43,10 @@ import {
   projectOf,
   projectTiles,
   clearBases,
-  holdersUsingLayout,
   pruneDeadLayoutRefs,
   pruneToFolder,
   removeFromProjectToInbox,
-  tilesUsingLayout,
+  tilesWearing,
   refreshStamps,
   relocateLayer,
   stampInto,
@@ -433,19 +432,18 @@ const tilesWith = (spec: Record<string, Layer[]>): Manifest => {
   return m;
 };
 
-describe("holdersUsingLayout", () => {
+describe("tilesWearing", () => {
   it("finds every tile carrying a stamp of this layout, and no others", () => {
     const m = tilesWith({
       t0: [{ ...newImageLayer("render1.png"), layoutId: "L1" }],
       t1: [{ ...newImageLayer("render2.png"), layoutId: "L2" }],
       t2: [newImageLayer("hand-picked.png")], // never stamped from any layout
     });
-    expect(holdersUsingLayout(m, "L1").map((h) => h.tiles)).toEqual([["t0"]]);
-    expect(holdersUsingLayout(m, "nope")).toEqual([]);
+    expect(tilesWearing(m, "L1")).toHaveLength(1);
+    expect(tilesWearing(m, "L1")[0].layers[0].layoutId).toBe("L1");
+    expect(tilesWearing(m, "nope")).toEqual([]);
   });
-});
 
-describe("tilesUsingLayout", () => {
   it("counts the portraits wearing the design", () => {
     const m = tilesWith({
       t0: [stampOf("L1")],
@@ -453,9 +451,18 @@ describe("tilesUsingLayout", () => {
       t2: [stampOf("L2")],
       t3: [],
     });
-    expect(tilesUsingLayout(m, "L1")).toBe(2);
-    expect(tilesUsingLayout(m, "L2")).toBe(1);
-    expect(tilesUsingLayout(m, "nope")).toBe(0);
+    expect(tilesWearing(m, "L1")).toHaveLength(2);
+    expect(tilesWearing(m, "L2")).toHaveLength(1);
+    expect(tilesWearing(m, "nope")).toHaveLength(0);
+  });
+
+  it("does not count a tile that only carries live copies", () => {
+    /* A live copy is a per-tile picture or a cutter that travelled, not a
+     * stamp — the same rule stampInto and refreshStamps already follow. It
+     * cannot come up today, because a live copy only exists beside its stamp;
+     * this is here so the three predicates cannot drift apart unnoticed. */
+    const m = tilesWith({ t0: [{ ...stampOf("L1"), live: true }] });
+    expect(tilesWearing(m, "L1")).toEqual([]);
   });
 });
 
