@@ -304,7 +304,15 @@
       target.layerId !== layerId ||
       !(canvas && stand && canvas.getObjects().includes(stand))
     )
-      void frameAt(tile, layerId);
+      /* Reported, not dropped. This awaits a picture off disk, and both
+         loadOriginal and assetUrl deliberately rethrow a failed read so a bad
+         byte cannot be cached as a success — with `void` in front, the frame
+         simply never appeared and the tool looked broken. The wall's own
+         rebuild a few lines down has said so all along; this is the same
+         failure on the same pictures. */
+      frameAt(tile, layerId).catch((e) => {
+        app.error = `The placing frame could not be built: ${e}`;
+      });
   });
 
   /** Every visible tile the band touches. */

@@ -33,6 +33,7 @@ import {
   freeCount,
   history,
   setLayerField,
+  redoEdit,
   undoEdit,
   groupLayoutLayers,
   inbox,
@@ -2052,5 +2053,69 @@ describe("undo that says what it takes back", () => {
     // One press takes the whole word back, not one letter.
     expect(tileText(a, caption.id)).toBeUndefined();
     expect(app.error).toBe("Undone: Type caption");
+  });
+
+  it("puts it back on redo, and says that too", async () => {
+    /* redo shares travel() with undo, so this is thin — but nothing pressed it
+     * at all before, and "shares the code path" stops being true the first time
+     * someone special-cases one of travel's two callers. */
+    await newLayoutDoc("Wiederholen");
+    await addLayoutText();
+    const before = openLayout()!.layers.length;
+
+    await undoEdit();
+    expect(openLayout()!.layers.length).toBe(before - 1);
+
+    await redoEdit();
+
+    expect(openLayout()!.layers.length).toBe(before);
+    expect(app.error).toBe("Redone: Add caption");
+  });
+});
+
+describe("the right-click menu", () => {
+  /* Every action this menu offers is well tested as a function, and the menu
+   * that invokes them for most users was never opened by anything. A wrong
+   * `disabled`, an item wired to the neighbouring handler, or a regression in
+   * ContextMenu itself would all ship in silence. */
+  const items = () =>
+    [...document.querySelectorAll('[role="menuitem"]')] as HTMLButtonElement[];
+
+  it("opens on the wall and acts on the tile under the cursor", async () => {
+    const [a, b] = app.folderIds;
+    app.selectedTiles = [a, b];
+    await newProjectFrom("Konto");
+    queuePick(await magentaSquare("menue"));
+    await newLayoutDoc("Menütest");
+    await addLayoutImage();
+    /* Closing a Layout lands back on the overview, so the wall has to be
+       entered after that or there is no canvas to right-click on. */
+    await closeLayoutDoc();
+    /* Entered by clicking its card, the way the other wall tests do it: the
+       card is the only way in, and openProjectView alone leaves the overview
+       showing — with no canvas to right-click on. */
+    const cards = () => [...document.querySelectorAll("button")];
+    await until(() => cards().some((x) => x.textContent!.includes("Konto")));
+    cards().find((x) => x.textContent!.includes("Konto"))!.click();
+    await until(() => !!document.querySelector("canvas.lower-canvas"));
+
+    /* Through the stage's own handler with a real event, so the retargeting
+       rule is exercised too: a right-click on a tile outside the selection
+       takes that tile rather than acting on what was picked before. */
+    app.selectedTiles = [a];
+    const stage = document.querySelector(".stage") as HTMLElement;
+    expect(stage).toBeTruthy();
+    stage.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 40, clientY: 40 }));
+    await until(() => items().length > 0);
+
+    const assign = items().find((i) => i.textContent!.includes("Assign layout"))!;
+    expect(assign).toBeTruthy();
+    assign.click();
+    await until(() => items().some((i) => i.textContent!.includes("Menütest")));
+    items().find((i) => i.textContent!.includes("Menütest"))!.click();
+
+    // The menu did what the function does — and closed behind itself.
+    await until(() => tileLayers(app.selectedTiles[0]).length > 0);
+    await until(() => items().length === 0);
   });
 });

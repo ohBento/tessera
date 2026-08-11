@@ -53,8 +53,20 @@ vi.stubGlobal("createImageBitmap", vi.fn(async () => ({ width: 1, height: 1 })))
 // constructor, and Vite's own module resolution needs `new URL` to work.
 URL.createObjectURL = () => "blob:x";
 
-const { loadOriginal, assetUrl, saveManifest, loadManifest, loadFingerprints, saveFingerprints, restoreTiles, classify, svgWithSize, importAsset } =
-  await import("./project");
+const {
+  loadOriginal,
+  assetUrl,
+  saveManifest,
+  loadManifest,
+  loadFingerprints,
+  saveFingerprints,
+  listSnapshots,
+  vaultedIds,
+  restoreTiles,
+  classify,
+  svgWithSize,
+  importAsset,
+} = await import("./project");
 
 describe("saveManifest survives overlapping writes", () => {
   /** Dragging a multi-selection fires one save per member in the same tick.
@@ -295,6 +307,41 @@ describe("loadManifest lines the manifest up with the folder", () => {
     const { manifest: m } = await loadManifest("/docs/FaceTexture", ["a", "b", "c", "neu"]);
     expect(Object.keys(m.tiles)).toContain("neu");
     expect(projectOf(m, "neu")).toBeUndefined();
+  });
+});
+
+describe("a folder that will not open is not the same as an empty one", () => {
+  /* Both of these answer a question about what can be recovered, and both used
+   * to answer "nothing" for a directory that could not be read — which is the
+   * answer that sounds like an all-clear at the one moment something is
+   * actually wrong with the folder. */
+  it("says there is no vault when there is none, and refuses to guess when there is", async () => {
+    const platform = await import("./platform");
+    const readDir = vi.mocked(platform.readDir);
+
+    // Nothing written from this folder yet: an empty answer is the true one.
+    exists.mockImplementation(async () => false);
+    readDir.mockRejectedValueOnce(new Error("ENOENT"));
+    expect(await vaultedIds("/docs/FaceTexture")).toEqual([]);
+
+    // The vault is there and will not open. Saying "nothing to put back" about
+    // files sitting right there sends someone looking for a rougher way back.
+    exists.mockImplementation(async () => true);
+    readDir.mockRejectedValueOnce(new Error("locked"));
+    await expect(vaultedIds("/docs/FaceTexture")).rejects.toThrow("locked");
+  });
+
+  it("draws the same line for the snapshot list", async () => {
+    const platform = await import("./platform");
+    const readDir = vi.mocked(platform.readDir);
+
+    exists.mockImplementation(async () => false);
+    readDir.mockRejectedValueOnce(new Error("ENOENT"));
+    expect(await listSnapshots("/docs/FaceTexture")).toEqual([]);
+
+    exists.mockImplementation(async () => true);
+    readDir.mockRejectedValueOnce(new Error("locked"));
+    await expect(listSnapshots("/docs/FaceTexture")).rejects.toThrow("locked");
   });
 });
 

@@ -457,9 +457,19 @@
       ctx.drawImage(bmp, 0, 0, el.width, el.height);
     };
 
-    void draw(arg);
+    /* Said out loud, on the same pictures the wall already reports. These are
+       the user's own game files, so a read can genuinely fail — and with `void`
+       in front, a thumbnail that could not be decoded looked exactly like a
+       tile with nothing to show yet. Once per thumbnail: `asked` guards the
+       reload, so a broken file cannot fill the line on every redraw. */
+    const show = (next: { id: string; ready: boolean }) =>
+      void draw(next).catch((e) => {
+        app.error = `A portrait could not be drawn: ${e}`;
+      });
+
+    show(arg);
     return {
-      update: (next: { id: string; ready: boolean }) => void draw(next),
+      update: show,
       destroy: () => (live = false),
     };
   }

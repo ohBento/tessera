@@ -525,8 +525,9 @@ const snapshotFile = async (dir: string, ref: SnapshotRef) =>
   );
 
 export async function listSnapshots(dir: string): Promise<SnapshotRef[]> {
+  const snaps = await snapshotDir(dir);
   try {
-    return (await readDir(await snapshotDir(dir)))
+    return (await readDir(snaps))
       .filter((e) => e.isFile && e.name.endsWith(".json"))
       .map((e) => {
         const stem = e.name.replace(/\.json$/, "");
@@ -536,7 +537,13 @@ export async function listSnapshots(dir: string): Promise<SnapshotRef[]> {
           : { name: stem.slice(cut + 1), projectId: stem.slice(0, cut) };
       })
       .sort((a, b) => a.name.localeCompare(b.name));
-  } catch {
+  } catch (e) {
+    /* Same split as vaultedIds, and the same reason. No snapshots folder means
+     * none have been taken. A folder that is there and will not open means the
+     * restore list is a lie — and it lies in the direction of "there is nothing
+     * to go back to", at exactly the moment the folder is already misbehaving
+     * and a restore point is what someone is looking for. */
+    if (await exists(snaps)) throw e;
     return [];
   }
 }
@@ -572,11 +579,21 @@ export async function deleteSnapshot(dir: string, ref: SnapshotRef) {
  *  pressed: it used to offer every tile of the project and then report "none of
  *  these were written" after the confirmation. */
 export async function vaultedIds(dir: string): Promise<string[]> {
+  const vault = await vaultDir(dir);
   try {
-    return (await readDir(await vaultDir(dir)))
+    return (await readDir(vault))
       .filter((e) => e.isFile && e.name.toLowerCase().endsWith(".bmp"))
       .map((e) => e.name.replace(/\.bmp$/i, ""));
-  } catch {
+  } catch (e) {
+    /* No vault yet is the ordinary answer and really is an empty one — nothing
+     * has been written to the game from this folder.
+     *
+     * A vault that is there and will not open is not. Answering [] to that says
+     * "none of these portraits can be put back" about files that are sitting
+     * right there, at the one moment a user is most likely to be asking:
+     * something has gone wrong with the folder. Someone told that could go
+     * looking for a rougher way to get their originals back. */
+    if (await exists(vault)) throw e;
     return [];
   }
 }
