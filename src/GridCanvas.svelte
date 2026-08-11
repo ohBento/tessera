@@ -31,9 +31,13 @@
     gridSize,
     layerSize,
     readBack,
+    rebuildTile,
     snapScale,
+    soleTileChange,
     standRect,
+    wallPrint,
     type Tagged,
+    type WallPrint,
   } from "./lib/scene";
   import { framed, layerAsset, layerText, type Layer } from "./lib/model";
   import { isLiveCopy, layerShows, offLayouts } from "./lib/stamps";
@@ -350,6 +354,24 @@
    * per event, each drawing a state already several changes stale. */
   let queued = false;
 
+  /* --- Redrawing one tile instead of the wall.
+   *
+   * A full build costs about three milliseconds a tile and runs on every edit,
+   * so a wall of three hundred froze for the best part of a second every time
+   * a caption moved. Almost always one tile changed and two hundred and ninety
+   * nine were redrawn identically.
+   *
+   * Which tile that is gets answered by comparing what is drawn against what
+   * should be (wallPrint/soleTileChange), rather than by asking forty mutating
+   * functions to declare what they touched. A mutation nobody remembered to
+   * annotate cannot go wrong, because the comparison never asked it. The rule
+   * that makes the comparison sound, and the reasons the answer is a timid
+   * one, are in scene.ts beside the code that applies it. --- */
+
+  /** What is on the canvas now, or null when that is not known — before the
+   *  first build, and after any build that did not finish. */
+  let drawn: WallPrint | null = null;
+
   function rebuild(deps: typeof app.deps) {
     if (queued) return building;
     queued = true;
@@ -369,7 +391,17 @@
            * has to be the same list the hit-testing below reads, not a second
            * derivation that could disagree by one. */
           const view = $state.snapshot(wall());
-          await buildGrid(canvas, view, $state.snapshot(app.manifest), deps, true);
+          const m = $state.snapshot(app.manifest);
+          const print = wallPrint(view, m);
+          const one = soleTileChange(drawn, print);
+          /* Forgotten before the build, not after it: a build that throws
+             leaves the canvas in a state nothing here can describe, and the
+             next pass has to start from a full one rather than trust a
+             fingerprint for a wall that was never finished. */
+          drawn = null;
+          if (one) await rebuildTile(canvas, one, view, m, deps, true);
+          else await buildGrid(canvas, view, m, deps, true);
+          drawn = print;
         } finally {
           rebuilding = false;
         }

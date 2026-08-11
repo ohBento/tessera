@@ -1311,6 +1311,12 @@ export async function buildGrid(
     ids.map((id, index) => background(m.tiles[id]?.base ?? null, id, deps, cellAt(index))),
   );
   out.push(...backgrounds);
+  /* Which tile each background belongs to, so a single-tile rebuild can find
+     the one it replaces. Nothing draws differently for it — the object is not
+     a layer and carries no layerId — but an untagged object is one no
+     incremental pass can reason about. */
+  for (const [index, obj] of backgrounds.entries())
+    Object.assign(obj, { tileId: ids[index], space: "base" });
 
   /* The picture spread across this wall. Once, not per tile — drawing it per
    * cell would paint the same pixels COLS*rows times over.
@@ -1331,6 +1337,43 @@ export async function buildGrid(
   }
 
   for (const [index, id] of ids.entries()) {
+    out.push(...(await tileLayerObjects(id, index, m, deps, interactive, flattened)));
+  }
+
+  /* Foreign objects stay, and stay on top. Fabric adds to the end of the list,
+     so leaving them where they were buried them under the wall the moment it
+     was rebuilt: the placing tool's ghost — the faint whole picture you aim by
+     when a mask hides most of what you are dragging — showed for the first drag
+     and never again, because the first drag is the first rebuild. Its frame
+     looked fine throughout, Fabric drawing an active object's controls on the
+     upper canvas whatever is buried below it. Taken off and put back last, in
+     their own order. */
+  const kept = canvas.getObjects().filter((o) => (o as { keep?: boolean }).keep);
+  canvas.remove(...canvas.getObjects());
+  for (const obj of out) canvas.add(obj);
+  for (const obj of kept) canvas.add(obj);
+  canvas.renderAll();
+}
+
+/** What one tile draws on top of its background — the unit both buildGrid and
+ *  rebuildTile are made of. The background is not in here because the whole
+ *  wall's are fetched together (see the note on Promise.all above), and a
+ *  single tile's is one await either way.
+ *
+ *  `flattened` is passed in rather than kept here so a whole-wall build still
+ *  shares one icon bake across every tile that wants it; a single-tile rebuild
+ *  hands in a map of its own and throws it away, which is the same rule as
+ *  before — a cache that outlives its render can go stale. */
+async function tileLayerObjects(
+  id: string,
+  index: number,
+  m: Manifest,
+  deps: SceneDeps,
+  interactive: boolean,
+  flattened: Map<string, HTMLCanvasElement>,
+): Promise<fabric.Object[]> {
+  const out: fabric.Object[] = [];
+  {
     const at = cellAt(index);
     const box = { w: TILE_W, h: TILE_H, x: at.x, y: at.y };
     const texts = m.tiles[id]?.text ?? {};
@@ -1465,19 +1508,130 @@ export async function buildGrid(
       out.push(obj);
     }
   }
+  return out;
+}
 
-  /* Foreign objects stay, and stay on top. Fabric adds to the end of the list,
-     so leaving them where they were buried them under the wall the moment it
-     was rebuilt: the placing tool's ghost — the faint whole picture you aim by
-     when a mask hides most of what you are dragging — showed for the first drag
-     and never again, because the first drag is the first rebuild. Its frame
-     looked fine throughout, Fabric drawing an active object's controls on the
-     upper canvas whatever is buried below it. Taken off and put back last, in
-     their own order. */
-  const kept = canvas.getObjects().filter((o) => (o as { keep?: boolean }).keep);
-  canvas.remove(...canvas.getObjects());
-  for (const obj of out) canvas.add(obj);
-  for (const obj of kept) canvas.add(obj);
+/** What is drawn on a canvas, as strings a later state can be compared
+ *  against — see wallPrint and soleTileChange. */
+export type WallPrint = { ids: string; grid: string; tiles: Map<string, string> };
+
+/** The wall as three comparable things: which tiles are on it and in what
+ *  order, the picture spread across it, and what each tile carries.
+ *
+ *  A tile's drawing comes from `m.tiles[id]` and its slot, and from nothing
+ *  else — resolveLayers reads that one record, and an asset name is
+ *  content-hashed, so the same name is always the same pixels. That is what
+ *  makes a comparison a safe substitute for asking every mutating function to
+ *  declare what it touched. */
+export const wallPrint = (wall: Wall, m: Manifest): WallPrint => ({
+  ids: wall.ids.join(","),
+  grid: JSON.stringify(wall.gridLayers),
+  tiles: new Map(wall.ids.map((id) => [id, JSON.stringify(m.tiles[id] ?? null)])),
+});
+
+/** The one tile that changed between two states, or "" when the answer is
+ *  anything else — no previous state, a different id list, a moved picture
+ *  across the wall, several tiles at once, or nothing at all.
+ *
+ *  Deliberately timid. Every "" is a full rebuild, which is only slow; a wrong
+ *  "just this one" is a wall that quietly disagrees with the document, which
+ *  is a bug the user finds long after the edit that caused it. */
+export function soleTileChange(before: WallPrint | null, after: WallPrint): string {
+  if (!before || before.ids !== after.ids || before.grid !== after.grid) return "";
+  let only = "";
+  for (const [id, print] of after.tiles) {
+    if (before.tiles.get(id) === print) continue;
+    if (only) return "";
+    only = id;
+  }
+  return only;
+}
+
+/** Where an object sits in the wall's stack. Backgrounds under the picture
+ *  spread across the wall, that under the tiles' own layers, and anything a
+ *  caller put here of its own on top — the order buildGrid builds in, written
+ *  down so a single tile's objects can be slotted back into it. */
+function rank(o: fabric.Object): number {
+  if ((o as { keep?: boolean }).keep) return 3;
+  const space = (o as { space?: string }).space;
+  return space === "base" ? 0 : space === "grid" ? 1 : 2;
+}
+
+/** Where an object belongs in the stack, as one number that sorts: the band it
+ *  is in, then the slot its tile has on the wall.
+ *
+ *  The slot is the part that is easy to leave out and easy to miss. Tiles
+ *  never overlap, so a rebuilt tile's objects sitting at the end of their band
+ *  looks identical on screen — and every later comparison against a full build
+ *  disagrees, which is how a second drawing path starts drifting from the
+ *  first. */
+const stackKey = (slot: Map<string, number>) => (o: fabric.Object) =>
+  rank(o) * 1e6 + (slot.get((o as { tileId?: string }).tileId ?? "") ?? -1);
+
+/** Redraws one tile in place, leaving the rest of the wall standing.
+ *
+ *  buildGrid costs about three milliseconds a tile, and it runs on every edit:
+ *  measured at 301 tiles a nudged caption froze the interface for the best
+ *  part of a second, all of it spent redrawing 300 tiles that had not changed.
+ *  This draws the one that did.
+ *
+ *  Only what a tile owns. Anything that changes the wall — its id list, the
+ *  picture across it, or a Layout every tile wears — still means a full
+ *  build, and the caller is what decides that (see GridCanvas): a wrong "only
+ *  this tile" is a wall that quietly disagrees with the document, which is
+ *  far worse than a slow one.
+ *
+ *  Only this tile's objects are taken off, and the new ones are put back where
+ *  they belong. Clearing the canvas and re-adding everything is the obvious
+ *  shape and the wrong one: Fabric's remove() finds each object by scanning
+ *  its list, so tearing down a wall of nine hundred costs nine hundred scans
+ *  of nine hundred — measured at 301 tiles, a "single tile" rebuild that way
+ *  came to 524ms against a full build's 1205ms, which is not a saving worth
+ *  the second code path. Taking off three objects and inserting three costs
+ *  six. */
+export async function rebuildTile(
+  canvas: fabric.StaticCanvas,
+  id: string,
+  wall: Wall,
+  m: Manifest,
+  deps: SceneDeps,
+  interactive = false,
+): Promise<void> {
+  const index = wall.ids.indexOf(id);
+  if (index < 0) return;
+
+  const fresh = await background(m.tiles[id]?.base ?? null, id, deps, cellAt(index));
+  Object.assign(fresh, { tileId: id, space: "base" });
+  const objects = [
+    fresh,
+    ...(await tileLayerObjects(id, index, m, deps, interactive, new Map())),
+  ];
+
+  /* `keep` is checked first and not left to the rank: an object someone else
+     put here is never this function's to throw away, whatever it claims to
+     stand on — the placing tool's frame stands on the very tile being
+     redrawn. */
+  const mine = canvas
+    .getObjects()
+    .filter((o) => !(o as { keep?: boolean }).keep && (o as { tileId?: string }).tileId === id);
+  canvas.remove(...mine);
+
+  const key = stackKey(new Map(wall.ids.map((tile, i) => [tile, i])));
+  for (const obj of objects) {
+    /* The first object that belongs above this one; the end of the list when
+       there is none. Walking is fine — it is a few hundred integer compares
+       per object, against the render this whole function exists to avoid. */
+    const mineKey = key(obj);
+    const list = canvas.getObjects();
+    let at = list.length;
+    for (let i = 0; i < list.length; i++) {
+      if (key(list[i]) > mineKey) {
+        at = i;
+        break;
+      }
+    }
+    canvas.insertAt(at, obj);
+  }
   canvas.renderAll();
 }
 
