@@ -6,11 +6,10 @@
  * so a change that makes a wall of hundreds unusable is visible before someone
  * builds one.
  *
- * The ceilings are deliberately loose. A timing assertion tight enough to be
- * meaningful is one that fails on a busy machine, and a suite that cries wolf
- * gets muted — these catch the change that turns a rebuild into a freeze, not
- * the one that costs ten percent. The numbers themselves are the point, and
- * they are printed rather than asserted:
+ * Almost nothing here is asserted, and what is, is asserted against another
+ * number from the same run rather than against a stopwatch — a wall clock in
+ * a test suite measures the machine's mood as much as the code. The numbers
+ * themselves are the point, and they are printed:
  *
  *   npx vitest run --project browser --reporter=verbose src/lib/perf.browser.test.ts
  */
@@ -52,6 +51,20 @@ const view = (m: Manifest): Wall => ({
   ids: m.projects[0].order,
   gridLayers: m.projects[0].gridLayers,
 });
+
+/** The only absolute number asserted here, and it is a wide one on purpose.
+ *
+ *  The same 301-tile build measured 929ms and 1580ms on the same commit on the
+ *  same machine, minutes apart — a wall clock says as much about what else is
+ *  running as about the code. A ceiling set just above a good run is a test
+ *  that fails for reasons its author cannot fix, and a suite that cries wolf
+ *  gets muted, which costs more than the regression it was guarding against.
+ *  So this one is set where a wall stops being slow and starts being broken:
+ *  four seconds of frozen interface is not a measurement, it is a bug.
+ *
+ *  Everything worth knowing more precisely than that is measured against
+ *  another number from the same run, which cancels the machine out. */
+const FREEZE = 4000;
 
 /** A canvas the size of the whole wall — what the editor holds, as opposed to
  *  the tile-sized window the export moves across it. */
@@ -101,10 +114,7 @@ describe("wall build cost", () => {
           `rebuild ${warm.toFixed(0)}ms, ${objects} objects ` +
           `(${(warm / count).toFixed(2)}ms/tile)`,
       );
-      /* One ceiling, loose enough to survive a loaded machine and tight enough
-         to catch the change that turns a rebuild into a freeze: a second and a
-         half of blocked interface is not a slow wall, it is a broken one. */
-      expect(warm).toBeLessThan(1500);
+      expect(warm).toBeLessThan(FREEZE);
     }, 120_000);
   }
 });
@@ -129,7 +139,7 @@ describe("what a rebuild is spent on", () => {
       await buildGrid(canvas, view(bare), bare, testDeps, true);
       const ms = performance.now() - start;
       console.log(`${count} bare tiles: rebuild ${ms.toFixed(0)}ms`);
-      expect(ms).toBeLessThan(1500);
+      expect(ms).toBeLessThan(FREEZE);
     } finally {
       await canvas.dispose();
     }
@@ -148,7 +158,11 @@ describe("redrawing one tile", () => {
    * Measured on one machine: full build 1013ms, one tile 415ms, of which
    * 407ms was the paint. Anything that makes a big wall feel quick from here
    * has to make the *render* cheaper — fewer objects on the canvas at low
-   * zoom, not fewer objects rebuilt. */
+   * zoom, not fewer objects rebuilt.
+   *
+   * Read those as one machine's shape, not as targets. The same commit gives
+   * numbers 70% apart depending on what else is running, which is why nothing
+   * here is asserted against a stopwatch — see FREEZE. */
   it("builds one tile instead of the wall at 301 tiles", async () => {
     const count = 301;
     const m = dressed(count);
@@ -177,11 +191,17 @@ describe("redrawing one tile", () => {
           `paint alone ${paint.toFixed(0)}ms → building one tile costs ` +
           `${(one - paint).toFixed(0)}ms against ${(full - paint).toFixed(0)}ms for the wall`,
       );
-      /* The claim under test is that construction, not the paint, is what a
-         single-tile rebuild avoids — so the comparison is made with the floor
-         taken off both sides. Loose by an order of magnitude, because a shared
-         machine would make a tighter number a liar. */
-      expect(one - paint).toBeLessThan((full - paint) / 10);
+      /* Asserted against the full build from this same run, which is what
+         makes it survive a loaded machine: both numbers move together, so the
+         ratio holds where a wall-clock ceiling would not. Observed around 0.4;
+         0.6 leaves room without letting a rebuild that saves nothing pass.
+
+         The sharper figure — the construction cost with the paint taken off
+         both sides — is printed but not asserted. It has come out negative,
+         which is not a broken measurement: building one tile is smaller than
+         the run-to-run variance of painting the wall, and that *is* the
+         finding. A number below the noise floor cannot be a test. */
+      expect(one).toBeLessThan(full * 0.6);
     } finally {
       await canvas.dispose();
     }
