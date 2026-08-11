@@ -139,6 +139,22 @@
     resetProject,
     writeToGame,
   } from "./lib/ops";
+  import {
+    drag,
+    endDrag,
+    isOpen,
+    landing,
+    over,
+    renameKey,
+    reveal,
+    rows,
+    selectAll,
+    startDrag,
+    toggleOpen,
+    toggleTileRow,
+    zone,
+    type Where,
+  } from "./lib/rows.svelte";
   import { isTyping } from "./lib/geometry";
   import { ICON_NAMES, iconArt } from "./lib/icons";
   import { savePending } from "./lib/project";
@@ -309,23 +325,13 @@
 
   /** Which group rows are expanded. View state only — collapsing a group is
    *  not an edit and has no business in the manifest or in undo. */
-  /* Projects starts open: it is the way into a wall, and a first run that
-     shows a collapsed heading and nothing else looks like an app that failed
-     to load its folder. Everything else earns its twisty by being long. */
-  let open = $state(new Set<string>(["projects"]));
-  const toggleOpen = (id: string) => {
-    open.has(id) ? open.delete(id) : open.add(id);
-    open = new Set(open);
-  };
+
   /* Whatever was just made has to be visible. Projects and Layouts are hidden
      with CSS rather than dropped from the markup, so their "+" sits outside the
      hidden list and stays pressable while the section is shut — and the new row
      landed somewhere the eye could not follow. Snapshots and Folders drop their
      whole block, "+" included, so this does not arise there. */
-  const reveal = (id: string) => {
-    open.add(id);
-    open = new Set(open);
-  };
+
 
   /* Follow the pick into the list. One tile: open its row, so the wording and
      the picture it carries are right there — with forty-four rows the tile you
@@ -363,29 +369,18 @@
     // A drawer is its own twisty and nothing above it: the Folders section it
     // used to sit under is gone, the drawers live in Tiles now.
     const path = drawer ? [drawer.id] : ["tiles"];
-    if (path.some((key) => !open.has(key))) {
-      for (const key of path) open.add(key);
-      open = new Set(open);
-    }
-    if (picked.length === 1 && !open.has(picked[0])) toggleTileRow(picked[0]);
+    if (path.some((key) => !isOpen(key))) for (const key of path) reveal(key);
+    if (picked.length === 1 && !isOpen(picked[0])) tileRowToggle(picked[0]);
     // After the row exists, not before — opening it is what creates it.
     void tick().then(() =>
       document.querySelector(`[data-tile="${first}"]`)?.scrollIntoView({ block: "nearest" }),
     );
   });
 
-  /** Opens one tile row and shuts whichever was open before.
-   *
-   *  An accordion only for tile rows — drawers and the section heads share the
-   *  same set and stay independent of each other. A row carries the wording
-   *  fields and the picture gallery now, so two of them open at once is a list
-   *  you have to scroll past to reach the next id. */
-  function toggleTileRow(id: string) {
-    const wasOpen = open.has(id);
-    for (const tile of visibleIds()) open.delete(tile);
-    if (!wasOpen) open.add(id);
-    open = new Set(open);
-  }
+  /* The accordion needs to know which rows count as siblings, and only the
+     wall knows that. Spelled once here rather than at each of the three call
+     sites, so the answer cannot differ between them. */
+  const tileRowToggle = (id: string) => toggleTileRow(id, visibleIds());
 
   /** Enter walks the tile list: this row closes, the next one opens, and the
    *  cursor lands in its wording field. Shift+Enter goes back.
@@ -405,7 +400,7 @@
     const list = inGroup ? (folders().find((f) => f.id === inGroup)?.tiles ?? []) : looseIds();
     const next = list[list.indexOf(from) + (e.shiftKey ? -1 : 1)];
     if (!next) return;
-    toggleTileRow(next);
+    tileRowToggle(next);
     await tick();
     const field = document.querySelector<HTMLInputElement>(`[data-tile="${next}"] .field input`);
     field?.focus();
@@ -505,85 +500,7 @@
   const noPick = $derived(!editing || !app.layoutSelection.length);
   const fewPicked = $derived(!editing || app.layoutSelection.length < 3);
 
-  /* --- Dragging rows to reorder. Native HTML drag-and-drop rather than
-     pointer bookkeeping: it is what the browser already knows how to do, and
-     Tauri's own OS-level file drop is switched off (tauri.conf.json) precisely
-     so this keeps working.
 
-     A row is a source, and it is a target in three places: the top third
-     drops in front of it, the bottom third behind it, and — on a group — the
-     middle third drops inside. That is the whole vocabulary; anything more
-     needs a mode. --- */
-
-  type Where = "before" | "after" | "into";
-  let dragId = $state("");
-  let dropOn = $state<{ id: string; where: Where } | null>(null);
-
-  /** The shelved tile being carried onto the wall, "" for none. Separate from
-   *  `dragId`, which carries layer rows: the two land in different places and
-   *  sharing one field would let a layer drop reorder the grid. */
-  let dragTile = $state("");
-
-  /** Which third of the row the pointer is in. "into" only where it means
-   *  something, so a plain row never offers a target that cannot take it. */
-  function zone(e: DragEvent, canHold: boolean): Where {
-    const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const t = (e.clientY - box.top) / box.height;
-    if (canHold && t > 0.3 && t < 0.7) return "into";
-    return t < 0.5 ? "before" : "after";
-  }
-
-  const startDrag = (e: DragEvent, id: string) => {
-    dragId = id;
-    if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
-  };
-
-  function over(e: DragEvent, id: string, canHold: boolean) {
-    if (!dragId || dragId === id) return;
-    e.preventDefault();
-    const where = zone(e, canHold);
-    if (dropOn?.id !== id || dropOn.where !== where) dropOn = { id, where };
-  }
-
-  const endDrag = () => {
-    dragId = "";
-    dropOn = null;
-  };
-
-  /** Where a drop lands, expressed as the model wants it: the row to go in
-   *  front of, and the group to go inside. `after` becomes "in front of the
-   *  next sibling", or the end of the list. */
-  function landing(rows: Layer[], id: string, where: Where, parentId: string | null) {
-    if (where === "into") return { parentId: id, beforeId: null };
-    /* `rows` is drawn topmost-first; the model stores bottom-first, so the two
-     * run in opposite directions. Dropping *above* a row means landing after
-     * it in the model — which is "in front of" whatever the row above it is,
-     * or the end of the list when there is nothing above. Dropping *below* it
-     * means landing in front of that row itself. */
-    const at = rows.findIndex((l) => l.id === id);
-    // The list the anchor lives in is where the layer lands, so a drop between
-    // two children stays inside their group instead of escaping to the top.
-    return { parentId, beforeId: where === "before" ? (rows[at - 1]?.id ?? null) : id };
-  }
-
-  /** Autofocus drops the caret at the end of the suggested name, so the first
-   *  thing typed was appended to it — "+ Snapshot" opens its field on
-   *  "Snapshot 1" and a user typing a name got "Snapshot 1Before changes",
-   *  which then stayed as the snapshot's name. Selecting on focus makes typing
-   *  replace, the way a rename field behaves everywhere else. */
-  const selectAll = (e: FocusEvent & { currentTarget: HTMLInputElement }) =>
-    e.currentTarget.select();
-
-  /* Enter and Escape both blur; Escape puts the old text back first, and the
-     rename actions already ignore an unchanged name — so cancelling needs no
-     flag of its own. */
-  function renameKey(e: KeyboardEvent, was: string) {
-    const input = e.currentTarget as HTMLInputElement;
-    if (e.key === "Escape") input.value = was;
-    else if (e.key !== "Enter") return;
-    input.blur();
-    e.stopPropagation();
-  }
 
   /** A holder's rows as the list draws them: topmost first, and without the
    *  live copies a Layout keeps there — the stamp row speaks for them. */
@@ -882,18 +799,18 @@
       <li
         class:selected={app.layoutSelection.includes(layer.id)}
         aria-current={app.layoutSelection.includes(layer.id) ? "true" : undefined}
-        class:drop-before={dropOn?.id === layer.id && dropOn.where === "before"}
-        class:drop-after={dropOn?.id === layer.id && dropOn.where === "after"}
-        class:drop-into={dropOn?.id === layer.id && dropOn.where === "into"}
+        class:drop-before={drag.on?.id === layer.id && drag.on.where === "before"}
+        class:drop-after={drag.on?.id === layer.id && drag.on.where === "after"}
+        class:drop-into={drag.on?.id === layer.id && drag.on.where === "into"}
         draggable="true"
         ondragstart={(e) => startDrag(e, layer.id)}
         ondragover={(e) => over(e, layer.id, layer.kind === "group")}
-        ondragleave={() => dropOn?.id === layer.id && (dropOn = null)}
+        ondragleave={() => drag.on?.id === layer.id && (drag.on = null)}
         ondragend={endDrag}
         ondrop={(e) => {
           e.preventDefault();
-          const spot = dropOn;
-          const moving = dragId;
+          const spot = drag.on;
+          const moving = drag.id;
           endDrag();
           if (!spot || !moving) return;
           const spotIn = landing(rows, spot.id, spot.where, parentId);
@@ -1066,17 +983,17 @@
       <li
         class:selected={app.selected === layer.id}
         aria-current={app.selected === layer.id ? "true" : undefined}
-        class:drop-before={dropOn?.id === layer.id && dropOn.where === "before"}
-        class:drop-after={dropOn?.id === layer.id && dropOn.where === "after"}
+        class:drop-before={drag.on?.id === layer.id && drag.on.where === "before"}
+        class:drop-after={drag.on?.id === layer.id && drag.on.where === "after"}
         draggable="true"
         ondragstart={(e) => startDrag(e, layer.id)}
         ondragover={(e) => over(e, layer.id, false)}
-        ondragleave={() => dropOn?.id === layer.id && (dropOn = null)}
+        ondragleave={() => drag.on?.id === layer.id && (drag.on = null)}
         ondragend={endDrag}
         ondrop={(e) => {
           e.preventDefault();
-          const spot = dropOn;
-          const moving = dragId;
+          const spot = drag.on;
+          const moving = drag.id;
           endDrag();
           if (!spot || !moving) return;
           drop(moving, landing(rows, spot.id, spot.where, null).beforeId);
@@ -1141,8 +1058,8 @@
       class:selected={app.selectedTiles.includes(id)}
       aria-current={app.selectedTiles.includes(id) ? "true" : undefined}
     >
-      <button class="twisty" onclick={() => toggleTileRow(id)}>
-        {open.has(id) ? "▾" : "▸"}
+      <button class="twisty" onclick={() => tileRowToggle(id)}>
+        {isOpen(id) ? "▾" : "▸"}
       </button>
       <!-- The face, not the number. "40000000005773694" identifies a file and
            nobody else; at sixty-eight portraits the list was a column of digits
@@ -1214,7 +1131,7 @@
       {/if}
     </div>
 
-    {#if open.has(id)}
+    {#if isOpen(id)}
       {@render stampRows(
         own,
         (moving, beforeId) => void dropTileLayer(id, moving, beforeId),
@@ -1755,13 +1672,13 @@
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
       class="stage"
-      class:dropping={!!dragTile}
+      class:dropping={!!drag.tile}
       oncontextmenucapture={wallMenu}
-      ondragover={(e) => dragTile && e.preventDefault()}
+      ondragover={(e) => drag.tile && e.preventDefault()}
       ondrop={(e) => {
         e.preventDefault();
-        const moving = dragTile;
-        dragTile = "";
+        const moving = drag.tile;
+        drag.tile = "";
         if (moving) void placeTileAt(moving, grid?.tileAtEvent(e) || null);
       }}
     >
@@ -1992,12 +1909,12 @@
              thing only the user knows — the inbox is whatever no project has
              claimed, and it is where a newly created character turns up. -->
         <h2 class:spaced={wallLayers.length}>
-          <button class="head" onclick={() => toggleOpen("projects")} aria-expanded={open.has("projects")}>
-            <span class="twisty inline">{open.has("projects") ? "▾" : "▸"}</span>
+          <button class="head" onclick={() => toggleOpen("projects")} aria-expanded={isOpen("projects")}>
+            <span class="twisty inline">{isOpen("projects") ? "▾" : "▸"}</span>
             Projects
           </button>
         </h2>
-        <ul class:collapsed={!open.has("projects")}>
+        <ul class:collapsed={!isOpen("projects")}>
           <li class:selected={!app.openProjectId} aria-current={!app.openProjectId ? "true" : undefined}>
             <button class="name" onclick={() => enter("")}>
               Unsorted
@@ -2047,7 +1964,7 @@
         <!-- Inside its section too, for the same reason. `reveal` stays on the
              two ways in from outside — the header button and the wall's own
              menu — where the section may well be shut. -->
-        {#if open.has("projects")}
+        {#if isOpen("projects")}
           <button
             class="wide"
             onclick={() => void newProjectFrom("")}
@@ -2063,15 +1980,15 @@
              same frame twice. Collapsible, because that library is the list
              that grows without bound. -->
         <h2 class="spaced">
-          <button class="head" onclick={() => toggleOpen("layouts")} aria-expanded={open.has("layouts")}>
-            <span class="twisty inline">{open.has("layouts") ? "▾" : "▸"}</span>
+          <button class="head" onclick={() => toggleOpen("layouts")} aria-expanded={isOpen("layouts")}>
+            <span class="twisty inline">{isOpen("layouts") ? "▾" : "▸"}</span>
             Layouts{#if layouts().length}&nbsp;({layouts().length}){/if}
           </button>
         </h2>
         {#if !layouts().length}
           <p class="empty">None yet.</p>
         {/if}
-        <ul class:collapsed={!open.has("layouts")}>
+        <ul class:collapsed={!isOpen("layouts")}>
           {#each layouts() as layout (layout.id)}
             <li>
               {#if renaming === layout.id}
@@ -2152,7 +2069,7 @@
              the list above is hidden with CSS rather than dropped, so the
              button stayed on screen under a collapsed heading and offered to
              add to a list nobody could see. -->
-        {#if open.has("layouts")}
+        {#if isOpen("layouts")}
           <button
             class="wide"
             onclick={() => void newLayoutDoc(`Layout ${layouts().length + 1}`)}
@@ -2172,12 +2089,12 @@
              by mistake would rearrange a wall you are not looking at. On the
              overview it is the document-wide ones instead. -->
         <h2 class="spaced">
-          <button class="head" onclick={() => toggleOpen("snapshots")} aria-expanded={open.has("snapshots")}>
-            <span class="twisty inline">{open.has("snapshots") ? "▾" : "▸"}</span>
+          <button class="head" onclick={() => toggleOpen("snapshots")} aria-expanded={isOpen("snapshots")}>
+            <span class="twisty inline">{isOpen("snapshots") ? "▾" : "▸"}</span>
             Snapshots{#if snapshots().length}&nbsp;({snapshots().length}){/if}
           </button>
         </h2>
-        {#if open.has("snapshots")}
+        {#if isOpen("snapshots")}
           {#if !snapshots().length}
             <p class="empty">
               {app.openProjectId ? "None for this project yet." : "None yet."}
@@ -2251,10 +2168,10 @@
                 class="shelfrow"
                 draggable="true"
                 ondragstart={(e) => {
-                  dragTile = id;
+                  drag.tile = id;
                   if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
                 }}
-                ondragend={() => (dragTile = "")}
+                ondragend={() => (drag.tile = "")}
               >
                 <canvas class="thumb" width="31" height="40" use:portrait={{ id, ready: !!app.deps }}></canvas>
                 <button
@@ -2290,7 +2207,7 @@
           >
             <div class="grouphead">
               <button class="twisty" onclick={() => toggleOpen(folder.id)}>
-                {open.has(folder.id) ? "▾" : "▸"}
+                {isOpen(folder.id) ? "▾" : "▸"}
               </button>
               {#if renaming === folder.id}
                 <!-- svelte-ignore a11y_autofocus -->
@@ -2330,7 +2247,7 @@
                 >×</button
               >
             </div>
-            {#if open.has(folder.id)}
+            {#if isOpen(folder.id)}
               <div class="indent">
                 {#each folder.tiles as id (id)}
                   {@render tileRow(id, folder.id)}
@@ -2345,7 +2262,7 @@
         <div class="group">
           <div class="grouphead">
             <button class="twisty" onclick={() => toggleOpen("tiles")}>
-              {open.has("tiles") ? "▾" : "▸"}
+              {isOpen("tiles") ? "▾" : "▸"}
             </button>
             <button class="name" onclick={() => toggleOpen("tiles")}>
               {app.openProjectId ? "On this wall" : "Unsorted"}
@@ -2353,7 +2270,7 @@
             </button>
           </div>
 
-          {#if open.has("tiles")}
+          {#if isOpen("tiles")}
             <div class="indent">
               {#each looseIds() as id (id)}
                 {@render tileRow(id, "")}

@@ -15,6 +15,7 @@ import { mount, tick, unmount } from "svelte";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import App from "./App.svelte";
+import { resetRows } from "./lib/rows.svelte";
 import {
   addLayoutShape,
   addLayoutText,
@@ -134,6 +135,9 @@ async function mountApp() {
   app.openLayoutId = "";
   app.layoutSelection = [];
   app.error = "";
+  // Same story for the sidebar's own state — which rows are open, what is
+  // being dragged. See resetRows.
+  resetRows();
 
   host = document.createElement("div");
   host.id = "app";
