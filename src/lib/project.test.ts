@@ -53,7 +53,7 @@ vi.stubGlobal("createImageBitmap", vi.fn(async () => ({ width: 1, height: 1 })))
 // constructor, and Vite's own module resolution needs `new URL` to work.
 URL.createObjectURL = () => "blob:x";
 
-const { loadOriginal, assetUrl, saveManifest, loadManifest, restoreTiles, classify, svgWithSize, importAsset } =
+const { loadOriginal, assetUrl, saveManifest, loadManifest, loadFingerprints, saveFingerprints, restoreTiles, classify, svgWithSize, importAsset } =
   await import("./project");
 
 describe("saveManifest survives overlapping writes", () => {
@@ -295,6 +295,53 @@ describe("loadManifest lines the manifest up with the folder", () => {
     const { manifest: m } = await loadManifest("/docs/FaceTexture", ["a", "b", "c", "neu"]);
     expect(Object.keys(m.tiles)).toContain("neu");
     expect(projectOf(m, "neu")).toBeUndefined();
+  });
+});
+
+describe("fingerprints survive a half-written file, and say so if they did not", () => {
+  const path = "/docs/FaceTexture/../FaceTexture.tessera/fingerprints.json";
+
+  it("writes through a temp file, so a failed write leaves the old answer standing", async () => {
+    /* saveManifest has done this since the day a lost write was traced to it;
+     * this one wrote straight over the target, twenty lines below that comment.
+     * What it guards is not tidiness: half a fingerprints file parses as
+     * nothing, and nothing is the most expensive answer this app can give. */
+    files.clear();
+    rename.mockClear();
+    await saveFingerprints("/docs/FaceTexture", { a: { original: "aaa" } });
+    expect(files.get(path)).toContain("aaa");
+    expect([...files.keys()].some((k) => k.endsWith(".tmp"))).toBe(false);
+    expect(rename).toHaveBeenCalled();
+  });
+
+  it("sets a damaged file aside instead of answering with an empty one", async () => {
+    /* The whole chain this prevents: empty prints make classify call every id
+     * fresh, openFolder writes those hashes back as the originals, and "did the
+     * game put a different character behind this slot" can never be asked
+     * again — so the stranger keeps the previous character's vault copy and
+     * their own portrait is never captured. */
+    files.clear();
+    const platform = await import("./platform");
+    files.set(path, "{ half a fi");
+    vi.mocked(platform.readTextFile).mockResolvedValueOnce("{ half a fi");
+
+    const { prints, broken } = await loadFingerprints("/docs/FaceTexture");
+
+    expect(broken).toMatch(/^fingerprints\.unreadable /);
+    expect(prints).toEqual({});
+    expect(files.has(path)).toBe(false);
+    expect(files.get(`/docs/FaceTexture/../FaceTexture.tessera/${broken}`)).toBe("{ half a fi");
+  });
+
+  it("stays silent when there is simply no file yet", async () => {
+    files.clear();
+    const platform = await import("./platform");
+    vi.mocked(platform.readTextFile).mockRejectedValueOnce(new Error("no such file"));
+
+    const { prints, broken } = await loadFingerprints("/docs/FaceTexture");
+
+    expect(broken).toBe("");
+    expect(prints).toEqual({});
   });
 });
 

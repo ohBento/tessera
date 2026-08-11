@@ -113,7 +113,7 @@ export async function loadManifest(
     await writeSnapshot(
       dir,
       { name: snapshot, projectId: "" },
-      { manifest: m, prints: await loadFingerprints(dir) },
+      { manifest: m, prints: (await loadFingerprints(dir)).prints },
     );
   }
   // Characters get created and deleted between sessions; the folder wins.
@@ -142,17 +142,54 @@ export type Fingerprints = Record<string, Print>;
 
 const printsPath = async (dir: string) => join(await projectDir(dir), "fingerprints.json");
 
-export async function loadFingerprints(dir: string): Promise<Fingerprints> {
+/** The hashes, and the name a damaged file was set aside under.
+ *
+ *  `broken` is "" for the ordinary case, which includes there being no file
+ *  yet. It is not the same as an empty answer: see below for what an empty one
+ *  costs when it is wrong. */
+export async function loadFingerprints(
+  dir: string,
+): Promise<{ prints: Fingerprints; broken: string }> {
+  let text = "";
   try {
-    return JSON.parse(await readTextFile(await printsPath(dir)));
+    text = await readTextFile(await printsPath(dir));
   } catch {
-    return {};
+    // No file yet — a first open, and the only case that may quietly answer
+    // with nothing.
+    return { prints: {}, broken: "" };
+  }
+  /* Same guard loadManifest carries: nothing to parse is not the same as
+   * something that will not parse, and only the second one is worth setting
+   * aside. With the atomic write above, a zero-byte file can no longer be our
+   * own doing. */
+  if (!text) return { prints: {}, broken: "" };
+  try {
+    return { prints: JSON.parse(text), broken: "" };
+  } catch {
+    /* A file that is there but will not parse used to share the catch above,
+     * and answering "{}" to that question is the most expensive silence in this
+     * app. Empty prints make `classify` call every id fresh, openFolder writes
+     * those hashes straight back as the originals, and the question "did the
+     * game put a different character behind this slot" can never be asked
+     * again — so the stranger keeps the previous character's vault copy, and
+     * their own pristine portrait is never captured. Set aside instead, and
+     * said out loud, because what the user loses is a warning they will never
+     * see missing. */
+    const broken = `fingerprints.unreadable ${localStamp(19)}.json`;
+    await rename(await printsPath(dir), await join(await projectDir(dir), broken));
+    return { prints: {}, broken };
   }
 }
 
+/** Temp file then rename, exactly as saveManifest does and for the same reason:
+ *  a write that stops halfway must not leave half a file in the real path. This
+ *  one was writing straight over the target while its neighbour twenty lines up
+ *  carried a comment explaining why that is not safe. */
 export async function saveFingerprints(dir: string, prints: Fingerprints) {
   await mkdir(await projectDir(dir), { recursive: true });
-  await writeTextFile(await printsPath(dir), JSON.stringify(prints));
+  const path = await printsPath(dir);
+  await writeTextFile(`${path}.tmp`, JSON.stringify(prints));
+  await rename(`${path}.tmp`, path);
 }
 
 /** Sorts the folder's ids into the ones we have never seen and the ones whose

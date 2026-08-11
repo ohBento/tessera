@@ -1082,7 +1082,7 @@ export async function openFolder(dir?: string) {
      * character's design or leaves a stranger wearing it. So the app sorts and
      * the user decides; nothing is touched here. */
     const hashes = await hashTiles(app.dir, ids);
-    const prints = await loadFingerprints(app.dir);
+    const { prints, broken: lostPrints } = await loadFingerprints(app.dir);
     const { fresh, changed } = classify(prints, hashes);
     for (const id of fresh) prints[id] = { original: hashes[id] };
     for (const id of Object.keys(prints)) if (!hashes[id]) delete prints[id];
@@ -1099,6 +1099,14 @@ export async function openFolder(dir?: string) {
       app.error =
         `${lost.length} tile(s) are no longer in the folder — their layers went with them. ` +
         `Put the portraits back and reopen, then restore "${snapshot}".`;
+    /* Worth saying even though nothing is broken on screen: the answer to "did
+     * the game put a different character behind this slot" has just been reset
+     * to "everything is new", and the next write to the game vaults nothing for
+     * a slot that changed hands. The user is the only one who can notice. */
+    else if (lostPrints)
+      app.error =
+        `Change detection was reset — ${lostPrints} could not be read and was set aside. ` +
+        `Check any portrait the game may have replaced before writing to the game.`;
     /* Never both: a manifest that could not be read leaves an empty document,
      * and an empty document has no work for the folder to drop. */
     else if (broken)
@@ -1936,7 +1944,7 @@ export async function saveLayout(layoutId: string) {
  *  for them and stay. */
 export async function keepCharacter(id: string) {
   await run("recheck", async () => {
-    const prints = await loadFingerprints(app.dir);
+    const { prints } = await loadFingerprints(app.dir);
     prints[id] = { original: app.hashes[id] ?? "" };
     await saveFingerprints(app.dir, prints);
     /* The vault copy goes too. It holds the face from before the restyle, and
@@ -1956,7 +1964,7 @@ export async function keepCharacter(id: string) {
  *  served as this slot's "original". */
 export async function replaceCharacter(id: string) {
   await run("recheck", async () => {
-    const prints = await loadFingerprints(app.dir);
+    const { prints } = await loadFingerprints(app.dir);
     prints[id] = { original: app.hashes[id] ?? "" };
     await saveFingerprints(app.dir, prints);
     await dropVaultCopy(app.dir, id);
@@ -1980,7 +1988,7 @@ export async function keepAllCharacters() {
   const ids = [...app.changedTiles];
   if (!ids.length) return;
   await run("recheck", async () => {
-    const prints = await loadFingerprints(app.dir);
+    const { prints } = await loadFingerprints(app.dir);
     for (const id of ids) prints[id] = { original: app.hashes[id] ?? "" };
     await saveFingerprints(app.dir, prints);
     app.changedTiles = [];
@@ -1997,7 +2005,7 @@ export async function replaceAllCharacters() {
   const ids = [...app.changedTiles];
   if (!ids.length) return;
   await run("recheck", async () => {
-    const prints = await loadFingerprints(app.dir);
+    const { prints } = await loadFingerprints(app.dir);
     for (const id of ids) prints[id] = { original: app.hashes[id] ?? "" };
     await saveFingerprints(app.dir, prints);
     const dropped = new Set(ids);
@@ -2117,7 +2125,7 @@ export async function takeSnapshot(name: string): Promise<boolean> {
     await writeSnapshot(
       app.dir,
       { name: freeSnapshotName(name), projectId: app.openProjectId },
-      { manifest: plain(app.manifest), prints: await loadFingerprints(app.dir) },
+      { manifest: plain(app.manifest), prints: (await loadFingerprints(app.dir)).prints },
     );
     await refreshSnapshots();
   });
@@ -2204,7 +2212,7 @@ export async function restoreSnapshot(ref: SnapshotRef) {
     const owned = new Set(
       projectTiles(stored.projects.find((p) => p.id === ref.projectId) ?? newProject("")),
     );
-    const prints = await loadFingerprints(app.dir);
+    const { prints } = await loadFingerprints(app.dir);
     for (const id of owned) if (snap.prints[id]) prints[id] = snap.prints[id];
     await saveFingerprints(app.dir, prints);
 

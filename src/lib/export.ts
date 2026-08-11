@@ -57,7 +57,7 @@ export async function saveTiles(
   deps: SceneDeps,
 ): Promise<number> {
   const tiles = await renderTiles(wall, m, deps);
-  const prints = await loadFingerprints(dir);
+  const { prints } = await loadFingerprints(dir);
   /* In a `finally`, because a write that stops halfway is exactly when this
    * matters. A locked file or a full disk at tile seven used to leave six
    * portraits written and not one `written` hash saved: on the next open none

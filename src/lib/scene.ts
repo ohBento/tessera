@@ -1149,21 +1149,34 @@ export function asTileShows(
   swaps: Record<string, string>,
   paints: Record<string, Paint>,
 ): Layer {
+  /* Both flags, because the same layer wears a different one depending on which
+   * side of the stamp it is standing on. A tile holds copies, and syncLiveLayers
+   * marks those `live` while explicitly clearing `perTile` — "meaningless once
+   * it is on a tile". A Layout holds the sources, and those only ever carry
+   * `perTile`.
+   *
+   * Gating on `live` alone was therefore right for the wall and silently wrong
+   * for the Layout editor, which is the caller this function was extracted for:
+   * every branch fell through, and the sheet kept drawing the Layout's own
+   * placeholder class and picture over whichever portrait was underneath. The
+   * wording went on working, because captions never come through here — which
+   * is exactly why it looked finished. */
+  const mine = !!raw.live || !!raw.perTile;
   /* This tile's own picture, where it has one. Resolved before the object is
    * built rather than inside imageObject, so the swap map stays a wall concern.
    * "" is a real answer — no picture on this tile — and the layer simply does
    * not render, which is why callers check the resolved value rather than
    * whether a key exists. */
-  if (raw.kind === "image" && raw.live) return { ...raw, asset: layerAsset(swaps, raw) };
+  if (raw.kind === "image" && mine) return { ...raw, asset: layerAsset(swaps, raw) };
   /* And this tile's own class, where it names one. Same map, same bargain: the
    * Layout places and colours the icon once, each portrait says which class it
    * is. */
-  if (raw.kind === "shape" && raw.shape === "icon" && raw.live)
+  if (raw.kind === "shape" && raw.shape === "icon" && mine)
     return { ...raw, icon: layerIcon(swaps, raw), fill: layerPaint(paints, raw) };
   /* And this tile's own colour, where a shape has one. An icon takes it too —
    * it is a shape wearing artwork, and a wall where each portrait's badge
    * carries its own class colour is the reason to ask for this at all. */
-  if (raw.kind === "shape" && raw.live) return { ...raw, fill: layerPaint(paints, raw) };
+  if (raw.kind === "shape" && mine) return { ...raw, fill: layerPaint(paints, raw) };
   return raw;
 }
 
@@ -1424,7 +1437,11 @@ export async function buildLayout(
    * departure from the design, and a design shown at somebody's private offset
    * is a design nobody is editing. */
   under?: { id: string; base: Base; content?: Tile; except?: string[] },
-): Promise<void> {
+  /* Asked once, immediately before the canvas is swapped — see there. Returns
+   * whether the swap happened, so a caller that caches "what is drawn" does not
+   * record a frame it stood down from. */
+  keep: () => boolean = () => true,
+): Promise<boolean> {
   /* Everything is built before anything is cleared. Emptying the canvas first
    * and then awaiting the pictures leaves it blank for as long as the loading
    * takes, and Fabric paints that gap — which is the flicker on every slider
@@ -1451,10 +1468,26 @@ export async function buildLayout(
     { root: layout.layers, stencils },
     over,
   );
+  /* Last chance to stand down, asked immediately before the swap and after
+   * every await above.
+   *
+   * The awaits are the whole problem: reading and decoding a picture takes long
+   * enough for a hand to start a drag in the middle of it, and the swap below
+   * would then take the object out from under Fabric's live transform — the
+   * detached copy follows the mouse while the visible one stands still. The
+   * caller's own "is the button down" flag cannot help on its own, because it
+   * is read when the rebuild is *scheduled*, and a rebuild triggered from
+   * outside the canvas (picking a layer in the sidebar list) starts while no
+   * button is down and lands while one is.
+   *
+   * Standing down leaves the previous frame up, which is correct: it is the one
+   * the drag is happening on. The caller re-runs when the gesture ends. */
+  if (!keep()) return false;
   canvas.remove(...canvas.getObjects());
   if (bed) canvas.add(bed);
   for (const obj of objs) canvas.add(obj);
   canvas.renderAll();
+  return true;
 }
 
 /** What a layer needs to know about masking that its own fields cannot say:

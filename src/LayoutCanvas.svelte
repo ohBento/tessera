@@ -110,13 +110,14 @@
         if (!canvas || !deps || !layout) return;
         if (!built) fit();
         rebuilding = true;
+        let drew = false;
         try {
           /* The face under the sheet, so a composition is judged against a
              portrait instead of against black. Whatever the tile actually shows
              — a baked mosaic where there is one — because buildLayout hands it
              to the same background() the wall uses. */
           const bed = bedFor(layout.id);
-          await buildLayout(
+          drew = await buildLayout(
             canvas,
             $state.snapshot(layout),
             deps,
@@ -135,11 +136,19 @@
                   except: $state.snapshot(app.layoutSelection),
                 }
               : undefined,
+            /* The button can go down while this rebuild is still loading a
+               picture, and the swap would then land in the middle of a drag.
+               Asked at the last moment rather than here, because "is the button
+               down" is only meaningful immediately before the canvas changes. */
+            () => !pressed,
           );
         } finally {
           rebuilding = false;
         }
-        built = key;
+        /* Only what actually reached the canvas. Recording a frame that stood
+           down would leave `built` claiming a state the user cannot see, and
+           the effect below would not try again. */
+        if (drew) built = key;
       })
       /* Same reason as GridCanvas: a rejected chain never runs what was queued
        * after it, so one failed build would freeze this canvas for good. */

@@ -1245,7 +1245,16 @@ describe("a Layout composed over a tile", () => {
     words.x = 0.5;
     words.y = 0.5;
     const badge = { ...newShapeLayer("icon", "Ranger"), id: "bad", perTile: true } as ShapeLayer;
-    const layout: Layout = { id: "L1", name: "L", layers: [words, badge] };
+    /* A flat block, so "did the tile's answer reach the canvas" is one pixel
+       read rather than a silhouette count. The icon above cannot answer that:
+       an icon layer fills the tile and its artwork is a clipPath, so counting
+       opaque pixels saturates and passes whatever the code does — which is how
+       this whole class of substitution came to ship broken. */
+    const pic = { ...newImageLayer("block:#ff0000"), id: "pic", perTile: true } as ImageLayer;
+    pic.x = 0.5;
+    pic.y = 0.5;
+    pic.scale = 1;
+    const layout: Layout = { id: "L1", name: "L", layers: [words, badge, pic] };
     const canvas = new fabric.StaticCanvas(undefined, {
       width: TILE_W,
       height: TILE_H,
@@ -1261,7 +1270,20 @@ describe("a Layout composed over a tile", () => {
   const tile = {
     id: "t0",
     base: null,
-    content: { ...emptyTile(), text: { cap: "Nachtklinge" }, swap: { bad: "Witch" } },
+    content: {
+      ...emptyTile(),
+      text: { cap: "Nachtklinge" },
+      swap: { bad: "Witch", pic: "block:#00ff00" },
+    },
+  };
+
+  /** The colour in the middle of the sheet, where the block sits. */
+  const centre = (canvas: fabric.StaticCanvas) => {
+    const px = canvas
+      .getElement()
+      .getContext("2d", { willReadFrequently: true })!
+      .getImageData(TILE_W / 2, TILE_H / 2, 1, 1).data;
+    return [px[0], px[1], px[2]];
   };
 
   it("draws the tile's wording where the Layout only has a placeholder", async () => {
@@ -1273,6 +1295,44 @@ describe("a Layout composed over a tile", () => {
      * is on the canvas is what gets written back — a caption drawn as
      * "Nachtklinge" while its own text is being edited swallows the keystrokes. */
     expect(drawnText(await sheet(["cap"], tile))).toBe("text01");
+  });
+
+  it("draws the tile's own picture, not the Layout's placeholder", async () => {
+    /* This shipped broken in 0.15.0 and looked finished, because the wording
+       half works: captions never go through asTileShows. The substitution was
+       gated on `live`, which only a tile's *copies* carry — a Layout holds the
+       sources, and those wear `perTile`. Every branch fell through, silently. */
+    const [r, g, b] = centre(await sheet([], tile));
+    expect(g).toBeGreaterThan(200);
+    expect(r).toBeLessThan(80);
+    expect(b).toBeLessThan(80);
+  });
+
+  it("gives the picked layer the Layout's own picture back", async () => {
+    // Same exception as the wording: what you are editing shows itself.
+    const [r, g] = centre(await sheet(["pic"], tile));
+    expect(r).toBeGreaterThan(200);
+    expect(g).toBeLessThan(80);
+  });
+
+  it("stands down rather than swapping the canvas out from under a drag", async () => {
+    /* Reading and decoding a picture takes long enough for a hand to start a
+       drag in the middle of it. The swap would then take the object out from
+       under Fabric's live transform: the detached copy follows the mouse and
+       the visible one stands still. Asked after every await and immediately
+       before the swap, because that is the only moment where the answer is
+       still true. */
+    const canvas = await sheet([], tile);
+    const before = canvas.getObjects();
+    expect(before.length).toBeGreaterThan(0);
+
+    const other: Layout = { id: "L2", name: "andere", layers: [newShapeLayer("rect")] };
+    const drew = await buildLayout(canvas, other, testDeps, false, undefined, undefined, () => false);
+
+    expect(drew).toBe(false);
+    // The same objects, not merely the same count: the old frame is the one the
+    // drag is happening on.
+    expect(canvas.getObjects()).toEqual(before);
   });
 
   it("shows the Layout as written when no tile is under it", async () => {
