@@ -3,7 +3,7 @@
   "version": "0.17.0",
   "description": "Portrait editor for Black Desert Online",
   "type": "module",
-  "license": "AGPL-3.0-only",
+  "license": "MIT",
   "scripts": {
     "dev": "vite",
     "build": "svelte-check --tsconfig ./tsconfig.json && vite build",

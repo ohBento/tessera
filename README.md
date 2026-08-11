@@ -57,4 +57,4 @@ your own risk — it writes into your game's portrait folder.
 
 ## Licence
 
-AGPL-3.0-only. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
