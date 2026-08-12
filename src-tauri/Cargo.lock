@@ -3758,7 +3758,7 @@ dependencies = [
 
 [[package]]
 name = "tessera"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "font-kit",
  "serde",
