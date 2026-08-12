@@ -2,7 +2,19 @@
   /* What the selected layer is made of. Only the fields that have no other way
      in: position, rotation and size are on the canvas handles, so they are not
      repeated here. A caption whose words cannot be typed is useless, which is
-     why this exists at all rather than waiting for the full panel system. */
+     why this exists at all rather than waiting for the full panel system.
+
+     Long, and one file on purpose. App.svelte was split because it held
+     several subjects — a shell, a toolbar, three lists, the dialogs — and
+     lifting one out took a whole subject with it. This holds one: the fields
+     of one layer, in three variants over a shared vocabulary. Counted before
+     deciding: of the six field snippets below, only cornerToggle belongs to a
+     single variant. `amount` is rendered eighteen times across all three and
+     from inside the other snippets, and it closes over `layer`, `set` and
+     `num` — so a split by layer kind turns one file into nine and widens
+     eighteen call sites to carry what they read from scope today. The length
+     here is vocabulary and the reasons behind hard-won choices, not several
+     things sharing a room. */
   import { TILE_H, TILE_W } from "./lib/bmp";
   import { gridSize } from "./lib/geometry";
   import {
