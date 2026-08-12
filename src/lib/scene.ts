@@ -459,14 +459,14 @@ export function captionBox(
  *  should wrap rather than bleed into the neighbour — a tile is a hard edge,
  *  not a suggestion. Sizes are fractions of tile width so a layout survives a
  *  change of tile resolution, the same rule the rest of the model follows. */
-function textObject(l: TextLayer, box: { w: number; h: number; x: number; y: number }, tileId: string, texts: Record<string, string>) {
+function textObject(l: TextLayer, box: { w: number; h: number; x: number; y: number }, tileId: string) {
   const size = l.size * box.w;
   /* A Layout shows the caption as written, placeholder and all: it is a
    * template, and what you edit there has to be what you typed. Only a tile
    * resolves "{{id}}", because only a tile knows which id. This is also what
    * makes typing on the canvas safe — what is drawn is what gets written
    * back, so editing cannot silently swallow the placeholder. */
-  const words = tileId ? layerText(texts, l, tileId) : l.text;
+  const words = tileId ? layerText(l, tileId) : l.text;
   const style = {
     fontSize: size,
     fontFamily: l.font,
@@ -695,13 +695,12 @@ async function layerObject(
   deps: SceneDeps,
   box: { w: number; h: number; x: number; y: number },
   tileId: string,
-  texts: Record<string, string>,
   /* Set by the two paths that want a cutter rather than a drawing. Only the
    * class icon reads it — every other kind is already its own outline. */
   stencilOnly = false,
 ): Promise<fabric.Object | undefined> {
   if (l.kind === "image") return imageObject(l, deps, box);
-  if (l.kind === "text") return textObject(l, box, tileId, texts);
+  if (l.kind === "text") return textObject(l, box, tileId);
   if (l.kind === "shape") return shapeObject(l, box, stencilOnly);
   return undefined;
 }
@@ -1153,7 +1152,6 @@ async function cutToShape(
   cutter: Layer,
   deps: SceneDeps,
   tileId: string,
-  texts: Record<string, string>,
 ): Promise<fabric.FabricImage | undefined> {
   /* "" is a real answer, and it means this tile shows nothing: no picture to
    * cut with is not the same as no mask, so the layer does not fall back to
@@ -1172,7 +1170,6 @@ async function cutToShape(
     deps,
     { w: TILE_W, h: TILE_H, x: 0, y: 0 },
     tileId,
-    texts,
     true,
   );
   if (!shape) return undefined;
@@ -1353,7 +1350,6 @@ async function tileLayerObjects(
   {
     const at = cellAt(index);
     const box = { w: TILE_W, h: TILE_H, x: at.x, y: at.y };
-    const texts = m.tiles[id]?.text ?? {};
     /* A tile can carry a cutter now: a per-tile layer that is masked brings the
      * shape along, because the Layout it came from is not there to look it up
      * in. Same rule as in a Layout — a shape that is cutting something has
@@ -1412,9 +1408,9 @@ async function tileLayerObjects(
       if (hit) {
         obj = new fabric.FabricImage(hit, { originX: "left", originY: "top" });
       } else {
-        const drawn = await layerObject(l, deps, local, id, texts);
+        const drawn = await layerObject(l, deps, local, id);
         if (!drawn) continue;
-        const made = cut ? await cutToShape(l, drawn, cut, deps, id, texts) : drawn;
+        const made = cut ? await cutToShape(l, drawn, cut, deps, id) : drawn;
         if (!made) continue;
         if (flat) {
           /* A cut layer arrives as a picture already — cutToShape composited it

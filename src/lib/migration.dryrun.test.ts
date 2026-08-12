@@ -91,7 +91,11 @@ describe.skipIf(!existsSync(FILE))("the v8 migration over the document on this m
         if (l.layoutId || l.live || l.perTile) held.push(`${id}/${l.id}`);
       const rec = t as unknown as V7Tile;
       if (rec.swap || rec.paint || rec.frame) held.push(`${id}: override record`);
-      if (Object.keys(t.text).length) held.push(`${id}: wording record`);
+      /* Emptied, not dropped: the field is still written so that the build
+         before this one can open the document — see Tile.text. What must not
+         survive is anything in it. */
+      if (Object.keys((t as unknown as V7Tile).text ?? {}).length)
+        held.push(`${id}: wording record`);
     }
     expect(held).toEqual([]);
     expect((after as unknown as { layouts?: unknown[] }).layouts ?? []).toHaveLength(0);

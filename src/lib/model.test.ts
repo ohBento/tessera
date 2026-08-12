@@ -141,8 +141,7 @@ describe("projects own tiles exclusively", () => {
      * refilled. The layers on it were composed for a face that no longer
      * exists — keeping them would dress a stranger. */
     const m = withProject();
-    m.tiles.a.layers.push({ ...newTextLayer(), id: "stale" });
-    m.tiles.a.text = { stale: "Alter Name" };
+    m.tiles.a.layers.push({ ...newTextLayer(), id: "stale", text: "Alter Name" });
 
     removeFromProjectToInbox(m, "a", true);
     expect(m.tiles.a).toEqual(emptyTile());
@@ -398,14 +397,16 @@ describe("clearBases", () => {
 });
 
 describe("layerText", () => {
-  const layer = { ...newTextLayer(), id: "s1", text: "{{id}}" };
-
-  it("expands the tile id", () => {
-    expect(layerText({}, layer, "40000000004743219")).toBe("40000000004743219");
+  it("expands the tile id, which is what makes one caption read as forty", () => {
+    const layer = { ...newTextLayer(), id: "s1", text: "{{id}}" };
+    expect(layerText(layer, "40000000004743219")).toBe("40000000004743219");
   });
 
-  it("prefers the per-tile override, so style syncs but wording does not", () => {
-    expect(layerText({ s1: "Ranger" }, layer, "40000000004743219")).toBe("Ranger");
+  it("leaves words that name no placeholder alone", () => {
+    /* The per-tile override this used to prefer is gone with the record that
+       held it: a caption belongs to its tile, so its own text is the answer. */
+    const layer = { ...newTextLayer(), id: "s1", text: "Nachtklinge" };
+    expect(layerText(layer, "40000000004743219")).toBe("Nachtklinge");
   });
 });
 
@@ -969,16 +970,16 @@ describe("droppedWork", () => {
   it("names only the tiles that lose something", () => {
     const m = wall();
     m.tiles.b.layers = [newTextLayer()];
-    m.tiles.c.text = { L1: "Hallo" };
+    m.tiles.c.layers = [{ ...newTextLayer(), text: "Hallo" }];
     // `a` is untouched and `d` is still in the folder — neither is a loss.
     m.tiles.d.layers = [newTextLayer()];
     expect(droppedWork(m, ["d"]).sort()).toEqual(["b", "c"]);
   });
 
-  it("counts a baked picture and a tile's own wording as work", () => {
+  it("counts a baked picture and a tile's own caption as work", () => {
     const m = wall();
     m.tiles.a.base = { asset: "mosaic.png", crop: { x: 0, y: 0, w: 10, h: 10 } };
-    m.tiles.b.text = { L1: "Nachtklinge" };
+    m.tiles.b.layers = [{ ...newTextLayer(), text: "Nachtklinge" }];
     expect(droppedWork(m, []).sort()).toEqual(["a", "b"]);
   });
 
@@ -1159,10 +1160,9 @@ describe("archiving a tile", () => {
   it("keeps the work on an archived tile", () => {
     // Put away, not thrown away: it comes back with what was made for it.
     const m = withTiles();
-    m.tiles.b.layers = [newTextLayer()];
-    m.tiles.b.text = { L1: "Elani" };
+    m.tiles.b.layers = [{ ...newTextLayer(), id: "L1", text: "Elani" }];
     setArchived(m, ["b"], true);
     expect(m.tiles.b.layers).toHaveLength(1);
-    expect(m.tiles.b.text).toEqual({ L1: "Elani" });
+    expect((m.tiles.b.layers[0] as TextLayer).text).toBe("Elani");
   });
 });

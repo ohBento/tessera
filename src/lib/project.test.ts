@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { emptyManifest, newProject, projectOf } from "./model";
+import { emptyManifest, newProject, newTextLayer, projectOf } from "./model";
 
 /* The caches in project.ts hold promises, not values. A rejected one used to
  * stay cached, so one unlucky read became permanent — and because the render
@@ -306,16 +306,20 @@ describe("loadManifest lines the manifest up with the folder", () => {
     files.clear();
     const platform = await import("./platform");
     const dressed = JSON.parse(stored());
-    dressed.tiles.b.text = { L1: "Elani" };
+    // Work is layers now. A tile's wording record was a second way to carry
+    // some, and it went with the design that owned it.
+    dressed.tiles.b.layers = [{ ...newTextLayer(), id: "L1", text: "Elani" }];
     vi.mocked(platform.readTextFile).mockResolvedValueOnce(JSON.stringify(dressed));
 
     const { lost, snapshot } = await loadManifest("/docs/FaceTexture", ["a", "c"]);
     expect(lost).toEqual(["b"]);
     const written = [...files.keys()].find((k) => k.includes("/snapshots/"));
     expect(written).toContain(snapshot.replace(/:/g, "_"));
-    // The un-pruned document: the tile is in there with its wording, which is
+    // The un-pruned document: the tile is in there with its caption, which is
     // exactly what the prune is about to take away.
-    expect(JSON.parse(files.get(written!)!).manifest.tiles.b.text).toEqual({ L1: "Elani" });
+    const kept = JSON.parse(files.get(written!)!).manifest.tiles.b.layers;
+    expect(kept).toHaveLength(1);
+    expect(kept[0].text).toBe("Elani");
   });
 
   it("writes no snapshot when nothing of value goes", async () => {

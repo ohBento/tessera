@@ -130,8 +130,7 @@
   function atRest(tileId: string, layerId: string): Layer | undefined {
     const layer = placeableOn(tileId).find((l) => l.id === layerId);
     if (!layer) return undefined;
-    const tile = app.manifest.tiles[tileId];
-    if (layer.kind === "text") return { ...layer, text: layerText(tile?.text ?? {}, layer, tileId) };
+    if (layer.kind === "text") return { ...layer, text: layerText(layer, tileId) };
     if (layer.kind !== "image") return layer;
     // "" is a real answer — no picture on this tile — and there is nothing to
     // put a frame around.

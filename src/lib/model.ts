@@ -356,7 +356,14 @@ export type Tile = {
    *  alone, drawn on top of whatever its group gives it — which is what lets a
    *  single portrait carry a layout without a group being invented for it. */
   layers: Layer[];
-  /** Text content per shared layer — style syncs across tiles, wording does not. */
+  /** Written, and read by nobody here.
+   *
+   *  It held one tile's wording for a caption a Layout shared across the wall.
+   *  A caption belongs to its tile now and carries its own words, so nothing in
+   *  this build consults it — but the build before this one calls droppedWork on
+   *  every open, and that does `Object.keys(t.text)` with no guard. Dropping the
+   *  field would throw there, and that build is the way back if this one
+   *  misbehaves. An empty object costs nothing and keeps the door open. */
   text: Record<string, string>;
   /** Put away: out of Unsorted, into the archive, still on disk and still
    *  carrying whatever was made for it. Absent is the ordinary state — see
@@ -806,15 +813,17 @@ export const layerLabel = (l: Layer) => {
  *  belong to the project and are drawn once over the whole wall, not per tile. */
 export const resolveLayers = (m: Manifest, id: string): Layer[] => m.tiles[id]?.layers ?? [];
 
-/** What one tile's copy of a caption actually says.
+/** What a caption says on one tile.
  *
- *  `??` and not `||`: an override of "" means the user emptied this tile's
- *  caption on purpose and it has to stay empty. Falling back on a falsy value
- *  would put the layer's default text back the moment the last character was
- *  deleted — so an override is only absent when its key is absent, and
- *  clearing the field stores "" rather than removing it. */
-export const layerText = (texts: Record<string, string>, layer: TextLayer, tileId: string) =>
-  (texts[layer.id] ?? layer.text).replaceAll("{{id}}", tileId);
+ *  Its own words, with "{{id}}" standing in for the portrait — one caption
+ *  added to forty tiles reads as forty different names without anything
+ *  further being typed, and this is the only place that substitution happens.
+ *
+ *  It used to consult the tile's wording record first, which is where a
+ *  Layout's shared caption kept each portrait's own text. A caption belongs to
+ *  its tile now, so there is one answer and nothing to prefer it over. */
+export const layerText = (layer: TextLayer, tileId: string) =>
+  layer.text.replaceAll("{{id}}", tileId);
 
 /** A tile's own placement of a shared layer: a nudge, a zoom and a turn, all
  *  relative to what the Layout asked for. Absent is the ordinary state and
@@ -872,8 +881,7 @@ export function droppedWork(m: Manifest, ids: string[]): string[] {
     if (has.has(id) || !t) return false;
     return (
       !!t.base ||
-      t.layers.length > 0 ||
-      Object.keys(t.text).length > 0
+      t.layers.length > 0
     );
   });
 }
@@ -1113,6 +1121,10 @@ const bakedHalf = (layers: V7Layer[]): Layer[] =>
 type V7Frame = { x: number; y: number; z: number; a: number; zh?: number };
 
 type V7Tile = Tile & {
+  /** Wording per shared layer: where a Layout's one caption kept each
+   *  portrait's own name. A caption belongs to its tile now and carries its
+   *  words itself, so this is read once, folded in, and dropped. */
+  text?: Record<string, string>;
   swap?: Record<string, string>;
   paint?: Record<string, Paint>;
   frame?: Record<string, V7Frame>;
@@ -1188,10 +1200,9 @@ function toV8(m: Raw): Raw {
     }
 
     tile.layers = out;
-    /* `text` stays as a field and is emptied: the renderer still threads a
-     * wording map through, and a tile's own layer now holds the words. The
-     * other three described a design the tile did not own and have nothing
-     * left to say. */
+    /* All four described a design the tile did not own — the words, the
+     * picture, the colour and the placement are on the layer now, folded in
+     * above. `text` is emptied rather than dropped: see the field itself. */
     tile.text = {};
     delete tile.swap;
     delete tile.paint;

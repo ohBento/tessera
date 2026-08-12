@@ -146,7 +146,7 @@ describe("deciding whether one tile is enough", () => {
     const caption = m.tiles[target].layers[1];
 
     for (const edit of [
-      () => (m.tiles[target].text = { [caption.id]: "renamed" }),
+      () => ((m.tiles[target].layers[1] as { text: string }).text = "renamed"),
       // A baked mosaic: the tile's own background stops being the game's file.
       () =>
         (m.tiles[target].base = {
