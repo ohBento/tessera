@@ -56,7 +56,7 @@
     unplace,
   } from "./lib/editor.svelte";
   import { ICON_NAMES, iconArt } from "./lib/icons";
-  import { isGradient, layerLabel, layoutNeedsRestamp, type Layer } from "./lib/model";
+  import { isGradient, layerLabel, type Layer } from "./lib/model";
 
   let {
     id,

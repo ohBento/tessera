@@ -15,7 +15,7 @@ import {
   newShapeLayer,
   newTextLayer,
   type Frame,
-  type Layout,
+  type Layer,
   type Paint,
   type ShapeLayer,
   type TextLayer,
@@ -23,6 +23,10 @@ import {
   type Manifest,
 } from "./model";
 import { buildGrid, buildLayout, cellAt, gridSize, type Wall } from "./scene";
+
+/** The shape these tests build a sheet from. Local because the model type went
+ *  with the editor — buildLayout only ever read `layers`. */
+type Layout = { id: string; name: string; layers: Layer[] };
 import { testDeps } from "../test/images";
 
 const HEADER = 54;

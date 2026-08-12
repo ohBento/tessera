@@ -625,56 +625,7 @@ export function dissolveFolder(p: Project, folderId: string) {
 /** Of `ids`, the ones no drawer has taken, in the order given. */
 export const looseTiles = (p: Project, ids: string[]) => ids.filter((id) => !folderOf(p, id));
 
-/** A tile-sized composition, edited on its own — not on the wall — and kept
- *  around as a reusable document rather than being consumed the moment it is
- *  used. It is never rendered directly onto a tile; it is only ever rendered
- *  to a flat picture and *that* is what gets stamped (see ImageLayer.layoutId
- *  and assignLayout in editor.svelte.ts). That split is deliberate: the layout
- *  keeps its structure, styles and per-layer editability for as long as you
- *  want to keep changing it, while what actually sits on a tile is nothing
- *  more exotic than an ordinary picture, reusing every bit of image-layer
- *  machinery that already exists. */
-export type Layout = {
-  id: string;
-  name: string;
-  layers: Layer[];
-  /** Fingerprint of `layers` as they were when this Layout was last rendered
-   *  and stamped. Absent until the first stamp. Comparing it against the
-   *  current fingerprint is what tells "there are changes the tiles have not
-   *  seen yet" apart from "the tiles are already showing this". */
-  stamped?: string;
-};
-
-export const newLayout = (name: string): Layout => ({ id: newId(), name, layers: [] });
-
-/** A copy of a Layout under a new name, with fresh ids all the way down.
- *
- *  The ids have to change. Per-tile wording lives in `tile.text` keyed by layer
- *  id, and `syncLiveLayers` finds the copy of a caption by id — so a duplicate
- *  that kept them would quietly share both with the original, and editing one
- *  would move the other's captions. Mask references are remapped as they are
- *  copied, so they keep pointing inside the duplicate rather than back at the
- *  layer they were cloned from.
- *
- *  `stamped` is deliberately not carried over: the copy has never been put on
- *  a tile, so it has nothing to be out of date with. */
-export function duplicateLayout(layout: Layout, name: string): Layout {
-  const swap = new Map<string, string>();
-  const renumber = (layers: Layer[]): Layer[] =>
-    layers.map((l) => {
-      const copy = clone(l);
-      copy.id = newId();
-      swap.set(l.id, copy.id);
-      if (copy.kind === "group") copy.children = renumber(copy.children);
-      return copy;
-    });
-
-  const layers = renumber(layout.layers);
-  for (const l of walkLayers(layers)) if (l.maskId) l.maskId = swap.get(l.maskId);
-  return { id: newId(), name, layers };
-}
-
-/** Copies layers within one Layout, offset a little so the copy is visible.
+/** Copies layers within one stack, offset a little so the copy is visible.
  *
  *  Fresh ids all the way down, and mask references remapped inside the copied
  *  set — a duplicate pointing back at the original's stencil would move when
@@ -713,26 +664,6 @@ export function duplicateLayers(picked: Layer[], nudge = 0.02): Layer[] {
   return copies;
 }
 
-/** Cheap content fingerprint of a Layout's layers.
- *
- *  A hash rather than the JSON itself: the comparison only ever needs to
- *  detect difference, and keeping a second full copy of every layout inside
- *  the manifest would be a lot of bytes to answer one yes/no question. */
-export function layoutFingerprint(layout: Layout): string {
-  const json = JSON.stringify(layout.layers);
-  let h = 5381;
-  for (let i = 0; i < json.length; i++) h = ((h * 33) ^ json.charCodeAt(i)) >>> 0;
-  // Length alongside the hash, so two different layouts colliding on the hash
-  // still have to also match in size before being called identical.
-  return `${h.toString(36)}-${json.length.toString(36)}`;
-}
-
-/** Whether this Layout has edits the stamps on the tiles do not show yet.
- *  False for one never stamped: there is nothing to bring up to date, and the
- *  action for that case is stamping it somewhere in the first place. */
-export const layoutNeedsRestamp = (layout: Layout) =>
-  layout.stamped !== undefined && layout.stamped !== layoutFingerprint(layout);
-
 /** Tiles are global, keyed by the id the game gave them; projects only say
  *  which wall an id belongs to. That split is what lets a tile move between
  *  projects without its layers, wording or pictures going anywhere. */
@@ -740,9 +671,6 @@ export type Manifest = {
   version: 8;
   projects: Project[];
   tiles: Record<string, Tile>;
-  /** On its way out with the layout editor. A migrated document leaves it
-   *  empty; nothing new is ever put in it. */
-  layouts: Layout[];
 };
 
 export const emptyTile = (): Tile => ({ base: null, layers: [], text: {} });
@@ -767,7 +695,6 @@ export const emptyManifest = (): Manifest => ({
   version: 8,
   projects: [],
   tiles: {},
-  layouts: [],
 });
 
 const newId = () => Math.random().toString(36).slice(2, 10);
@@ -1225,7 +1152,7 @@ function toV6(m: Raw): Raw {
     const base = raw && "asset" in raw ? (raw as NonNullable<Base>) : ((raw as Tile)?.base ?? null);
     tiles[id] = { ...emptyTile(), base };
   }
-  const layouts = ((m.layouts ?? []) as Layout[]).map(({ stamped: _dropped, ...rest }) => rest);
+  const layouts = ((m.layouts ?? []) as V7Layout[]).map(({ stamped: _dropped, ...rest }) => rest);
   return {
     version: 6,
     order: (m.order as string[]) ?? [],
@@ -1300,7 +1227,7 @@ function toV7(m: Raw): Raw {
 
   for (const tile of Object.values(tiles)) dropOrphanLiveLayers(tile);
 
-  return { version: 7, projects: [main], tiles, layouts: (m.layouts ?? []) as Layout[] };
+  return { version: 7, projects: [main], tiles, layouts: (m.layouts ?? []) as V7Layout[] };
 }
 
 /* --- v7 → v8: the stamps come apart. -----------------------------------
@@ -1340,10 +1267,16 @@ type V7Tile = Tile & {
   frame?: Record<string, Frame>;
 };
 
+/** The reusable tile-sized composition v7 stamped onto tiles. Declared here
+ *  rather than in the model above, because reading one is the only thing this
+ *  build still does with it: `stamped` was the fingerprint that told a stamp it
+ *  was out of date, and there are no stamps to tell. */
+type V7Layout = { id: string; name: string; layers: Layer[]; stamped?: string };
+
 function toV8(m: Raw): Raw {
   const tiles = clone((m.tiles ?? {}) as Record<string, V7Tile>);
   const layouts = new Map(
-    ((m.layouts ?? []) as Layout[]).map((l) => [l.id, l] as const),
+    ((m.layouts ?? []) as V7Layout[]).map((l) => [l.id, l] as const),
   );
 
   for (const tile of Object.values(tiles)) {

@@ -9,7 +9,11 @@ import * as fabric from "fabric";
 import { describe, expect, it } from "vitest";
 
 import { TILE_H, TILE_W } from "./bmp";
-import { newImageLayer, newLayout, newShapeLayer, newTextLayer, type Layer } from "./model";
+import { newImageLayer, newShapeLayer, newTextLayer, type Layer } from "./model";
+
+/** What these tests ever wanted from a Layout: an empty stack to fill. The type
+ *  went with the editor; buildLayout takes the layers themselves now. */
+const newLayout = (_name: string) => ({ layers: [] as Layer[] });
 import { buildLayout, holdTo, readBackLayout, scaleControls, snapWidth, trimTo } from "./scene";
 import { testDeps } from "../test/images";
 

@@ -10,7 +10,6 @@ import {
   folderOf,
   emptyManifest,
   emptyTile,
-  duplicateLayout,
   findLayer,
   findList,
   inboxIds,
@@ -28,9 +27,6 @@ import {
   newGroupLayer,
   newImageLayer,
   uncrop,
-  layoutFingerprint,
-  layoutNeedsRestamp,
-  newLayout,
   newFolder,
   newProject,
   newShapeLayer,
@@ -56,6 +52,10 @@ import {
   type ShapeLayer,
   type TextLayer,
 } from "./model";
+
+/** A v7 Layout, for the migration fixtures below — the only thing that still
+ *  has to be able to describe one. The model type went with the editor. */
+const newLayout = (name: string) => ({ id: `L-${name}`, name, layers: [] as Layer[] });
 
 /** Three tiles in one project, the shape everything below starts from. */
 const withProject = (): Manifest => {
@@ -733,59 +733,6 @@ describe("migrate v7 into v8: stamps dissolve into the tiles they dressed", () =
   });
 });
 
-
-describe("duplicateLayout", () => {
-  const source = () => {
-    const l = newLayout("Original");
-    const mask = { ...newShapeLayer("rect"), id: "shape" };
-    const masked = { ...newTextLayer(), id: "cap", maskId: "shape", perTile: true };
-    l.layers.push(mask, { ...newGroupLayer([masked]), id: "grp" });
-    l.stamped = "irgendein-fingerabdruck";
-    return l;
-  };
-
-  it("gives every layer a new id, nested ones too", () => {
-    const from = source();
-    const copy = duplicateLayout(from, "Kopie");
-    const oldIds = new Set([...walkLayers(from.layers)].map((l) => l.id));
-    const newIds = [...walkLayers(copy.layers)].map((l) => l.id);
-
-    expect(copy.id).not.toBe(from.id);
-    expect(newIds).toHaveLength(3);
-    expect(newIds.some((id) => oldIds.has(id))).toBe(false);
-    // Ids are what per-tile wording and stamp tracking hang on, so a shared
-    // one would make editing the copy move the original's captions.
-    expect(new Set(newIds).size).toBe(3);
-  });
-
-  it("keeps everything else, including the per-tile flag", () => {
-    const copy = duplicateLayout(source(), "Kopie");
-    const caption = [...walkLayers(copy.layers)].find((l) => l.kind === "text");
-    expect(copy.name).toBe("Kopie");
-    expect(caption?.kind === "text" && caption.perTile).toBe(true);
-    expect(copy.layers[1].kind === "group" && copy.layers[1].children).toHaveLength(1);
-  });
-
-  it("points a mask at the copy's own shape, not the original's", () => {
-    const from = source();
-    const copy = duplicateLayout(from, "Kopie");
-    const shape = copy.layers[0];
-    const caption = [...walkLayers(copy.layers)].find((l) => l.kind === "text");
-    expect(caption?.maskId).toBe(shape.id);
-    expect(caption?.maskId).not.toBe("shape");
-  });
-
-  it("starts unstamped, because the copy has never been on a tile", () => {
-    expect(duplicateLayout(source(), "Kopie").stamped).toBeUndefined();
-  });
-
-  it("leaves the original alone", () => {
-    const from = source();
-    const before = structuredClone(from);
-    duplicateLayout(from, "Kopie");
-    expect(from).toEqual(before);
-  });
-});
 
 describe("relocateLayer", () => {
   const at = (layers: Layer[], id: string) => {

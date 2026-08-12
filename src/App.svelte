@@ -134,7 +134,6 @@
     findLayer,
     isGradient,
     layerLabel,
-    layoutNeedsRestamp,
     type Layer,
     type ShapeKind,
   } from "./lib/model";

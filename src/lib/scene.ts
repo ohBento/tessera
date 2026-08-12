@@ -32,7 +32,6 @@ import {
   stencilIds,
   type Base,
   type Layer,
-  type Layout,
   type Manifest,
   type Corners,
   type Inset,
@@ -1730,7 +1729,9 @@ export async function rebuildTile(
  *  opens and shows what it can. */
 export async function buildLayout(
   canvas: fabric.StaticCanvas,
-  layout: Layout,
+  /* A bare stack of layers, not a Layout: that type went with the editor, and
+   * `layers` is the only field this ever read. */
+  layout: { layers: Layer[] },
   deps: SceneDeps,
   interactive = false,
   /* Overridable because the stamp path renders a stripped copy of the Layout
