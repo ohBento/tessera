@@ -1723,6 +1723,12 @@ const anyLayer = (id: string): Layer | undefined =>
   findLayer(app.manifest.tiles[app.selectedTile]?.layers ?? [], id) ??
   findLayer(openProject()?.gridLayers ?? [], id);
 
+/** The layer the panel is showing: whatever is picked, on its own tile or
+ *  across the whole wall. The tile is asked first, which is what keeps two
+ *  tiles carrying the same layer id apart. */
+export const pickedLayer = (): Layer | undefined =>
+  app.selected ? anyLayer(app.selected) : undefined;
+
 /** One field on one layer — the wall-spanning case, and the fallback for a
  *  layer picked with no tile behind it. A layer on a tile goes through
  *  setTileLayerField, which reaches every tile the selection covers. */

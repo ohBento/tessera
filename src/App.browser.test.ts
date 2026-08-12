@@ -31,6 +31,7 @@ import {
   deleteLayer,
   freeCount,
   history,
+  historySteps,
   setLayerField,
   redoEdit,
   undoEdit,
@@ -900,5 +901,81 @@ describe("the placing tool", () => {
     /* The whole point of the rewiring: the placement is on the layer, and
      * nothing grows a second copy of it beside the tile. */
     expect((app.manifest.tiles[tile] as unknown as { frame?: unknown }).frame).toBeUndefined();
+  });
+});
+
+describe("the layer panel", () => {
+  /* It was imported and never rendered. Master put it inside the Layout editor
+   * and nowhere else, so taking that editor out took the only way to a layer's
+   * font, colour, shadow, corners, grading and mask with it — on a build whose
+   * whole point is that every asset is a layer you can edit. Nothing failed:
+   * the fields were simply not on the screen, which no test could see because
+   * none of them looked. */
+  async function pickedShape() {
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const layer = tileLayers(tile).at(-1)!;
+    selectLayer(layer.id, tile);
+    await tick();
+    return { tile, layer };
+  }
+
+  const headings = () =>
+    [...document.querySelectorAll("aside h2")].map((h) => h.textContent!.trim());
+
+  const field = (name: string) =>
+    [...document.querySelectorAll("aside label.field")].find(
+      (l) => l.querySelector("span")?.textContent!.trim() === name,
+    );
+
+  it("shows the picked layer's fields, and nothing when nothing is picked", async () => {
+    const { layer } = await pickedShape();
+    expect(headings()).toContain(layerLabel(layer));
+    expect(field("Fill")).toBeTruthy();
+
+    selectLayer("", "");
+    await tick();
+    expect(headings()).not.toContain(layerLabel(layer));
+  });
+
+  it("offers a layer on the same tile as a mask", async () => {
+    /* The control was gated on being inside a Layout, which was where shapes
+     * and pictures used to share a stack. A tile is that stack now — the
+     * component's own siblings/maskOffers already read off the tile — so the
+     * gate was the last thing keeping masking off the wall. */
+    const { tile } = await pickedShape();
+    app.selectedTiles = [tile];
+    await addTileText();
+    const cutter = tileLayers(tile).at(-1)!;
+    const shape = tileLayers(tile).find((l) => l.kind === "shape")!;
+    selectLayer(shape.id, tile);
+    await tick();
+
+    const mask = field("Mask")!;
+    expect(mask).toBeTruthy();
+    const offered = [...mask.querySelectorAll("option")].map((o) => o.textContent!.trim());
+    expect(offered).toContain(layerLabel(cutter));
+  });
+
+  it("writes a field onto every picked tile in one step", async () => {
+    const { tile, layer } = await pickedShape();
+    const second = app.folderIds[1];
+    app.selectedTiles = [tile, second];
+    await addTileShape("rect");
+    const onBoth = tileLayers(tile).at(-1)!;
+    selectLayer(onBoth.id, tile);
+    await tick();
+
+    const before = historySteps().length;
+    await setTileLayerField([tile, second], onBoth.id, "fill", "#22cc55");
+    const here = findLayer(app.manifest.tiles[tile]!.layers, onBoth.id) as ShapeLayer;
+    const there = findLayer(app.manifest.tiles[second]!.layers, onBoth.id) as ShapeLayer;
+    expect(here.fill).toBe("#22cc55");
+    expect(there.fill).toBe("#22cc55");
+    // One step, not two: the panel is a bulk editor and undo has to match.
+    expect(historySteps().length).toBe(before + 1);
+    void layer;
   });
 });

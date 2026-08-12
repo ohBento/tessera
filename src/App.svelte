@@ -50,6 +50,7 @@
     nextSnapshotName,
     openFolder,
     openProject,
+    pickedLayer,
     openProjectView,
     placeTileAt,
     projects,
@@ -481,6 +482,10 @@
   /** The picture spread across the open project's wall, if one is placed. It
    *  belongs to the wall rather than to any tile, so it gets its own section. */
   const wallLayers = $derived([...(openProject()?.gridLayers ?? [])].reverse());
+  /* Re-read whenever the document moves, not only when the selection does: a
+     field written through setTileLayerField replaces nothing on screen unless
+     the panel is looking at the layer as it now is. */
+  const picked = $derived((void app.version, pickedLayer()));
 
   /* The wall's context menu, on tiles. */
   let menu: { x: number; y: number; items: Item[] } | null = $state(null);
@@ -1029,7 +1034,37 @@
       {/if}
     </div>
 
-    <aside bind:this={pane} onscroll={() => (scrolled = pane!.scrollTop > 200)}>
+    <!-- `pane?`, not `pane!`. Svelte clears a bind:this on unmount and the
+         scroll event can still arrive after that, so the assertion was a lie
+         waiting for the pane to be long enough to scroll — which it became the
+         day the layer panel moved in. -->
+    <aside bind:this={pane} onscroll={() => (scrolled = (pane?.scrollTop ?? 0) > 200)}>
+        <!-- The picked layer's own fields. Everything with no other way in:
+             a caption's face and colour, a shape's corners and gradient, a
+             picture's grading, the mask. Position, rotation and size are not
+             here — those are the canvas handles, and repeating them would give
+             two answers to the same question.
+
+             One home for both kinds of layer. A tile's layer and one spread
+             across the whole wall carry the same fields, and Properties knows
+             which it has: it writes through every picked tile when there are
+             tiles, and straight to the layer when there are none.
+
+             It lives at the top rather than beside the row a layer was picked
+             in, which is the honest cost of one site instead of two — the tile
+             list is long, so picking a layer far down means looking up here for
+             its fields. The wording, the picture and the class stay in the row
+             itself, so what is up here is the part reached rarely. -->
+        {#if picked}
+          <Properties
+            layer={picked}
+            onPickClass={(layerId) => {
+              iconTarget = { tile: app.selectedTile || undefined, layer: layerId };
+              iconsOpen = true;
+            }}
+          />
+        {/if}
+
         {#if wallLayers.length}
           <h2>Wall</h2>
           <ul>
