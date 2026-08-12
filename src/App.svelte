@@ -26,6 +26,9 @@
     addLayoutImage,
     addLayoutShape,
     addLayoutText,
+    addTileImage,
+    addTileShape,
+    addTileText,
     app,
     assignLayoutToSelection,
     assignLayoutToWall,
@@ -162,7 +165,14 @@
   import { isTyping } from "./lib/geometry";
   import { ICON_NAMES, iconArt } from "./lib/icons";
   import { savePending } from "./lib/project";
-  import { findLayer, isGradient, layerLabel, layoutNeedsRestamp, type Layer } from "./lib/model";
+  import {
+    findLayer,
+    isGradient,
+    layerLabel,
+    layoutNeedsRestamp,
+    type Layer,
+    type ShapeKind,
+  } from "./lib/model";
   import { isLiveCopy, layerShows, offLayouts } from "./lib/stamps";
 
   const editing = $derived(openLayout());
@@ -510,6 +520,25 @@
   let sheet: LayoutCanvas | undefined = $state();
   const noPick = $derived(!editing || !app.layoutSelection.length);
   const fewPicked = $derived(!editing || app.layoutSelection.length < 3);
+
+  /* Where a new layer lands. Inside a Layout it joins the sheet; on the wall it
+   * goes onto every picked tile at once, which is what the sheet was the only
+   * way to do. Nothing to insert into when neither is true — a layer has to
+   * belong to something. */
+  const insertInto = $derived(editing ? "layout" : app.selectedTiles.length ? "tiles" : "");
+  const addImage = () => void (insertInto === "tiles" ? addTileImage() : addLayoutImage());
+  const addText = () => void (insertInto === "tiles" ? addTileText() : addLayoutText());
+  const addShape = (kind: ShapeKind, icon?: string) =>
+    void (insertInto === "tiles" ? addTileShape(kind, icon) : addLayoutShape(kind, icon));
+  /** What the insert buttons say they will do, so the same glyph landing in two
+   *  different places is never a guess. */
+  const insertWhere = $derived(
+    insertInto === "tiles"
+      ? ` onto ${app.selectedTiles.length} selected ${app.selectedTiles.length === 1 ? "tile" : "tiles"}`
+      : insertInto === "layout"
+        ? " into the layout"
+        : "",
+  );
 
 
 
@@ -1184,20 +1213,24 @@
       <span class="gap"></span>
       <!-- Framed mountain and sun, the icon every editor uses for a picture —
            no Unicode glyph reads as one at this size. -->
-      <button title="Insert image — opens a file picker" disabled={!editing || !!app.busy} onclick={() => void addLayoutImage()}>
+      <button
+        title={`Insert image${insertWhere} — opens a file picker`}
+        disabled={!insertInto || !!app.busy}
+        onclick={addImage}
+      >
         <svg width="16" height="14" viewBox="0 0 16 14" aria-hidden="true">
           <rect x="1" y="1" width="14" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4" />
           <circle cx="5.4" cy="5" r="1.4" fill="currentColor" />
           <path d="M3 11.4 L7 7 L9.5 9.6 L11.5 7.6 L13.6 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" />
         </svg>
       </button>
-      {@render tool("Insert text", "T", () => void addLayoutText(), !editing)}
-      {@render tool("Rectangle", "▭", () => void addLayoutShape("rect"), !editing)}
-      {@render tool("Ellipse", "◯", () => void addLayoutShape("ellipse"), !editing)}
-      {@render tool("Polygon", "⬡", () => void addLayoutShape("polygon"), !editing)}
+      {@render tool(`Insert text${insertWhere}`, "T", addText, !insertInto)}
+      {@render tool(`Rectangle${insertWhere}`, "▭", () => addShape("rect"), !insertInto)}
+      {@render tool(`Ellipse${insertWhere}`, "◯", () => addShape("ellipse"), !insertInto)}
+      {@render tool(`Polygon${insertWhere}`, "⬡", () => addShape("polygon"), !insertInto)}
       <!-- The fourth shape. A picker rather than a straight insert, because
            which class it is is the whole question. -->
-      {@render tool("Class icon", "✦", () => (iconsOpen = true), !editing)}
+      {@render tool(`Class icon${insertWhere}`, "✦", () => (iconsOpen = true), !insertInto)}
       <span class="gap"></span>
       {@render tool("Align left", "⇤", () => sheet?.alignTo("left"), noPick)}
       {@render tool("Align right", "⇥", () => sheet?.alignTo("right"), noPick)}
@@ -1976,7 +2009,9 @@
             closeIconSheet();
             if (target?.tile) void setTileAsset(target.tile, target.layer, name);
             else if (target) void setLayerField(target.layer, "icon", name);
-            else void addLayoutShape("icon", name);
+            // Nothing asked for it: the toolbar did, so it lands wherever a new
+            // layer lands — the sheet, or every picked tile.
+            else addShape("icon", name);
           }}
         >
           <!-- Drawn from the same parsed paths the layer is drawn from, so the

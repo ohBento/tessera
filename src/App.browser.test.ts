@@ -426,6 +426,31 @@ describe("the wall", () => {
     expect(on(b).y).toBeCloseTo(0.6, 5);
   });
 
+  it("puts the toolbar's caption on the picked tiles when no layout is open", async () => {
+    /* The same button in two places. Inside a Layout it joins the sheet; on the
+     * wall it goes onto the picked tiles, which is what the sheet used to be
+     * the only way to do. Clicked rather than called, because the wiring is the
+     * thing being tested — the actions themselves have their own test. */
+    await enterInbox();
+    const [a, b] = app.folderIds;
+    app.selectedTiles = [a, b];
+    await tick();
+
+    const insert = [...document.querySelectorAll("button")].find(
+      (x) => x.title.startsWith("Insert text"),
+    ) as HTMLButtonElement | undefined;
+    if (!insert) throw new Error("no insert-text button in the toolbar");
+    // It says where it will land, so the same glyph twice is never a guess.
+    expect(insert.title).toContain("2 selected tiles");
+    expect(insert.disabled).toBe(false);
+
+    insert.click();
+    await until(() => tileLayers(a).some((l) => l.kind === "text"));
+    expect(tileLayers(b).some((l) => l.kind === "text")).toBe(true);
+    // And it went to the tiles, not into a layout nobody opened.
+    expect(layouts()).toHaveLength(0);
+  });
+
   it("adds a caption to every picked tile at once, sharing its id", async () => {
     /* The shared id is the point, not an accident: it is what makes the new
      * caption bulk-editable straight away, and it is the shape a stamped
@@ -1850,9 +1875,12 @@ describe("the sheets over the page", () => {
      * regardless: it went up out of sight, and the next press put it away
      * again — a key that did nothing, twice. */
     await newLayoutDoc("Blätter");
+    // Matched on the start of the title: it now names where the icon will land
+    // ("into the layout", "onto 3 selected tiles"), which is not what this test
+    // is about.
     const icons = () =>
-      [...document.querySelectorAll("button")].find(
-        (b) => b.title === "Class icon",
+      [...document.querySelectorAll("button")].find((b) =>
+        b.title.startsWith("Class icon"),
       ) as HTMLButtonElement;
     await until(() => !!icons() && !icons().disabled);
     icons().click();
