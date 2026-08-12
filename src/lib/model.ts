@@ -861,15 +861,6 @@ export const layerAsset = (swaps: Record<string, string>, layer: ImageLayer) =>
 export const layerIcon = (swaps: Record<string, string>, layer: ShapeLayer) =>
   swaps[layer.id] ?? layer.icon;
 
-/** What colour one tile paints a live shape, or the layer's own.
- *
- *  `??` for the same reason as everywhere else in this family: an override is
- *  absent only when its key is absent. There is no "" here to mean "none" — a
- *  shape with no fill is a shape the Layout drew that way, and a tile saying so
- *  would be saying nothing at all. */
-export const layerPaint = (paints: Record<string, Paint>, layer: ShapeLayer) =>
-  paints[layer.id] ?? layer.fill;
-
 /** Brings a manifest into line with the folder it belongs to.
  *
  *  Characters get created and deleted between sessions — and a folder can be
