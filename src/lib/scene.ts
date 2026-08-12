@@ -1379,6 +1379,37 @@ export async function buildGrid(
  *  shares one icon bake across every tile that wants it; a single-tile rebuild
  *  hands in a map of its own and throws it away, which is the same rule as
  *  before — a cache that outlives its render can go stale. */
+/** A stack with its groups dissolved into it. A group draws nothing of its own
+ *  — it is a displacement, a shared fade and a shared lock — so folding all
+ *  three into its children leaves a flat list that paints the same picture.
+ *  layoutObjects reaches the same result by recursing; the wall flattens first
+ *  instead, because everything downstream of it (stencilIds, offLayouts, the
+ *  cutter lookup, the draw loop) then goes on reading one list and needs no
+ *  tree walk of its own.
+ *
+ *  A hidden group takes its children with it, exactly as in a Layout: the eye
+ *  on the row has to mean what it says. */
+function dissolved(layers: Layer[], dx = 0, dy = 0, fade = 1, locked = false): Layer[] {
+  const out: Layer[] = [];
+  for (const l of layers) {
+    if (l.kind === "group") {
+      if (l.hidden) continue;
+      const own = groupShift(l);
+      out.push(
+        ...dissolved(l.children, dx + own.dx, dy + own.dy, fade * l.opacity, locked || !!l.locked),
+      );
+      continue;
+    }
+    const moved = dx || dy || fade !== 1 || locked;
+    out.push(
+      moved
+        ? ({ ...l, x: l.x + dx, y: l.y + dy, opacity: l.opacity * fade, locked: locked || !!l.locked } as Layer)
+        : l,
+    );
+  }
+  return out;
+}
+
 async function tileLayerObjects(
   id: string,
   index: number,
@@ -1401,7 +1432,7 @@ async function tileLayerObjects(
      * shape along, because the Layout it came from is not there to look it up
      * in. Same rule as in a Layout — a shape that is cutting something has
      * stopped being a picture and does not draw itself. */
-    const own = resolveLayers(m, id);
+    const own = dissolved(resolveLayers(m, id));
     const stencils = stencilIds(own);
     /* Which assignments this tile has switched off. A live copy has no row and
        no eye of its own, so the eye on its stamp answers for it — see
@@ -1429,9 +1460,6 @@ async function tileLayerObjects(
         isLiveCopy(raw) ? frames[raw.id] : undefined,
       );
       if (l.kind === "image" && !l.asset) continue;
-      // Groups are a wall-side concept only in Layouts; on a tile they would
-      // need the same flattening layoutObjects does, and nothing creates one
-      // here yet.
       /* Cut before placed. The shape sits in tile coordinates, so the layer is
        * built at the tile's own origin, composited against it, and the finished
        * picture is moved into the cell — after which the cell clip below
@@ -1544,22 +1572,26 @@ export const wallPrint = (wall: Wall, m: Manifest): WallPrint => ({
   tiles: new Map(wall.ids.map((id) => [id, JSON.stringify(m.tiles[id] ?? null)])),
 });
 
-/** The one tile that changed between two states, or "" when the answer is
- *  anything else — no previous state, a different id list, a moved picture
- *  across the wall, several tiles at once, or nothing at all.
+/** Which tiles changed between two states, or null when the wall itself did —
+ *  no previous state, a different id list, or a moved picture across the grid.
+ *  An empty list means nothing changed at all.
  *
- *  Deliberately timid. Every "" is a full rebuild, which is only slow; a wrong
- *  "just this one" is a wall that quietly disagrees with the document, which
- *  is a bug the user finds long after the edit that caused it. */
+ *  Deliberately timid about null. Every null is a full rebuild, which is only
+ *  slow; a wrong "just these" is a wall that quietly disagrees with the
+ *  document, which is a bug the user finds long after the edit that caused it. */
+export function tilesChanged(before: WallPrint | null, after: WallPrint): string[] | null {
+  if (!before || before.ids !== after.ids || before.grid !== after.grid) return null;
+  const changed: string[] = [];
+  for (const [id, print] of after.tiles) if (before.tiles.get(id) !== print) changed.push(id);
+  return changed;
+}
+
+/** The one tile that changed, or "" when the answer is anything else —
+ *  including several at once. Kept as its own name because "exactly one" is
+ *  the question the single-tile redraw path asks. */
 export function soleTileChange(before: WallPrint | null, after: WallPrint): string {
-  if (!before || before.ids !== after.ids || before.grid !== after.grid) return "";
-  let only = "";
-  for (const [id, print] of after.tiles) {
-    if (before.tiles.get(id) === print) continue;
-    if (only) return "";
-    only = id;
-  }
-  return only;
+  const changed = tilesChanged(before, after);
+  return changed?.length === 1 ? changed[0] : "";
 }
 
 /** Where an object sits in the wall's stack. Backgrounds under the picture
@@ -1611,6 +1643,15 @@ export async function rebuildTile(
   m: Manifest,
   deps: SceneDeps,
   interactive = false,
+  /* Off when a caller is redrawing several tiles in a row, so the wall is
+   * painted once at the end instead of once per tile.
+   *
+   * Painting is nearly the whole cost of this function — at 301 tiles a single
+   * tile measured 497ms, of which 449ms was the paint — so a loop that repaints
+   * per tile is slower than rebuilding the entire wall: eight tiles came to
+   * 4126ms against a full build's 990ms. Measured, after a small-set redraw was
+   * added and turned out to be a pessimisation. */
+  render = true,
 ): Promise<void> {
   const index = wall.ids.indexOf(id);
   if (index < 0) return;
@@ -1647,7 +1688,7 @@ export async function rebuildTile(
     }
     canvas.insertAt(at, obj);
   }
-  canvas.renderAll();
+  if (render) canvas.renderAll();
 }
 
 /** Fills `canvas` with one Layout's own layers, at tile scale (624x804) — the
@@ -1938,6 +1979,13 @@ export function readBack(obj: Tagged, tileCount: number, index: number) {
     scaleH: obj.getScaledHeight() / box.h,
     fx: obj.scaleX ?? 1,
     fy: obj.scaleY ?? 1,
+    /* The same two the Layout reads back. The side and height handles are put
+     * on wall objects too (makeInteractive does not ask which canvas it is on),
+     * so leaving these out meant a crop or a caption height dragged on the wall
+     * was measured, applied to the object, and then dropped on the way to the
+     * model — the gesture worked and the next rebuild undid it. */
+    crop: cropOff(obj),
+    boxH: (obj as { boxH?: number }).boxH,
     rotation: obj.angle ?? 0,
   };
 }

@@ -20,6 +20,7 @@ import { TILE_H, TILE_W } from "./bmp";
 import {
   emptyManifest,
   emptyTile,
+  newGroupLayer,
   newImageLayer,
   newProject,
   newShapeLayer,
@@ -75,6 +76,7 @@ function wallCanvas(count: number) {
     width: size.w,
     height: size.h,
     enableRetinaScaling: false,
+    renderOnAddRemove: false,
   });
 }
 
@@ -262,6 +264,156 @@ describe("redrawing one tile", () => {
       await canvas.dispose();
     }
   }, 120_000);
+});
+
+describe("what a wall costs once stamps are dissolved", () => {
+  /* The number the v8 plan is gated on, taken before anything is demolished.
+   *
+   * Today a design reaches a tile as one baked PNG, so `dressed` above is two
+   * objects a tile. Dissolving the stamp puts every layer of that design on
+   * every tile instead — a picture, two captions, a class icon, a masked badge
+   * and a group — which is the shape measured here. Object count against the
+   * same wall's paint is the whole question: at 301 tiles the paint was already
+   * 407 of 415ms, and none of these objects can be cached (each carries its own
+   * cell clipPath, which forces objectCaching off).
+   *
+   * Measured against the v7 shape in the same run rather than against a
+   * stopwatch, for the reason FREEZE exists. If a dissolved wall costs a small
+   * multiple of a stamped one, the plan proceeds; if it costs an order of
+   * magnitude, the renderer needs the bitmap-bake fallback before the migration
+   * lands, not after. */
+  function dressedV8(count: number, withMask = true): Manifest {
+    const m = emptyManifest();
+    const p = newProject("Bench v8");
+    p.order = Array.from({ length: count }, (_, i) => `4000000000${String(i).padStart(6, "0")}`);
+    m.projects = [p];
+    for (const id of p.order) {
+      const frame = newImageLayer(`stamp-${id.slice(-1)}`);
+      frame.scale = 0.9;
+
+      const name = newTextLayer();
+      name.text = id.slice(-4);
+      name.y = 0.85;
+
+      const klass = newTextLayer();
+      klass.text = "Ranger";
+      klass.y = 0.92;
+      klass.size = 0.04;
+
+      const icon = newShapeLayer("icon", "Ranger");
+      icon.x = 0.2;
+      icon.y = 0.12;
+      icon.w = 0.18;
+      icon.h = 0.18;
+      icon.fill = "#c9a227";
+
+      /* A badge: a block of colour cut to a shape. The pair costs two offscreen
+       * canvases a tile — see "what a mask costs" — and after dissolution it is
+       * copied onto every tile rather than baked once into the stamp, which is
+       * the regression this fixture exists to price. */
+      const cutter = { ...newShapeLayer("ellipse"), id: `cut-${id}` };
+      cutter.w = 0.22;
+      cutter.h = 0.22;
+      cutter.x = 0.8;
+      cutter.y = 0.12;
+      const badge = { ...newImageLayer("block:#3355ff"), id: `badge-${id}` };
+      badge.scale = 0.25;
+      badge.x = 0.8;
+      badge.y = 0.12;
+      if (withMask) badge.maskId = cutter.id;
+
+      // A group draws nothing itself; its two children are displaced by it.
+      const rule = { ...newShapeLayer("rect"), id: `rule-${id}` };
+      rule.w = 0.6;
+      rule.h = 0.01;
+      const dot = { ...newShapeLayer("ellipse"), id: `dot-${id}` };
+      dot.w = 0.03;
+      dot.h = 0.03;
+      const group = { ...newGroupLayer([rule, dot]), id: `grp-${id}` };
+      group.y = 0.55;
+
+      m.tiles[id] = { ...emptyTile(), layers: [frame, badge, cutter, icon, name, klass, group] };
+    }
+    return m;
+  }
+
+  const measure = async (m: Manifest, count: number) => {
+    const wall = view(m);
+    const canvas = wallCanvas(count);
+    try {
+      await buildGrid(canvas, wall, m, testDeps, true);
+
+      const paintStart = performance.now();
+      canvas.renderAll();
+      const paint = performance.now() - paintStart;
+
+      const fullStart = performance.now();
+      await buildGrid(canvas, wall, m, testDeps, true);
+      const full = performance.now() - fullStart;
+
+      const target = wall.ids[Math.floor(count / 2)];
+      const oneStart = performance.now();
+      await rebuildTile(canvas, target, wall, m, testDeps, true);
+      const one = performance.now() - oneStart;
+
+      /* Eight tiles — what a bulk edit across a selection costs once GridCanvas
+       * redraws a small set instead of falling back to the whole wall. Worth
+       * having next to `full`: the loop only pays off while it stays under it.
+       *
+       * Painted once at the end, which is the whole reason it pays off. The
+       * first version of this measurement let rebuildTile paint per tile and
+       * came out at 4126ms against a full build's 990ms — the "optimisation"
+       * was four times the cost of the thing it replaced. */
+      const eight = wall.ids.slice(0, 8);
+      const bulkStart = performance.now();
+      for (const id of eight) await rebuildTile(canvas, id, wall, m, testDeps, true, false);
+      canvas.renderAll();
+      const bulk = performance.now() - bulkStart;
+
+      return { paint, full, one, bulk, objects: canvas.getObjects().length };
+    } finally {
+      await canvas.dispose();
+    }
+  };
+
+  it("prices a dissolved wall against a stamped one at 301 tiles", async () => {
+    const count = 301;
+    const v7 = await measure(dressed(count), count);
+    /* Unmasked, and not by choice: at 301 tiles the masked version takes the
+     * browser down mid-run ("Browser connection was closed"). cutToShape builds
+     * two tile-sized canvases per masked layer per tile, so a dissolved wall
+     * asks for 602 of them — about 1.2GB — where a stamped wall baked the same
+     * mask once into its PNG. That crash is the finding, and it is why the
+     * numbers below are the *optimistic* ones. */
+    const v8 = await measure(dressedV8(count, false), count);
+
+    const line = (tag: string, r: Awaited<ReturnType<typeof measure>>) =>
+      `${tag}: ${r.objects} objects, full ${r.full.toFixed(0)}ms, one tile ${r.one.toFixed(0)}ms, ` +
+      `bulk of 8 ${r.bulk.toFixed(0)}ms, paint alone ${r.paint.toFixed(0)}ms`;
+    console.log(`${count} tiles\n  ${line("stamped (v7)", v7)}\n  ${line("dissolved (v8)", v8)}`);
+    console.log(
+      `  dissolved costs ${(v8.full / v7.full).toFixed(1)}x the build, ` +
+        `${(v8.paint / v7.paint).toFixed(1)}x the paint, ` +
+        `${(v8.objects / v7.objects).toFixed(1)}x the objects`,
+    );
+
+    /* What today's wall must keep doing. The v8 shape is measured, printed and
+     * deliberately *not* asserted: it describes a document nothing can save
+     * yet, so a ceiling on it would be a test failing for a future rather than
+     * for a regression. The decision it feeds is a human one — see the numbers
+     * above and the gate in the v8 plan. */
+    expect(v7.full).toBeLessThan(FREEZE);
+
+    /* Both directions of the small-set redraw, which is the part of this that
+     * ships today. Eight tiles rebuilt one at a time have to stay cheaper than
+     * rebuilding the wall, or GridCanvas should not be doing it — and that is
+     * not a given: the first version of this measurement came out at 4126ms
+     * against a full build's 990ms, because every add and remove asked Fabric
+     * for a repaint of the whole wall. Both canvases here are built with
+     * renderOnAddRemove off, as GridCanvas is. */
+    expect(v7.bulk).toBeLessThan(v7.full);
+    expect(v8.bulk).toBeLessThan(v8.full);
+  }, 240_000);
 });
 
 /* A sanity check on the size these numbers are about, so a future change to

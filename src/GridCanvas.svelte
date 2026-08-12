@@ -33,8 +33,8 @@
     readBack,
     rebuildTile,
     snapScale,
-    soleTileChange,
     standRect,
+    tilesChanged,
     wallPrint,
     type Tagged,
     type WallPrint,
@@ -65,6 +65,13 @@
   /** How close in screen pixels the pull reaches. Converted to scene units per
    *  drag, so it feels the same at any zoom. */
   const SNAP_PX = 8;
+
+  /** How many changed tiles are still worth redrawing one at a time. A single
+   *  tile costs about a third of a full wall at three hundred tiles — almost
+   *  all of it paint — so a handful of targeted redraws stays ahead, and past
+   *  that the full build is both cheaper and simpler. Raised from "exactly one"
+   *  when an edit could first reach several tiles at once. */
+  const REDRAW_MAX = 8;
 
   /* ---- The placing tool -------------------------------------------------
    *
@@ -114,6 +121,10 @@
     if (ghost) canvas?.remove(ghost);
     stand = ghost = undefined;
     twoAxes = false;
+    // Asked for outright: the canvas no longer repaints itself on a remove
+    // (see renderOnAddRemove where it is built), and without this the frame
+    // stays on screen as a ghost until something else happens to paint.
+    canvas?.requestRenderAll();
   }
 
   /** The layer as the Layout asks for it on this tile — this tile's picture or
@@ -361,8 +372,8 @@
    * a caption moved. Almost always one tile changed and two hundred and ninety
    * nine were redrawn identically.
    *
-   * Which tile that is gets answered by comparing what is drawn against what
-   * should be (wallPrint/soleTileChange), rather than by asking forty mutating
+   * Which tiles those are gets answered by comparing what is drawn against what
+   * should be (wallPrint/tilesChanged), rather than by asking forty mutating
    * functions to declare what they touched. A mutation nobody remembered to
    * annotate cannot go wrong, because the comparison never asked it. The rule
    * that makes the comparison sound, and the reasons the answer is a timid
@@ -393,14 +404,18 @@
           const view = $state.snapshot(wall());
           const m = $state.snapshot(app.manifest);
           const print = wallPrint(view, m);
-          const one = soleTileChange(drawn, print);
+          const few = tilesChanged(drawn, print);
           /* Forgotten before the build, not after it: a build that throws
              leaves the canvas in a state nothing here can describe, and the
              next pass has to start from a full one rather than trust a
              fingerprint for a wall that was never finished. */
           drawn = null;
-          if (one) await rebuildTile(canvas, one, view, m, deps, true);
-          else await buildGrid(canvas, view, m, deps, true);
+          if (few && few.length <= REDRAW_MAX) {
+            // Painted once at the end rather than once per tile — see the note
+            // on rebuildTile's `render`, and the numbers that forced it.
+            for (const id of few) await rebuildTile(canvas, id, view, m, deps, true, false);
+            canvas.renderAll();
+          } else await buildGrid(canvas, view, m, deps, true);
           drawn = print;
         } finally {
           rebuilding = false;
@@ -497,6 +512,16 @@
       // A model with a single `scale` per image cannot store a stretch, so
       // corner handles must never produce one.
       uniformScaling: true,
+      /* Every add and remove asks Fabric for a repaint of its own, and a
+       * repaint of this wall is nearly its whole cost — 431 of 450ms at 301
+       * tiles. buildGrid and rebuildTile both paint deliberately when they are
+       * done, so those requests are pure duplication; they only stay invisible
+       * because Fabric defers them to the next frame and a single rebuild ends
+       * before one arrives. Redraw several tiles in a row, though, and the
+       * frames land between the awaits: eight tiles measured 3971ms with this
+       * on against 469ms with it off. Off, and the paint stays where the code
+       * puts it. */
+      renderOnAddRemove: false,
     });
     /* Dev-only handle, same reason as the one in main.ts: anything asking what
      * the canvas is actually showing — control positions, the viewport
