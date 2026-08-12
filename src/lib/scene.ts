@@ -1221,55 +1221,6 @@ const silhouette = (l: Layer): Layer => {
   return bare;
 };
 
-/** One layer as a given tile shows it: its picture, its class and its colour,
- *  wherever the tile has an answer of its own.
- *
- *  Wording is not here — a caption is resolved as it is drawn, because that is
- *  the first point at which the tile's id is known and "{{id}}" can be filled
- *  in. Placement is not here either: framed() is a difference from the design,
- *  and the two callers disagree about whether they want it (see buildLayout).
- *
- *  Lifted out of buildGrid so the Layout editor can show a composition against
- *  a real portrait's content instead of against the template's placeholders.
- *  One expression rather than two, or the wall and the editor would eventually
- *  disagree about what a tile looks like — which is the whole reason the editor
- *  is trusted as a preview at all. */
-export function asTileShows(
-  raw: Layer,
-  swaps: Record<string, string>,
-  paints: Record<string, Paint>,
-): Layer {
-  /* Both flags, because the same layer wears a different one depending on which
-   * side of the stamp it is standing on. A tile holds copies, and syncLiveLayers
-   * marks those `live` while explicitly clearing `perTile` — "meaningless once
-   * it is on a tile". A Layout holds the sources, and those only ever carry
-   * `perTile`.
-   *
-   * Gating on `live` alone was therefore right for the wall and silently wrong
-   * for the Layout editor, which is the caller this function was extracted for:
-   * every branch fell through, and the sheet kept drawing the Layout's own
-   * placeholder class and picture over whichever portrait was underneath. The
-   * wording went on working, because captions never come through here — which
-   * is exactly why it looked finished. */
-  const mine = !!raw.live || !!raw.perTile;
-  /* This tile's own picture, where it has one. Resolved before the object is
-   * built rather than inside imageObject, so the swap map stays a wall concern.
-   * "" is a real answer — no picture on this tile — and the layer simply does
-   * not render, which is why callers check the resolved value rather than
-   * whether a key exists. */
-  if (raw.kind === "image" && mine) return { ...raw, asset: layerAsset(swaps, raw) };
-  /* And this tile's own class, where it names one. Same map, same bargain: the
-   * Layout places and colours the icon once, each portrait says which class it
-   * is. */
-  if (raw.kind === "shape" && raw.shape === "icon" && mine)
-    return { ...raw, icon: layerIcon(swaps, raw), fill: layerPaint(paints, raw) };
-  /* And this tile's own colour, where a shape has one. An icon takes it too —
-   * it is a shape wearing artwork, and a wall where each portrait's badge
-   * carries its own class colour is the reason to ask for this at all. */
-  if (raw.kind === "shape" && mine) return { ...raw, fill: layerPaint(paints, raw) };
-  return raw;
-}
-
 /** Fills `canvas` with the whole wall. Backgrounds are inert; layers are
  *  interactive when `interactive` is set (the editor) and not when it is not
  *  (export, previews, golden tests). */
@@ -1921,7 +1872,12 @@ async function layoutObjects(
      * be the wrong string. The layer under your hands tells the truth about
      * itself; its neighbours show you the wall. */
     const mine = over && !over.except.has(l.id) ? over : undefined;
-    const shown = mine ? asTileShows(placed, mine.swap, mine.paint) : placed;
+    /* The layer as it is. asTileShows used to stand here, filling a stamp's
+       placeholders in from the tile underneath — a picture, a class, a colour
+       the tile chose. It read `live` and `perTile` to know which layers were
+       the tile's to answer for, and the migration takes both off every layer,
+       so there is nothing left for it to substitute. */
+    const shown = placed;
     // Nothing to draw for a picture this tile turned off, same as on the wall.
     if (shown.kind === "image" && !shown.asset) continue;
     let obj = await layerObject(

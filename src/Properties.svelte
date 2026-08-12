@@ -32,7 +32,6 @@
     findLayer,
     layerLabel,
     maskChoices,
-    maskOffers,
     type Corners,
     type Layer,
     type Paint,
@@ -78,29 +77,18 @@
       : (openProject()?.gridLayers ?? []),
   );
 
-  /** The shapes this layer could be cut to. Empty in a stack that holds no
-   *  shape but this one — which is what hides the control rather than offering
-   *  a list with nothing in it.
+  /** The layers this one could be cut to. Empty in a stack that holds nothing
+   *  but this layer — which is what greys the control rather than offering a
+   *  list with nothing in it.
    *
    *  Read off the tile now. A mask used to be a Layout-only arrangement because
    *  the cutter and the layer had to travel together to the tiles; both live on
    *  the tile from the start, so the pair is an ordinary thing about a stack. */
-  const masks = $derived(maskChoices(siblings, layer.id));
-  const offers = $derived(maskOffers(siblings, layer.id));
+  const offers = $derived(maskChoices(siblings, layer.id));
 
   /** How many tiles the open wall holds — the span a grid-space layer's x and y
    *  are fractions of. A layer on a tile is measured against the tile. */
   const wallCount = () => visibleIds().length;
-
-  /** The name of a mask that is set but no longer a legal choice. Empty when
-   *  the mask is fine or absent — which is every case a v8 document can reach,
-   *  since the rule that made one illegal was about a per-tile cutter and a
-   *  stamp, and there are no stamps. */
-  const stale = $derived.by(() => {
-    if (!layer.maskId || masks.some((m) => m.id === layer.maskId)) return "";
-    const held = findLayer(siblings, layer.maskId);
-    return held ? layerLabel(held) : "";
-  });
 
   /** A Paint is a colour or a gradient. The first swatch edits the colour a
    *  flat paint is and the start colour of a gradient, so it is the one thing
@@ -559,7 +547,7 @@
        that stack now, so the control belongs wherever a layer is picked. -->
   <label
     class="field"
-    title={offers.length || stale
+    title={offers.length
       ? "Clips this layer to the outline of another on this tile"
       : "Add another layer to this tile first — there is nothing to cut with"}
   >
@@ -570,22 +558,13 @@
          looked missing. -->
     <select
       value={layer.maskId ?? ""}
-      disabled={!offers.length && !stale}
+      disabled={!offers.length}
       onchange={(e) => set("maskId", e.currentTarget.value)}
     >
       <option value="">none</option>
       {#each offers as shape (shape.id)}
         <option value={shape.id}>{layerLabel(shape)}</option>
       {/each}
-      <!-- A mask the list cannot offer still stays on the layer, and the row
-           used to go grey and read "none" while it was set — a stored value
-           with no way back to "none" and a lie on top. It says so instead.
-           Unreachable while every stack offers everything that could cut, and
-           kept because the rule that made it reachable lives in cutApplies,
-           not here. -->
-      {#if stale}
-        <option value={layer.maskId}>{stale} — no longer allowed</option>
-      {/if}
     </select>
   </label>
   {#if layer.maskId}

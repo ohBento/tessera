@@ -162,7 +162,10 @@ describe.skipIf(!existsSync(FILE))("the v8 migration over the document on this m
    * way the total happens to move. */
   it("accounts for every layer it removed", () => {
     const baked = new Map(
-      (raw.layouts ?? []).map((l) => [l.id, walk(l.layers).filter((x) => !x.perTile).length]),
+      (raw.layouts ?? []).map((l) => [
+        l.id,
+        walk(l.layers).filter((x) => !(x as V7Layer).perTile).length,
+      ]),
     );
     let before = 0;
     let now = 0;

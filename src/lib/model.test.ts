@@ -1121,29 +1121,6 @@ describe("masks", () => {
     expect(maskChoices([newGroupLayer([inner]), pic], pic.id).map((l) => l.id)).toEqual([inner.id]);
   });
 
-  it("offers a per-tile cutter only to a layer that is per-tile itself", () => {
-    /* A caption editable on the wall says something different on every tile, so
-     * what it cuts has to be worked out per tile too. That is possible for a
-     * layer that travels to the tile with it — a picture through each
-     * character's own name — and impossible for one baked into the stamp: the
-     * stamp is a single picture for the whole wall, and "which letters" has no
-     * shared answer there. */
-    const shape = newShapeLayer("rect");
-    const words = { ...newTextLayer(), perTile: true };
-    const stamped = newImageLayer("x.png");
-    const alsoLive = { ...newImageLayer("y.png"), perTile: true };
-    const layers = [shape, words, stamped, alsoLive];
-
-    // Baked into the stamp: only a cutter that is baked with it will do.
-    expect(maskChoices(layers, stamped.id).map((l) => l.id)).toEqual([shape.id]);
-    // On the tile: anything may cut it, the per-tile caption included.
-    expect(maskChoices(layers, alsoLive.id).map((l) => l.id)).toEqual([
-      shape.id,
-      words.id,
-      stamped.id,
-    ]);
-  });
-
   it("counts a shape as a stencil only while something visible cuts with it", () => {
     const shape = newShapeLayer("rect");
     const pic = newImageLayer("x.png");

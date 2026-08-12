@@ -68,7 +68,7 @@ import {
   type ShapeLayer,
   type TextLayer,
 } from "./lib/model";
-import { maskChoices, maskOffers } from "./lib/model";
+import { maskChoices } from "./lib/model";
 import { cellAt, textWidth, type Tagged } from "./lib/scene";
 import { TILE_H, TILE_W } from "./lib/bmp";
 import { dragObject } from "./test/gestures";

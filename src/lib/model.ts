@@ -82,13 +82,6 @@ type Common = {
    * on a layer
    * created by hand. */
   layoutId?: string;
-  /* Inside a Layout: keep this layer out of the rendered stamp and copy it
-   * onto the tiles as a live layer instead. Baked pixels are the same pixels
-   * on every tile, and the whole point here is that they should not be — a
-   * caption naming the character, a logo for their class. Meaningless on a
-   * layer already sitting on a tile, where a live layer is live by
-   * construction. */
-  perTile?: boolean;
   /* On a tile: this is such a copy, not the stamp. Both carry the same
    * layoutId and both can be images, so without this the cleanup pass that
    * removes withdrawn live layers could not tell them apart and would delete
@@ -617,44 +610,6 @@ export function dissolveFolder(p: Project, folderId: string) {
 /** Of `ids`, the ones no drawer has taken, in the order given. */
 export const looseTiles = (p: Project, ids: string[]) => ids.filter((id) => !folderOf(p, id));
 
-/** Copies layers within one stack, offset a little so the copy is visible.
- *
- *  Fresh ids all the way down, and mask references remapped inside the copied
- *  set — a duplicate pointing back at the original's stencil would move when
- *  the original was edited, which is exactly the surprise duplicating is meant
- *  to avoid. A mask naming something *outside* the set keeps pointing there,
- *  because that layer is still the one meant.
- *
- *  Takes the layers themselves rather than ids, because a selection can name
- *  something nested in a group and only the caller knows which list each one
- *  came out of — the copy has to go back into that same list, or duplicating a
- *  layer inside a group would quietly do nothing.
- *
- *  Names are left to the caller too: only it knows the stack the copies are
- *  about to join, and that is what decides the next free number. */
-export function duplicateLayers(picked: Layer[], nudge = 0.02): Layer[] {
-  const swap = new Map<string, string>();
-  const renumber = (from: Layer[]): Layer[] =>
-    from.map((l) => {
-      const copy = clone(l);
-      copy.id = newId();
-      swap.set(l.id, copy.id);
-      if (copy.kind === "group") copy.children = renumber(copy.children);
-      return copy;
-    });
-
-  const copies = renumber(picked);
-  for (const l of walkLayers(copies)) {
-    if (l.maskId && swap.has(l.maskId)) l.maskId = swap.get(l.maskId);
-  }
-  /* Only the layers actually picked move: a group's children carry absolute
-   * coordinates, and nudging them as well would shift them twice. */
-  for (const l of copies) {
-    l.x += nudge;
-    l.y += nudge;
-  }
-  return copies;
-}
 
 /** Tiles are global, keyed by the id the game gave them; projects only say
  *  which wall an id belongs to. That split is what lets a tile move between
@@ -827,58 +782,24 @@ export const stencilIds = (layers: Layer[]): Set<string> => {
  *  nothing of its own to cut with. Itself is out too, since a layer clipped to
  *  its own outline is either a no-op or an empty picture.
  *
- *  So is anything editable in the grid. Its content is different on every tile
- *  by design, so it cannot be the thing that decides one shape — and it is
- *  stripped out of the stamp entirely, which had the editor clipping with it
- *  while the picture written to the game did not.
- *
  *  Two layers masking each other is left possible — both become stencils,
  *  nothing draws, and one click puts it back. */
-/** Whether `cutter` actually cuts `l` — the single answer four places need.
+/** Whether `cutter` actually cuts `l` — the single answer the dropdown, the
+ *  renderer and the stencil rule all need, written once because a rule three
+ *  places state in their own words is a rule that will disagree with itself.
  *
- *  A cutter that is editable in the grid says something different on every
- *  tile, so what it cuts has to be resolved per tile as well. That is exactly
- *  what a per-tile layer is: both travel to the tile, and the cut is computed
- *  there against this tile's own words. A stamped layer cannot use one — the
- *  stamp is a single picture shared by every wall tile, and there is no shared
- *  answer to "which letters".
- *
- *  Written once and asked by the dropdown, the renderer, the stencil rule and
- *  the copy that travels to the tile, because a rule that four places state in
- *  their own words is a rule that will disagree with itself — and it did: the
- *  stencil rule was the one that had never heard of `perTile`. */
+ *  There used to be a second clause: a cutter marked "editable in the grid"
+ *  said something different on every tile, so it could only cut a layer that
+ *  travelled to the tiles too — a stamp was one picture shared by forty-four
+ *  portraits and had no shared answer to "which letters". Every layer is on a
+ *  tile now, so both sides of that test are always true. */
 export const cutApplies = (l: Layer, cutter: Layer | undefined): boolean =>
-  canCut(l, cutter) && (!cutter!.perTile || !!l.perTile);
-
-/** Whether one layer could cut another at all, leaving aside where each of them
- *  lives. A group draws nothing of its own, and nothing cuts itself. */
-const canCut = (l: Layer, cutter: Layer | undefined): boolean =>
   !!cutter && cutter.kind !== "group" && cutter.id !== l.id;
 
-/** What the mask dropdown offers — everything that could cut, including a
- *  per-tile cutter that today's rule would refuse.
- *
- *  The rule stands: a cutter that varies per tile can only cut something that
- *  travels to the tiles as well, because a stamp is one picture shared by
- *  forty-four portraits and cannot be cut forty-four ways. What changes is who
- *  has to know it. Leaving those cutters out of the list made the feature look
- *  broken — the icon was simply not there, with nothing said — so they are
- *  offered, and choosing one takes the layer along (see setLayerField). */
-export const maskOffers = (layers: Layer[], layerId: string): Layer[] => {
-  const self = findLayer(layers, layerId);
-  return self ? [...walkLayers(layers)].filter((l) => canCut(self, l)) : [];
-};
-
-/** The layers this one cuts — the ones that have to travel wherever it does.
- *
- *  A per-tile cutter may only cut a per-tile layer (see cutApplies), so the
- *  moment an icon starts naming a class per tile, everything it was already
- *  cutting has to travel too. Without this the switch quietly voids masks that
- *  were set before it: the id stays on the layer, the dropdown stops listing
- *  the cutter, and the shape simply draws whole with nothing said. */
-export const cutBy = (layers: Layer[], cutterId: string): Layer[] =>
-  [...walkLayers(layers)].filter((l) => l.maskId === cutterId);
-
+/** What the mask dropdown offers. One list, not two: it used to also show the
+ *  cutters the rule above would have refused, because leaving them out made
+ *  the feature look broken — the icon was simply not there, with nothing said.
+ *  Nothing is refused any more, so the two lists are the same list. */
 export const maskChoices = (layers: Layer[], layerId: string): Layer[] => {
   const self = findLayer(layers, layerId);
   return self ? [...walkLayers(layers)].filter((l) => cutApplies(self, l)) : [];
@@ -1216,11 +1137,17 @@ function toV7(m: Raw): Raw {
  *  before `live` existed have none, and a stamp is never text. */
 const wasLiveCopy = (l: Layer) => !!l.layoutId && (!!l.live || l.kind === "text");
 
+/** A v7 layer's flag for "keep this one out of the rendered stamp and copy it
+ *  onto the tiles instead" — a caption naming the character, a logo for their
+ *  class. Read here and nowhere else: it described which side of a stamp a
+ *  layer stood on, and there are no stamps. */
+type V7Layer = Layer & { perTile?: boolean };
+
 /** The baked half of a layout: everything that is not kept live per tile.
  *
  *  Groups are rebuilt without their live members rather than dropped, so the
  *  displacement a group applies to its remaining children still holds. */
-const bakedHalf = (layers: Layer[]): Layer[] =>
+const bakedHalf = (layers: V7Layer[]): Layer[] =>
   layers
     .filter((l) => !(l.kind !== "group" && l.perTile))
     .map((l) => (l.kind === "group" ? { ...l, children: bakedHalf(l.children) } : l));
@@ -1303,7 +1230,7 @@ function toV8(m: Raw): Raw {
       // Only ever meant something while there were layouts to point at.
       delete l.layoutId;
       delete l.live;
-      delete l.perTile;
+      delete (l as V7Layer).perTile;
     }
 
     tile.layers = out;

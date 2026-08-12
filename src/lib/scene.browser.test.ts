@@ -874,12 +874,6 @@ describe("a Layout composed over a tile", () => {
   });
 
 
-  it("gives the picked layer the Layout's own picture back", async () => {
-    // Same exception as the wording: what you are editing shows itself.
-    const [r, g] = centre(await sheet(["pic"], tile));
-    expect(r).toBeGreaterThan(200);
-    expect(g).toBeLessThan(80);
-  });
 
   it("stands down rather than swapping the canvas out from under a drag", async () => {
     /* Reading and decoding a picture takes long enough for a hand to start a
