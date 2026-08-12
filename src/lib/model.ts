@@ -371,14 +371,6 @@ export type Tile = {
    *  shows none. Optional so manifests written before per-tile pictures existed
    *  still load unchanged. */
   swap?: Record<string, string>;
-  /** How this tile frames its own picture, per shared image layer.
-   *
-   *  The completion of the same bargain rather than a break with it. Masking a
-   *  picture is how you show one part of it, and which part is right depends on
-   *  the picture: a face sits centre in one portrait and left in the next. The
-   *  Layout still owns where the frame is and how big — the mask defines that —
-   *  and what moves is the picture inside it, which is the tile's own. */
-  frame?: Record<string, Frame>;
   /** Fill per shared shape layer — the same bargain as a picture's, one kind
    *  over: the Layout owns the form and where it sits, the tile owns what
    *  colour it is. A whole `Paint`, so a tile can answer a gradient with a flat
@@ -687,7 +679,6 @@ export function stripTile(t: Tile) {
   t.layers = [];
   t.text = {};
   delete t.swap;
-  delete t.frame;
   delete t.paint;
 }
 
@@ -939,33 +930,6 @@ export const layerAsset = (swaps: Record<string, string>, layer: ImageLayer) =>
  *  every time; a bar drawn longer on one is a decision. Absent means "the same
  *  as `z`", which is what every placement written before this stored and what
  *  every other kind still means. */
-export type Frame = { x: number; y: number; z: number; a: number; zh?: number };
-
-export const NO_FRAME: Frame = { x: 0, y: 0, z: 1, a: 0 };
-
-/** The layer as this tile places it. Relative rather than absolute, so moving
- *  the layer in the Layout still moves every tile's copy with it and only the
- *  difference each tile chose stays its own.
- *
- *  The zoom is a factor rather than a width because a picture, an icon and a
- *  caption each store their size in a different field. It lands on whichever
- *  one that is — except on a caption, which takes none: the Layout owns the
- *  type size, and one caption larger than the other forty-three reads as a
- *  mistake rather than as a choice. The tool offers a caption no corner
- *  handles, which is the same rule seen from the other side. */
-export function framed<L extends Layer>(l: L, f: Frame | undefined): L {
-  if (!f) return l;
-  const size =
-    l.kind === "image"
-      ? { scale: l.scale * f.z }
-      : l.kind === "shape"
-        ? { w: l.w * f.z, h: l.h * (f.zh ?? f.z) }
-        : {};
-  // The generic is the promise that a framed layer is the kind it went in as;
-  // TypeScript cannot see that through a spread, hence the one cast.
-  return { ...l, x: l.x + f.x, y: l.y + f.y, rotation: l.rotation + f.a, ...size } as L;
-}
-
 /** Which class one tile shows for a live icon layer, or "" for none.
  *
  *  The same map as a picture's, one kind over. A wall of characters is the
@@ -1261,10 +1225,16 @@ const bakedHalf = (layers: Layer[]): Layer[] =>
     .filter((l) => !(l.kind !== "group" && l.perTile))
     .map((l) => (l.kind === "group" ? { ...l, children: bakedHalf(l.children) } : l));
 
+/** How a v7 tile framed its own copy of a shared picture: a difference from
+ *  where the design put it, not a placement. Declared here with the rest of the
+ *  old shape — folding one into the layer is the last thing anything does with
+ *  it, and a layer holds its own placement now. */
+type V7Frame = { x: number; y: number; z: number; a: number; zh?: number };
+
 type V7Tile = Tile & {
   swap?: Record<string, string>;
   paint?: Record<string, Paint>;
-  frame?: Record<string, Frame>;
+  frame?: Record<string, V7Frame>;
 };
 
 /** The reusable tile-sized composition v7 stamped onto tiles. Declared here

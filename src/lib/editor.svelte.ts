@@ -59,7 +59,6 @@ import {
   swapPlaced,
   takeOutOfFolder,
   unplaceTile,
-  type Frame,
   type ImageLayer,
   uncrop,
   type Inset,
@@ -518,37 +517,8 @@ export const tileCaptions = (tileId: string): TextLayer[] =>
 export const tileImages = (tileId: string): ImageLayer[] =>
   drawnOn(tileId).filter((l): l is ImageLayer => l.kind === "image");
 
-/** This tile's framing of one shared picture, or undefined when it shows the
- *  picture where the Layout put it. */
-export const tileFrame = (tileId: string, layerId: string): Frame | undefined =>
-  app.manifest.tiles[tileId]?.frame?.[layerId];
-
-/** Points one tile's picture at a part of itself. Relative to the Layout's own
- *  placement, so moving the layer still moves every tile's picture with it. */
-export async function setTileFrame(tileId: string, layerId: string, f: Frame) {
-  const tile = app.manifest.tiles[tileId];
-  if (!tile) return;
-  /* Two statements, not `(tile.frame ??= {})[layerId] = f`. On a reactive proxy
-     that expression evaluates to the bare right-hand side rather than to the
-     proxied object, so the write lands outside the proxy and only reaches the
-     screen because `mutate` bumps the version afterwards. The compiler says so;
-     it is worth not relying on. */
-  await mutate("Place layer on tile", () => {
-    tile.frame ??= {};
-    tile.frame[layerId] = f;
-  });
-}
-
-/** Back to the picture as the Layout placed it. */
-export async function clearTileFrame(tileId: string, layerId: string) {
-  const tile = app.manifest.tiles[tileId];
-  if (!tile?.frame || tile.frame[layerId] === undefined) return;
-  await mutate("Reset placement", () => delete tile.frame![layerId]);
-}
-
-/** The live class icons on one tile. Same bargain again: the Layout owns where
- *  it sits and what colour it is, the tile owns which class — which is the
- *  whole point of a wall of characters. */
+/** The class icons on one tile — which is the whole point of a wall of
+ *  characters. */
 export const tileIcons = (tileId: string): ShapeLayer[] =>
   drawnOn(tileId).filter(
     (l): l is ShapeLayer => l.kind === "shape" && l.shape === "icon",

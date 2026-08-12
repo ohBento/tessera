@@ -14,7 +14,6 @@ import {
   newProject,
   newShapeLayer,
   newTextLayer,
-  type Frame,
   type Layer,
   type Paint,
   type ShapeLayer,

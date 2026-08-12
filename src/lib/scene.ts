@@ -22,7 +22,6 @@ import {
   findLayer,
   groupShift,
   isGradient,
-  framed,
   layerAsset,
   layerPaint,
   layerIcon,
@@ -1422,10 +1421,6 @@ async function tileLayerObjects(
     const box = { w: TILE_W, h: TILE_H, x: at.x, y: at.y };
     const texts = m.tiles[id]?.text ?? {};
     const swaps = m.tiles[id]?.swap ?? {};
-    // Which part of its picture this tile shows — see framed().
-    const frames = m.tiles[id]?.frame ?? {};
-    // And what colour it paints a shape — see layerPaint().
-    const paints = m.tiles[id]?.paint ?? {};
     /* A tile can carry a cutter now: a per-tile layer that is masked brings the
      * shape along, because the Layout it came from is not there to look it up
      * in. Same rule as in a Layout — a shape that is cutting something has

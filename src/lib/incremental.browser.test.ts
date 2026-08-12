@@ -135,10 +135,11 @@ describe("deciding whether one tile is enough", () => {
   });
 
   it("notices a change that adds no layer at all", () => {
-    /* Wording, a swapped picture, a frame and a paint colour live beside the
-       layers rather than in them, and each one changes what the tile draws.
-       A comparison that only looked at `layers` would call all four "no
-       change" and leave the edit off the wall. */
+    /* Wording, a swapped picture and a paint colour live beside the layers
+       rather than in them, and each one changes what the tile draws. A
+       comparison that only looked at `layers` would call all three "no change"
+       and leave the edit off the wall. The frame record was a fourth until the
+       placing tool started writing the layer instead. */
     const m = dressed(9);
     const [target] = order(m);
     const caption = m.tiles[target].layers[1];
@@ -146,7 +147,6 @@ describe("deciding whether one tile is enough", () => {
     for (const edit of [
       () => (m.tiles[target].text = { [caption.id]: "renamed" }),
       () => (m.tiles[target].swap = { [caption.id]: "block:#123456" }),
-      () => (m.tiles[target].frame = { [caption.id]: { x: 0.1, y: 0, z: 1, a: 0 } }),
       () => (m.tiles[target].paint = { [caption.id]: "#abcdef" }),
       // A baked mosaic: the tile's own background stops being the game's file.
       () =>
