@@ -64,6 +64,7 @@ const {
   vaultedIds,
   restoreTiles,
   classify,
+  hashTiles,
   svgWithSize,
   importAsset,
 } = await import("./project");
@@ -440,5 +441,52 @@ describe("loadManifest tells a damaged document from a first run", () => {
     rename.mockRejectedValueOnce(new Error("locked"));
 
     await expect(loadManifest("/docs/FaceTexture", ["a"])).rejects.toThrow("locked");
+  });
+});
+
+describe("hashTiles", () => {
+  /** Answers each read after a delay that runs opposite to the id order, so a
+   *  map filled as the reads finish comes out backwards and one filled in id
+   *  order does not. An instant mock cannot tell the two apart. */
+  const outOfOrder = (ids: string[]) => {
+    readFile.mockImplementation(async (path: string) => {
+      const id = path.split("/").pop()!.replace(".bmp", "");
+      const place = ids.indexOf(id);
+      await new Promise((r) => setTimeout(r, (ids.length - place) * 3));
+      return new Uint8Array([place]);
+    });
+  };
+
+  it("keys the map in folder order, whatever order the disk answers in", async () => {
+    /* classify walks this map with Object.entries, and what it produces
+       becomes the "new characters" and "changed" lists the user works down one
+       at a time. Filled as the reads land, those lists would come out in a
+       different order on every open of the same folder. */
+    const ids = ["t00", "t01", "t02", "t03"];
+    outOfOrder(ids);
+    const out = await hashTiles("/docs/Black Desert/FaceTexture", ids);
+    expect(Object.keys(out)).toEqual(ids);
+  });
+
+  it("reads them all at once rather than one after the next", async () => {
+    /* The open is what this is for: a read is a two-megabyte trip across the
+       IPC boundary, and in turn they cost forty-four of those in a row. The
+       delays above add up to 30ms in sequence and 12ms overlapped. */
+    const ids = ["t00", "t01", "t02", "t03"];
+    outOfOrder(ids);
+    const start = Date.now();
+    await hashTiles("/dir", ids);
+    expect(Date.now() - start).toBeLessThan(24);
+  });
+
+  it("leaves out a tile it could not read rather than failing the open", async () => {
+    // The game may be mid-write. Saying nothing beats reporting a character as
+    // replaced because of a race.
+    const ids = ["t00", "t01"];
+    readFile.mockImplementation(async (path: string) =>
+      path.includes("t00") ? new Uint8Array([1]) : Promise.reject(new Error("locked")),
+    );
+    const out = await hashTiles("/dir", ids);
+    expect(Object.keys(out)).toEqual(["t00"]);
   });
 });

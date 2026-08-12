@@ -132,10 +132,15 @@ export async function loadManifest(
  * Kept beside applied.json rather than in the manifest, for the same reason:
  * undo must never rewrite what is true about the disk.
  *
- * ponytail: every file is hashed on open — 44 portraits is about 90 MB and
- * milliseconds. readDir in Tauri 2 carries no size or mtime, so skipping
- * unchanged files would mean a new stat path, its permission and its mock. Add
- * that when a real folder proves slow. --- */
+ * Every file is hashed on open. The hashing itself is cheap and measured: 70ms
+ * for forty-four tile-sized buffers, about 90 MB. The reading is not — see
+ * hashTiles, which now starts the reads together for the same reason buildGrid
+ * does.
+ *
+ * ponytail: if a folder still opens slowly after that, the next lever is not
+ * hashing the files that cannot have changed. readDir in Tauri 2 carries no
+ * size or mtime, so that means a new stat path, its permission and its mock —
+ * worth it only once a real folder proves the reads are still the cost. --- */
 
 export type Print = { original: string; written?: string };
 export type Fingerprints = Record<string, Print>;
@@ -213,17 +218,39 @@ export function classify(
   return { fresh, changed };
 }
 
-/** Hashes every tile in the folder, keyed by id. */
+/** Hashes every tile in the folder, keyed by id.
+ *
+ *  Started together rather than one after the next, for the reason buildGrid
+ *  gives about the same files: a read is a two-megabyte trip across the IPC
+ *  boundary, and awaiting them in turn makes the open cost forty-four of those
+ *  in a row. The comment in openFolder says this step "takes seconds" — the
+ *  hashing is not what it is spending them on. Measured over forty-four
+ *  tile-sized buffers: SHA-256 costs 70ms in total, and hashing them all at
+ *  once rather than in turn saves 6ms of that. What is left is the reading.
+ *
+ *  Filled in id order once they are all in, and the second half of that
+ *  sentence is not decoration either: `classify` walks this map with
+ *  Object.entries, and what it produces becomes the "new characters" and
+ *  "changed" lists the user works down one at a time. Written as each read
+ *  finished, those lists would come out in whatever order the disk answered
+ *  in — a different order on every open, for the same folder. */
 export async function hashTiles(dir: string, ids: string[]): Promise<Record<string, string>> {
+  const hashed = await Promise.all(
+    ids.map(async (id) => {
+      try {
+        return await hashBytes(await readFile(await tilePath(dir, id)));
+      } catch {
+        // Unreadable right now — the game may be mid-write. Saying nothing is
+        // better than reporting a character as replaced because of a race.
+        return undefined;
+      }
+    }),
+  );
   const out: Record<string, string> = {};
-  for (const id of ids) {
-    try {
-      out[id] = await hashBytes(await readFile(await tilePath(dir, id)));
-    } catch {
-      // Unreadable right now — the game may be mid-write. Saying nothing is
-      // better than reporting a character as replaced because of a race.
-    }
-  }
+  ids.forEach((id, i) => {
+    const hash = hashed[i];
+    if (hash !== undefined) out[id] = hash;
+  });
   return out;
 }
 
