@@ -35,13 +35,14 @@
     readBack,
     rebuildTile,
     snapScale,
+    snapWidth,
     standRect,
     tilesChanged,
     wallPrint,
     type Tagged,
     type WallPrint,
   } from "./lib/scene";
-  import { framed, layerAsset, layerText, type Layer } from "./lib/model";
+  import { findLayer, framed, layerAsset, layerText, type Layer } from "./lib/model";
   import { isLiveCopy, layerShows, offLayouts } from "./lib/stamps";
 
   /* On while the placing tool is chosen in App's toolbar. The wall has no other
@@ -857,21 +858,51 @@
         syncGhost();
       });
 
+    /** What a dragged object is pulled towards.
+     *
+     *  A wall picture answers to the grid it spans. A tile layer answers to its
+     *  own cell and to the other layers on that tile — the same pair the Layout
+     *  editor offers against the sheet and its siblings, which is what makes a
+     *  caption line up with the badge above it without either being measured.
+     *
+     *  Only its own tile's siblings: the wall is a grid of separate portraits
+     *  with gaps between them in the game, so pulling a caption onto something
+     *  three cells over would align it with a thing the player never sees
+     *  beside it. */
+    const snapTargets = (target: Tagged) => {
+      if (target.space === "grid") {
+        const grid = gridSize(visibleIds().length);
+        return [{ left: 0, top: 0, width: grid.w, height: grid.h }];
+      }
+      const at = cellAt(visibleIds().indexOf(target.tileId));
+      const cell = { left: at.x, top: at.y, width: TILE_W, height: TILE_H };
+      const siblings = canvas!
+        .getObjects()
+        .filter(
+          (o) =>
+            o !== target &&
+            (o as Tagged).tileId === target.tileId &&
+            (o as Tagged).space === "tile" &&
+            !(o as { keep?: boolean }).keep,
+        )
+        .map((o) => o.getBoundingRect());
+      return [cell, ...siblings];
+    };
+
     canvas.on("object:moving", (opt) => {
       guides = [];
       const target = opt.target as Tagged | undefined;
-      if (!target || target.space !== "grid" || (opt.e as MouseEvent | undefined)?.altKey) return;
+      if (!target?.layerId || (opt.e as MouseEvent | undefined)?.altKey) return;
 
       /* Fabric has written the new left/top but not refreshed the cached corner
        * coordinates getBoundingRect reads — without this the box is one
        * drag-step stale and the correction lands short. */
       target.setCoords();
-      const grid = gridSize(visibleIds().length);
       // Threshold in screen pixels, converted here, so the pull feels the same
       // however far the view is zoomed out — and the wall is usually far out.
       const snap = snapBox(
         target.getBoundingRect(),
-        [{ left: 0, top: 0, width: grid.w, height: grid.h }],
+        snapTargets(target),
         SNAP_PX / canvas!.getZoom(),
       );
       if (!snap.dx && !snap.dy) return;
@@ -889,16 +920,31 @@
       guides = [];
       const target = opt.target as Tagged | undefined;
       const corner = opt.transform?.corner;
-      if (!target || !corner || target.space !== "grid") return;
+      if (!target?.layerId || !corner) return;
       if ((opt.e as MouseEvent | undefined)?.altKey) return;
-      const grid = gridSize(visibleIds().length);
+      /* Uniform for a wall picture, which carries one scale; a tile layer
+       * follows its own kind's rule — the same `freeScale` that decided which
+       * handles it was given in the first place. */
+      const layer = findLayer(app.manifest.tiles[target.tileId]?.layers ?? [], target.layerId);
       guides = snapScale(
         target,
         corner,
-        [{ left: 0, top: 0, width: grid.w, height: grid.h }],
+        snapTargets(target),
         SNAP_PX / canvas!.getZoom(),
-        true,
+        target.space === "grid" || !layer || !freeScale(layer),
       );
+    });
+
+    /* A caption's side handles resize its box instead of scaling it, which
+     * Fabric reports as its own event — so without this the one gesture that
+     * decides where a line wraps was the one gesture with no pull at all. */
+    canvas.on("object:resizing", (opt) => {
+      guides = [];
+      const target = opt.target as Tagged | undefined;
+      const corner = opt.transform?.corner;
+      if (!target?.layerId || !corner) return;
+      if ((opt.e as MouseEvent | undefined)?.altKey) return;
+      guides = snapWidth(target, corner, snapTargets(target), SNAP_PX / canvas!.getZoom());
     });
 
     const dropGuides = () => {
@@ -916,6 +962,10 @@
       }
       const obj = opt.target as Tagged | undefined;
       if (!obj?.layerId) return;
+      /* A baked layer sits at its cell's origin at scale 1 whatever the model
+       * says, so reading its transform back would write 0,0 over a real
+       * placement. The stand-in is how these get moved; nothing else may. */
+      if (obj.flattened) return;
       const ids = visibleIds();
       const patch = readBack(obj, ids.length, ids.indexOf(obj.tileId));
       /* With several tiles picked, one drag places the layer on all of them —

@@ -82,6 +82,10 @@ export type Tagged = fabric.Object & {
   /** Whether this object refuses to be grabbed, carried along so a caller that
    *  hands out grabbability by some other rule can still honour the lock. */
   locked: boolean;
+  /** A whole-tile bake of the layer rather than the layer itself — a mask or a
+   *  class icon. Its transform describes the bake, not the placement, so
+   *  readBack must never be written back from one. */
+  flattened?: boolean;
 };
 
 /** Fabric's ImageSource does not include ImageBitmap even though a 2d context
@@ -1594,7 +1598,14 @@ async function tileLayerObjects(
       const locked = !!l.locked || !!l.layoutId;
       if (interactive) makeInteractive(obj, locked ? { ...l, locked: true } : l);
       else obj.selectable = obj.evented = false;
-      Object.assign(obj, { layerId: l.id, tileId: id, space: "tile", locked });
+      /* `flattened` says this object is a whole-tile picture of a layer rather
+       * than the layer itself — a mask or a class icon, baked because the cell
+       * clip has the one clipPath slot. It sits at the cell's origin at scale 1
+       * whatever the layer says, so `readBack` measures the bake and not the
+       * placement: dragging one and writing that back puts the layer at 0,0 and
+       * loses where it actually was. The wall's stand-in exists for these, and
+       * the flag is how it knows. */
+      Object.assign(obj, { layerId: l.id, tileId: id, space: "tile", locked, flattened: flat });
       out.push(obj);
     }
   }
