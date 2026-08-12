@@ -1514,7 +1514,8 @@ describe("typing a wall's names", () => {
     const input = field(id)!;
     input.value = text;
     input.dispatchEvent(new Event("input", { bubbles: true }));
-    await until(() => tileText(id, tileCaptions(id)[0].id) === text);
+    // The layer's own words now, not an override sitting on top of them.
+    await until(() => (tileCaptions(id)[0] as TextLayer).text === text);
   }
 
   const enter = (id: string, shift = false) =>

@@ -30,10 +30,7 @@
   import {
     app,
     assignTileLayout,
-    clearTileAsset,
     clearTileFrame,
-    clearTilePaint,
-    clearTileText,
     dropTileLayer,
     fileTile,
     folders,
@@ -46,10 +43,7 @@
     toggleLayerHidden,
     toggleLayerLocked,
     toggleTile,
-    setTileAsset,
-    setTilePaint,
-    setTileText,
-    tileAsset,
+    setTileLayerField,
     tileCaptions,
     tileFrame,
     tileHeadline,
@@ -270,7 +264,7 @@
            control everywhere else in this app, and a row that shows a class
            without letting you change it is a row you have to expand anyway. -->
       {#if badge}
-        {@const showing = tileAsset(id, badge.id) ?? badge.icon}
+        {@const showing = badge.icon}
         <button
           class="rowicon"
           title={showing ? `${showing} — pick another class` : "Pick a class"}
@@ -352,27 +346,21 @@
       {#each tileCaptions(id) as caption (caption.id)}
         <label class="field indent">
           <span>{layerLabel(caption)}</span>
-          <!-- The default shows as a placeholder, not as a value:
-               typing over a real value and clearing a field look
-               identical, and only one of them should mean "this
-               tile says nothing". -->
+          <!-- The layer's own words, edited in place. There used to be a
+               default underneath and an override on top of it, with a button
+               to drop back to the default; the layer belongs to this tile
+               now, so there is one value and nothing to fall back to. -->
           <input
-            value={tileText(id, caption.id) ?? ""}
-            placeholder={caption.text}
-            oninput={(e) => void setTileText(id, caption.id, e.currentTarget.value)}
+            value={caption.text}
+            oninput={(e) =>
+              void setTileLayerField([id], caption.id, "text", e.currentTarget.value)}
             onkeydown={(e) => e.key === "Enter" && void stepName(e, id, inGroup)}
           />
-          <button
-            title="Use the layer's default text again"
-            disabled={tileText(id, caption.id) === undefined}
-            onclick={() => void clearTileText(id, caption.id)}>↺</button
-          >
           {@render placeRow(id, caption)}
         </label>
       {/each}
 
       {#each tileImages(id) as pic (pic.id)}
-        {@const chosen = tileAsset(id, pic.id)}
         <p class="sub">{layerLabel(pic)}</p>
         <!-- A gallery rather than a file dialog per tile: class
              logos repeat across a wall, so from the second tile
@@ -383,11 +371,9 @@
           {#each tileImageChoices(id, pic.id) as asset (asset)}
             <button
               class="swatch"
-              class:on={(chosen ?? pic.asset) === asset}
-              title={asset === pic.asset
-                ? "The layer's own picture"
-                : "Use this picture"}
-              onclick={() => void setTileAsset(id, pic.id, asset)}
+              class:on={pic.asset === asset}
+              title="Use this picture"
+              onclick={() => void setTileLayerField([id], pic.id, "asset", asset)}
             >
               {#await assetUrl(asset) then url}
                 <img src={url} alt="" />
@@ -405,9 +391,9 @@
                which is a choice here and not the absence of one. -->
           <button
             class="swatch none"
-            class:on={chosen === ""}
+            class:on={pic.asset === ""}
             title="Show no picture on this tile"
-            onclick={() => void setTileAsset(id, pic.id, "")}
+            onclick={() => void setTileLayerField([id], pic.id, "asset", "")}
           >
             <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
               <circle
@@ -428,12 +414,6 @@
               />
             </svg>
           </button>
-          <button
-            class="swatch"
-            title="Use the layer's own picture again"
-            disabled={chosen === undefined}
-            onclick={() => void clearTileAsset(id, pic.id)}>↺</button
-          >
           <!-- Placing it, and the way back from a placing that went wrong. No
                numbers beside them: the frame on the wall is where placing is
                done, and a row of fields here would ask why moving has them and
@@ -448,22 +428,17 @@
            the artwork grid rather than a gallery of what happens to be in
            play. -->
       {#each tileIcons(id) as badge (badge.id)}
-        {@const chosen = tileAsset(id, badge.id)}
-        {@const showing = chosen ?? badge.icon}
+        {@const showing = badge.icon}
         <!-- "Class", not the layer's name. An icon layer is auto-named after
              the class it was made with — Witch01 — so the layer's name over a
              tile showing Ranger asserted a class the tile does not have, forty
-             times down the list. The name is still reachable in the Layout;
-             here the question is which class this portrait is. -->
+             times down the list. Here the question is which class this
+             portrait is. -->
         <p class="sub">Class</p>
         <div class="gallery indent">
           <button
             class="swatch art"
-            title={chosen
-              ? `${chosen} — pick another class`
-              : showing
-                ? `${showing}, from the layer — pick a class for this tile`
-                : "Pick a class"}
+            title={showing ? `${showing} — pick another class` : "Pick a class"}
             onclick={() => {
               openIcons({ tile: id, layer: badge.id });
             }}
@@ -481,21 +456,15 @@
           </button>
           <button
             class="swatch none"
-            class:on={chosen === ""}
+            class:on={showing === ""}
             title="Show no icon on this tile"
-            onclick={() => void setTileAsset(id, badge.id, "")}
+            onclick={() => void setTileLayerField([id], badge.id, "icon", "")}
           >
             <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
               <circle cx="9" cy="9" r="7" fill="none" stroke="currentColor" stroke-width="1.6" />
               <line x1="4" y1="14" x2="14" y2="4" stroke="currentColor" stroke-width="1.6" />
             </svg>
           </button>
-          <button
-            class="swatch"
-            title="Use the layer's own class again"
-            disabled={chosen === undefined}
-            onclick={() => void clearTileAsset(id, badge.id)}>↺</button
-          >
           {@render placeRow(id, badge)}
         </div>
       {/each}
@@ -506,17 +475,16 @@
            the colour, and the row that carries it carries the way into the
            placing tool too. -->
       {#each tileShapes(id) as shape (shape.id)}
-        {@const chosen = tilePaint(id, shape.id)}
         <p class="sub">{layerLabel(shape)}</p>
         <div class="gallery indent">
           {#each tilePaintChoices(id, shape.id) as colour (colour)}
             <button
               class="swatch flat"
-              class:on={!isGradient(chosen ?? shape.fill) && (chosen ?? shape.fill) === colour}
+              class:on={!isGradient(shape.fill) && shape.fill === colour}
               style="background: {colour}"
-              title={colour === shape.fill ? "The layer's own colour" : `Paint it ${colour}`}
+              title={`Paint it ${colour}`}
               aria-label={colour}
-              onclick={() => void setTilePaint(id, shape.id, colour)}
+              onclick={() => void setTileLayerField([id], shape.id, "fill", colour)}
             ></button>
           {/each}
           <!-- The browser's picker, as the "+" that feeds the row — the same
@@ -525,16 +493,11 @@
             +
             <input
               type="color"
-              value={isGradient(chosen ?? shape.fill) ? "#ffffff" : (chosen ?? shape.fill)}
-              oninput={(e) => void setTilePaint(id, shape.id, e.currentTarget.value)}
+              value={isGradient(shape.fill) ? "#ffffff" : shape.fill}
+              oninput={(e) =>
+                void setTileLayerField([id], shape.id, "fill", e.currentTarget.value)}
             />
           </label>
-          <button
-            class="swatch"
-            title="Use the layer's own colour again"
-            disabled={chosen === undefined}
-            onclick={() => void clearTilePaint(id, shape.id)}>↺</button
-          >
           {@render placeRow(id, shape)}
         </div>
       {/each}
