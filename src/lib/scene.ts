@@ -1486,22 +1486,48 @@ async function tileLayerObjects(
        * like any other. */
       const flat = !!cut || (l.kind === "shape" && l.shape === "icon");
       const local = flat ? { ...box, x: 0, y: 0 } : box;
-      const drawn = await layerObject(l, deps, local, id, texts);
-      if (!drawn) continue;
-      let obj = cut ? await cutToShape(l, drawn, cut, deps, id, texts, swaps) : drawn;
-      if (!obj) continue;
-      if (flat && !cut) {
-        /* Keyed on the whole resolved layer: everything that changes the
-         * picture is in it, so two tiles share a canvas only when they would
-         * have drawn the same pixels. Over-keying costs a miss, never a wrong
-         * tile. */
-        const key = JSON.stringify(l);
-        let baked = flattened.get(key);
-        if (!baked) {
-          baked = await toTileCanvas(obj);
-          flattened.set(key, baked);
+      /* Keyed on the whole resolved layer — and, for a cut one, on the cutter
+       * and the tile's choice of picture for it too: everything that changes
+       * the pixels is in the key, so two tiles share a canvas only when they
+       * would have drawn the same ones. Over-keying costs a miss, never a wrong
+       * tile.
+       *
+       * Captions are left out of the cut cache rather than keyed carefully.
+       * layerText resolves "{{id}}" against the tile, so two tiles almost never
+       * agree on a caption's pixels — the entry would be written once per tile
+       * and read never, which is the cost of a cache with none of the benefit.
+       *
+       * The cut half of this was the note cutToShape left open: cache by cutter
+       * and picture, but measure a real masked wall first. Measured. Two
+       * tile-sized canvases per masked layer per tile is 602 of them on a wall
+       * of 301, about 1.2GB, and the browser goes down mid-render rather than
+       * merely slowing — the entire wall shares one bake now. */
+      const cacheable = flat && l.kind !== "text" && (!cut || cut.kind !== "text");
+      const key = cacheable
+        ? JSON.stringify([l, cut ?? null, cut ? (swaps[cut.id] ?? null) : null])
+        : "";
+      const hit = key ? flattened.get(key) : undefined;
+      let obj: fabric.Object;
+      if (hit) {
+        obj = new fabric.FabricImage(hit, { originX: "left", originY: "top" });
+      } else {
+        const drawn = await layerObject(l, deps, local, id, texts);
+        if (!drawn) continue;
+        const made = cut ? await cutToShape(l, drawn, cut, deps, id, texts, swaps) : drawn;
+        if (!made) continue;
+        if (flat) {
+          /* A cut layer arrives as a picture already — cutToShape composited it
+           * onto a canvas of its own — so it is taken as it is rather than
+           * rasterised a second time. */
+          const canvas =
+            cut && made instanceof fabric.FabricImage
+              ? (made.getElement() as HTMLCanvasElement)
+              : await toTileCanvas(made);
+          if (key) flattened.set(key, canvas);
+          obj = new fabric.FabricImage(canvas, { originX: "left", originY: "top" });
+        } else {
+          obj = made;
         }
-        obj = new fabric.FabricImage(baked, { originX: "left", originY: "top" });
       }
       if (flat) {
         obj.left = at.x;
@@ -1528,16 +1554,37 @@ async function tileLayerObjects(
       const top = held ? Math.max(cell.top, held.top) : cell.top;
       const right = held ? Math.min(cell.right, held.left + held.width) : cell.right;
       const bottom = held ? Math.min(cell.bottom, held.top + held.height) : cell.bottom;
-      obj.clipPath = new fabric.Rect({
-        left,
-        top,
-        width: Math.max(0, right - left),
-        height: Math.max(0, bottom - top),
-        originX: "left",
-        originY: "top",
-        absolutePositioned: true,
-      });
-      obj.objectCaching = false;
+      /* A clip only has to exist where something would otherwise escape. A
+       * layer that already sits inside its cell is clipped by a rectangle it
+       * never touches — and pays for it twice, because the clip is what forces
+       * objectCaching off, so every repaint of the wall rasterises the layer
+       * from scratch.
+       *
+       * That is most of what a wall costs. At 301 tiles the paint was 423 of
+       * 450ms with two layers a tile, and it grew faster than the object count
+       * once tiles carried more: 3.0x the objects, 4.7x the paint. Letting the
+       * layers that stay home keep Fabric's cache is what closes that gap.
+       *
+       * Shadows are excluded rather than measured: getBoundingRect does not
+       * account for one, so a shadow is exactly the thing that reaches past a
+       * box this check believes is safe. */
+      const inside = (() => {
+        if (l.shadow) return false;
+        const b = obj.getBoundingRect();
+        return b.left >= left && b.top >= top && b.left + b.width <= right && b.top + b.height <= bottom;
+      })();
+      if (!inside) {
+        obj.clipPath = new fabric.Rect({
+          left,
+          top,
+          width: Math.max(0, right - left),
+          height: Math.max(0, bottom - top),
+          originX: "left",
+          originY: "top",
+          absolutePositioned: true,
+        });
+        obj.objectCaching = false;
+      }
       /* Anything a Layout put here is positioned in the Layout, full stop. The
        * wall would be the wrong place to judge it from — the game's grid has
        * gaps, so a caption nudged towards an edge here can end up in a gap or

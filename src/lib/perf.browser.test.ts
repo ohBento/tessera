@@ -49,6 +49,69 @@ function dressed(count: number): Manifest {
   return m;
 }
 
+/** The same wall once a stamp has been dissolved into the tiles it dressed.
+ *
+ *  Today a design reaches a tile as one baked PNG, so `dressed` above is two
+ *  objects a tile. Dissolving puts every layer of that design on every tile
+ *  instead — a picture, two captions, a class icon, a masked badge and a group
+ *  — which is the shape measured here, and the shape the v8 plan produces.
+ *
+ *  `withMask` exists because the masked variant takes the browser down at 301
+ *  tiles: cutToShape builds two tile-sized canvases per masked layer per tile,
+ *  so a dissolved wall asks for 602 of them where a stamped wall baked the same
+ *  mask once into its PNG. */
+function dressedV8(count: number, withMask = true): Manifest {
+  const m = emptyManifest();
+  const p = newProject("Bench v8");
+  p.order = Array.from({ length: count }, (_, i) => `4000000000${String(i).padStart(6, "0")}`);
+  m.projects = [p];
+  for (const id of p.order) {
+    const frame = newImageLayer(`stamp-${id.slice(-1)}`);
+    frame.scale = 0.9;
+
+    const name = newTextLayer();
+    name.text = id.slice(-4);
+    name.y = 0.85;
+
+    const klass = newTextLayer();
+    klass.text = "Ranger";
+    klass.y = 0.92;
+    klass.size = 0.04;
+
+    const icon = newShapeLayer("icon", "Ranger");
+    icon.x = 0.2;
+    icon.y = 0.12;
+    icon.w = 0.18;
+    icon.h = 0.18;
+    icon.fill = "#c9a227";
+
+    // A badge: a block of colour cut to a shape.
+    const cutter = { ...newShapeLayer("ellipse"), id: `cut-${id}` };
+    cutter.w = 0.22;
+    cutter.h = 0.22;
+    cutter.x = 0.8;
+    cutter.y = 0.12;
+    const badge = { ...newImageLayer("block:#3355ff"), id: `badge-${id}` };
+    badge.scale = 0.25;
+    badge.x = 0.8;
+    badge.y = 0.12;
+    if (withMask) badge.maskId = cutter.id;
+
+    // A group draws nothing itself; its two children are displaced by it.
+    const rule = { ...newShapeLayer("rect"), id: `rule-${id}` };
+    rule.w = 0.6;
+    rule.h = 0.01;
+    const dot = { ...newShapeLayer("ellipse"), id: `dot-${id}` };
+    dot.w = 0.03;
+    dot.h = 0.03;
+    const group = { ...newGroupLayer([rule, dot]), id: `grp-${id}` };
+    group.y = 0.55;
+
+    m.tiles[id] = { ...emptyTile(), layers: [frame, badge, cutter, icon, name, klass, group] };
+  }
+  return m;
+}
+
 const view = (m: Manifest): Wall => ({
   ids: m.projects[0].order,
   gridLayers: m.projects[0].gridLayers,
@@ -267,76 +330,6 @@ describe("redrawing one tile", () => {
 });
 
 describe("what a wall costs once stamps are dissolved", () => {
-  /* The number the v8 plan is gated on, taken before anything is demolished.
-   *
-   * Today a design reaches a tile as one baked PNG, so `dressed` above is two
-   * objects a tile. Dissolving the stamp puts every layer of that design on
-   * every tile instead — a picture, two captions, a class icon, a masked badge
-   * and a group — which is the shape measured here. Object count against the
-   * same wall's paint is the whole question: at 301 tiles the paint was already
-   * 407 of 415ms, and none of these objects can be cached (each carries its own
-   * cell clipPath, which forces objectCaching off).
-   *
-   * Measured against the v7 shape in the same run rather than against a
-   * stopwatch, for the reason FREEZE exists. If a dissolved wall costs a small
-   * multiple of a stamped one, the plan proceeds; if it costs an order of
-   * magnitude, the renderer needs the bitmap-bake fallback before the migration
-   * lands, not after. */
-  function dressedV8(count: number, withMask = true): Manifest {
-    const m = emptyManifest();
-    const p = newProject("Bench v8");
-    p.order = Array.from({ length: count }, (_, i) => `4000000000${String(i).padStart(6, "0")}`);
-    m.projects = [p];
-    for (const id of p.order) {
-      const frame = newImageLayer(`stamp-${id.slice(-1)}`);
-      frame.scale = 0.9;
-
-      const name = newTextLayer();
-      name.text = id.slice(-4);
-      name.y = 0.85;
-
-      const klass = newTextLayer();
-      klass.text = "Ranger";
-      klass.y = 0.92;
-      klass.size = 0.04;
-
-      const icon = newShapeLayer("icon", "Ranger");
-      icon.x = 0.2;
-      icon.y = 0.12;
-      icon.w = 0.18;
-      icon.h = 0.18;
-      icon.fill = "#c9a227";
-
-      /* A badge: a block of colour cut to a shape. The pair costs two offscreen
-       * canvases a tile — see "what a mask costs" — and after dissolution it is
-       * copied onto every tile rather than baked once into the stamp, which is
-       * the regression this fixture exists to price. */
-      const cutter = { ...newShapeLayer("ellipse"), id: `cut-${id}` };
-      cutter.w = 0.22;
-      cutter.h = 0.22;
-      cutter.x = 0.8;
-      cutter.y = 0.12;
-      const badge = { ...newImageLayer("block:#3355ff"), id: `badge-${id}` };
-      badge.scale = 0.25;
-      badge.x = 0.8;
-      badge.y = 0.12;
-      if (withMask) badge.maskId = cutter.id;
-
-      // A group draws nothing itself; its two children are displaced by it.
-      const rule = { ...newShapeLayer("rect"), id: `rule-${id}` };
-      rule.w = 0.6;
-      rule.h = 0.01;
-      const dot = { ...newShapeLayer("ellipse"), id: `dot-${id}` };
-      dot.w = 0.03;
-      dot.h = 0.03;
-      const group = { ...newGroupLayer([rule, dot]), id: `grp-${id}` };
-      group.y = 0.55;
-
-      m.tiles[id] = { ...emptyTile(), layers: [frame, badge, cutter, icon, name, klass, group] };
-    }
-    return m;
-  }
-
   const measure = async (m: Manifest, count: number) => {
     const wall = view(m);
     const canvas = wallCanvas(count);
@@ -379,13 +372,11 @@ describe("what a wall costs once stamps are dissolved", () => {
   it("prices a dissolved wall against a stamped one at 301 tiles", async () => {
     const count = 301;
     const v7 = await measure(dressed(count), count);
-    /* Unmasked, and not by choice: at 301 tiles the masked version takes the
-     * browser down mid-run ("Browser connection was closed"). cutToShape builds
-     * two tile-sized canvases per masked layer per tile, so a dissolved wall
-     * asks for 602 of them — about 1.2GB — where a stamped wall baked the same
-     * mask once into its PNG. That crash is the finding, and it is why the
-     * numbers below are the *optimistic* ones. */
-    const v8 = await measure(dressedV8(count, false), count);
+    /* Masked. Before the cut bake was shared across tiles this took the browser
+     * down here — cutToShape builds two tile-sized canvases per masked layer
+     * per tile, so a dissolved wall asked for 602 of them, about 1.2GB, where a
+     * stamped wall baked the same mask once into its PNG. */
+    const v8 = await measure(dressedV8(count), count);
 
     const line = (tag: string, r: Awaited<ReturnType<typeof measure>>) =>
       `${tag}: ${r.objects} objects, full ${r.full.toFixed(0)}ms, one tile ${r.one.toFixed(0)}ms, ` +
@@ -413,6 +404,60 @@ describe("what a wall costs once stamps are dissolved", () => {
      * renderOnAddRemove off, as GridCanvas is. */
     expect(v7.bulk).toBeLessThan(v7.full);
     expect(v8.bulk).toBeLessThan(v8.full);
+  }, 240_000);
+});
+
+describe("what the wall costs in a window", () => {
+  /* Every other number in this file is measured on a canvas the size of the
+   * whole wall — at 301 tiles that is 4368x34572, about 151 megapixels, which
+   * is not a surface any screen ever asks for. GridCanvas gives Fabric a canvas
+   * the size of the window and zooms the wall down into it (see fit()), so the
+   * pixels actually painted are the window's, however many tiles are on it.
+   *
+   * That difference is the whole question for a dissolved wall: if the cost
+   * follows the objects, more layers a tile hurt everywhere; if it follows the
+   * pixels, a wall zoomed to fit costs what the window costs and the object
+   * count barely shows. This measures the case the user actually looks at. */
+  const WINDOW = { w: 1600, h: 900 };
+
+  const inWindow = async (m: Manifest, count: number) => {
+    const grid = gridSize(count);
+    const canvas = new fabric.StaticCanvas(undefined, {
+      ...WINDOW,
+      enableRetinaScaling: false,
+      renderOnAddRemove: false,
+    });
+    try {
+      const z = Math.min(WINDOW.w / grid.w, WINDOW.h / grid.h) * 0.95;
+      canvas.setViewportTransform([z, 0, 0, z, (WINDOW.w - grid.w * z) / 2, (WINDOW.h - grid.h * z) / 2]);
+      await buildGrid(canvas, view(m), m, testDeps, true);
+
+      // Several frames, because this is the number a drag or a wheel pays per
+      // frame — one sample of it is noise.
+      const runs = 5;
+      const start = performance.now();
+      for (let i = 0; i < runs; i++) canvas.renderAll();
+      return { paint: (performance.now() - start) / runs, zoom: z };
+    } finally {
+      await canvas.dispose();
+    }
+  };
+
+  it("paints a zoomed-out wall at window size, stamped and dissolved", async () => {
+    const count = 301;
+    const v7 = await inWindow(dressed(count), count);
+    // Masked, which is the shape that used to take the browser down here.
+    const v8 = await inWindow(dressedV8(count), count);
+    console.log(
+      `${count} tiles in a ${WINDOW.w}x${WINDOW.h} window at ${v7.zoom.toFixed(3)} zoom: ` +
+        `stamped ${v7.paint.toFixed(0)}ms/frame, dissolved ${v8.paint.toFixed(0)}ms/frame ` +
+        `(${(v8.paint / v7.paint).toFixed(1)}x)`,
+    );
+    /* Asserted, unlike the whole-wall numbers, because this one is a frame the
+     * user waits on: past about 100ms a drag stops tracking the pointer. Wide
+     * enough to survive a loaded machine, tight enough to catch a wall that
+     * became unusable. */
+    expect(v8.paint).toBeLessThan(250);
   }, 240_000);
 });
 
