@@ -94,8 +94,6 @@
     unplace,
     tileText,
     visibleIds,
-    wearing,
-    removeLayoutFrom,
     toggleLayerHidden,
     toggleLayerLocked,
     toggleTile,
@@ -140,7 +138,6 @@
     type Layer,
     type ShapeKind,
   } from "./lib/model";
-  import { isLiveCopy, layerShows, offLayouts } from "./lib/stamps";
 
   /* The FaceTexture folder is the only one this tool ever edits, so asking
      which one on every start was a dialog with one right answer. */

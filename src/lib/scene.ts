@@ -41,11 +41,6 @@ import {
   type TextLayer,
   type Tile,
 } from "./model";
-import {
-  isLiveCopy,
-  layerShows,
-  offLayouts,
-} from "./stamps";
 
 /** Which wall to draw: an ordered, dense list of tile ids — position n is grid
  *  slot n — and the layers spread across the whole of it.
@@ -1438,50 +1433,25 @@ async function tileLayerObjects(
      * stopped being a picture and does not draw itself. */
     const own = dissolved(resolveLayers(m, id));
     const stencils = stencilIds(own);
-    /* Which assignments this tile has switched off. A live copy has no row and
-       no eye of its own, so the eye on its stamp answers for it — see
-       layerShows. A live cutter needs no entry here: it can only cut live
-       layers of the same Layout, so it goes dark exactly when they do. */
-    const off = offLayouts(own);
-    for (const raw of own) {
-      if (!layerShows(raw, off) || raw.space === "grid" || stencils.has(raw.id)) continue;
-      /* This tile's own picture, where it has one. Resolved before the object
-       * is built rather than inside imageObject, so the swap map stays a wall
-       * concern: a Layout has no tiles and nothing to swap. "" is a real
-       * answer — no picture on this tile — and the layer simply does not
-       * render, which is why the check is on the resolved value and not on
-       * whether a key exists. */
-      /* And where this tile put it. Every live layer, not only pictures: a
-       * caption that sits well on forty-three portraits sits over an eyebrow on
-       * the forty-fourth, and the tile is the only place that can say so. The
-       * Layout still owns the design; framed() is a difference from it. */
-      const l = framed(
-        asTileShows(raw, swaps, paints),
-        /* isLiveCopy and not `raw.live`: a caption is live whether or not it
-         * carries the flag — the ones stamped before the flag existed have
-         * none — and a layer the tile owns outright has nothing to differ
-         * from, since editing it *is* editing the layer. */
-        isLiveCopy(raw) ? frames[raw.id] : undefined,
-      );
+    /* Empty, and kept as a name rather than deleted at every call site: a
+     * layer's own eye is the only one there is now. It used to compose with
+     * the eye on the stamp that put it here, because a live copy had no row of
+     * its own to switch off. */
+    for (const l of own) {
+      if (l.hidden || l.space === "grid" || stencils.has(l.id)) continue;
+      // "" is a real answer — no picture on this tile — and the layer simply
+      // does not render.
       if (l.kind === "image" && !l.asset) continue;
       /* Cut before placed. The shape sits in tile coordinates, so the layer is
        * built at the tile's own origin, composited against it, and the finished
        * picture is moved into the cell — after which the cell clip below
        * applies to it like to anything else.
        *
-       * A cutter that is hidden stops cutting, exactly as in a Layout: the eye
-       * has to mean the same thing everywhere, and something that is not there
-       * cannot be why half a picture is missing.
-       *
-       * Framed like anything else, and easy to miss because a cutter never
-       * draws itself: taken raw, a shape the tile had placed cut the old hole
-       * and the drag did nothing at all — which for a badge (a block cut to a
-       * class icon) meant the tool wrote into the manifest and changed no
-       * pixel. */
-      const rawCutter = l.maskId ? own.find((x) => x.id === l.maskId) : undefined;
-      const cutter =
-        rawCutter && isLiveCopy(rawCutter) ? framed(rawCutter, frames[rawCutter.id]) : rawCutter;
-      const cut = cutApplies(l, cutter) && layerShows(cutter!, off) ? cutter : undefined;
+       * A cutter that is hidden stops cutting: the eye has to mean the same
+       * thing everywhere, and something that is not there cannot be why half a
+       * picture is missing. */
+      const cutter = l.maskId ? own.find((x) => x.id === l.maskId) : undefined;
+      const cut = cutApplies(l, cutter) && !cutter!.hidden ? cutter : undefined;
       /* A class icon is paint wearing the artwork as its clipPath, and every
        * tile layer is about to be given the cell as its clipPath — Fabric
        * allows one, so the cell would replace the artwork and the icon would

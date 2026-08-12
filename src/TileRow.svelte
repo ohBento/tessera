@@ -57,7 +57,6 @@
   } from "./lib/editor.svelte";
   import { ICON_NAMES, iconArt } from "./lib/icons";
   import { isGradient, layerLabel, layoutNeedsRestamp, type Layer } from "./lib/model";
-  import { isLiveCopy, layerShows, offLayouts } from "./lib/stamps";
 
   let {
     id,
@@ -125,9 +124,7 @@
   {@const layerId = layer.id}
   {@const on =
     framing && app.selected === layerId && app.selectedTiles.length === 1 && app.selectedTiles[0] === tileId}
-  <!-- Asked, not read: a live copy's own `hidden` is the Layout's answer, and
-       the eye on its stamp is the tile's. Both switch it off. -->
-  {@const shows = layerShows(layer, offLayouts(tileLayers(tileId)))}
+  {@const shows = !layer.hidden}
   <button
     class="swatch"
     class:on

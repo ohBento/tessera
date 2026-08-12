@@ -68,8 +68,6 @@ import {
   type ShapeLayer,
   type TextLayer,
 } from "./lib/model";
-import {
-} from "./lib/stamps";
 import { maskChoices, maskOffers } from "./lib/model";
 import { textWidth, type Tagged } from "./lib/scene";
 import {

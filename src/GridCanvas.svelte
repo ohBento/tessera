@@ -43,7 +43,6 @@
     type WallPrint,
   } from "./lib/scene";
   import { findLayer, framed, layerAsset, layerText, type Layer } from "./lib/model";
-  import { isLiveCopy, layerShows, offLayouts } from "./lib/stamps";
 
   /* On while the placing tool is chosen in App's toolbar. The wall has no other
      mode, and that is deliberate — see the note on frameAt below. */
@@ -106,18 +105,11 @@
    *  to go on, and a stand-in is a plain rectangle whatever it stands for. */
   let twoAxes = false;
 
-  /** The live layers drawn on a tile, newest last — the ones a tile places.
-   *
-   *  Live copies only. A layer the tile owns outright is already draggable on
-   *  the wall and has nothing to differ from: editing it *is* editing the
-   *  layer. */
-  const placeableOn = (tileId: string) => {
-    const own = app.manifest.tiles[tileId]?.layers ?? [];
-    const off = offLayouts(own);
-    return own.filter(
-      (l) => isLiveCopy(l) && layerShows(l, off) && !(l.kind === "image" && !l.asset),
+  /** The layers on a tile the stand-in can be put on: the ones that draw. */
+  const placeableOn = (tileId: string) =>
+    (app.manifest.tiles[tileId]?.layers ?? []).filter(
+      (l) => !l.hidden && !(l.kind === "image" && !l.asset),
     );
-  };
 
   function dropFrameTools() {
     if (stand) canvas?.remove(stand);

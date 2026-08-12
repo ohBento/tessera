@@ -17,7 +17,6 @@ import {
   redo,
   undo,
 } from "./history";
-import { renderLayout } from "./layout";
 import {
   bakeMosaicInto,
   clearBases,
@@ -77,16 +76,6 @@ import {
   type ShapeLayer,
   type TextLayer,
 } from "./model";
-import {
-  deleteStampCascade,
-  isLiveCopy,
-  stampFamily,
-  pruneDeadLayoutRefs,
-  refreshStamps,
-  stampInto,
-  syncLiveLayers,
-  tilesWearing,
-} from "./stamps";
 import {
   defaultDir,
   importAsset,
@@ -589,42 +578,6 @@ export const tileHeadline = (tileId: string): string => {
   return "";
 };
 
-/** How many of these tiles wear that Layout. What the menu counts before it
- *  offers to take it off. */
-export const wearing = (layoutId: string, ids: string[]) =>
-  ids.filter((id) =>
-    (app.manifest.tiles[id]?.layers ?? []).some((l) => l.layoutId === layoutId && !isLiveCopy(l)),
-  );
-
-/** Takes one Layout off these tiles — the stamp and the live copies beside it,
- *  and the per-tile wording, pictures and placements keyed to them.
- *
- *  The inverse of assigning, and it has to be as thorough: a stamp removed on
- *  its own leaves captions drawing on the wall with no row to switch them off,
- *  which is the fault `deleteStampCascade` was written for. One mutation, so
- *  one Ctrl+Z puts the design back on all of them. */
-export async function removeLayoutFrom(layoutId: string, ids: string[]) {
-  const targets = wearing(layoutId, ids);
-  if (!targets.length) return;
-  await mutate("Remove layout", () => {
-    for (const id of targets) {
-      const tile = app.manifest.tiles[id];
-      const stamps = tile.layers.filter((l) => l.layoutId === layoutId && !isLiveCopy(l));
-      for (const stamp of stamps) {
-        for (const gone of stampFamily(tile.layers, stamp.id)) {
-          delete tile.text[gone.id];
-          delete tile.swap?.[gone.id];
-          delete tile.frame?.[gone.id];
-          delete tile.paint?.[gone.id];
-        }
-        deleteStampCascade(tile.layers, stamp.id);
-      }
-    }
-    clearAll();
-    app.error = `Removed from ${targets.length} tile(s)`;
-  });
-}
-
 /** The live shapes on one tile that are not class icons — the rectangles,
  *  ellipses and polygons a Layout keeps live.
  *
@@ -965,20 +918,14 @@ export async function toggleLayerHidden(id: string) {
 
 /** Deletes a layer on the wall.
  *
- *  A stamp takes the Layout's live captions and pictures with it: they are
- *  copies the Layout keeps beside it, no list shows them on their own, and
- *  leaving them behind produced captions that drew on the wall with no row and
- *  no way to remove them. One click, one undo step, the whole assignment. */
+ *  A group dissolves and hands its members back rather than taking them with
+ *  it — see removeLayerFrom, which is where that rule lives. */
 export async function deleteLayer(id: string) {
   const list = listOf(id);
   const layer = list && findLayer(list, id);
   if (!list || !layer) return;
   await mutate("Delete layer", () => {
-    // A group dissolves and hands its members back (removeLayerFrom); anything
-    // else goes through the cascade, which is a no-op beyond the layer itself
-    // unless that layer is a stamp.
-    if (layer.kind === "group") removeLayerFrom(list, id);
-    else deleteStampCascade(list, id);
+    removeLayerFrom(list, id);
     if (app.selected === id) app.selected = "";
   });
 }
@@ -1072,7 +1019,6 @@ export async function openFolder(dir?: string) {
      * layout was deleted. Swept on open, same philosophy as pruneVault — the
      * library is the truth and the wall adapts. Persisted only when something
      * actually went, so a clean open writes nothing. */
-    if (pruneDeadLayoutRefs(app.manifest)) await saveManifest(app.dir, plain(app.manifest));
     /* The folder's own list, kept because the inbox is derived from it rather
      * than stored: what the folder has, minus what the projects claim. Storing
      * the inbox instead would mean a second copy of this list drifting away
@@ -1684,7 +1630,6 @@ export async function restoreSnapshot(ref: SnapshotRef) {
          * pictures named by a raw id until the next start. The rule is that a
          * layout and its layers do not survive each other; it has to hold here
          * as well, not only on open. */
-        pruneDeadLayoutRefs(app.manifest);
         clearAll();
         app.openProjectId = "";
       });
@@ -1716,7 +1661,6 @@ export async function restoreSnapshot(ref: SnapshotRef) {
     await mutate("Restore snapshot", () => {
       taken = restoreProjectInto(app.manifest, stored, ref.projectId);
       // Same reason as the document-wide route above.
-      pruneDeadLayoutRefs(app.manifest);
       clearAll();
     });
     const also = [
