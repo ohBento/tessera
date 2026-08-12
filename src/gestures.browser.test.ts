@@ -1,4 +1,4 @@
-/* The faults that only exist while a hand is on the mouse.
+﻿/* The faults that only exist while a hand is on the mouse.
  *
  * Every one of these was found by the author dragging something and filming
  * it, after four hundred tests had gone green. They share a shape: the canvas
@@ -7,7 +7,7 @@
  * Mounted, and with a viewport that has a size. Both matter, and finding out
  * which cost an evening: a bare fabric.Canvas driven by the same events does
  * not reproduce any of this, and neither does the app mounted into a host of
- * zero width — the editor fits the sheet to its window, so no window means a
+ * zero width â€” the editor fits the sheet to its window, so no window means a
  * zoom of 0 and a render path that never runs. The mask fault appears at the
  * first mousemove and only here. */
 import type { Canvas, FabricObject } from "fabric";
@@ -60,7 +60,7 @@ let host: HTMLDivElement;
 let ui: Record<string, unknown> | undefined;
 
 /** A button by its tooltip. The rail and the tile rows are icons, so there is
- *  no text to match on — and the title is what a hand hovers to find them too. */
+ *  no text to match on â€” and the title is what a hand hovers to find them too. */
 const byTitle = (title: string) =>
   [...document.querySelectorAll("button")].find((b) => b.title === title) as
     | HTMLButtonElement
@@ -79,7 +79,7 @@ async function editor() {
   host = document.createElement("div");
   host.id = "app";
   // A real window, or LayoutCanvas fits the sheet into nothing and the whole
-  // live render path is skipped — see the note at the top.
+  // live render path is skipped â€” see the note at the top.
   host.style.cssText = "width:1400px;height:900px;position:fixed;left:0;top:0";
   document.body.append(host);
   ui = mount(App, { target: host });
@@ -124,7 +124,7 @@ async function teardown() {
 const objectFor = (canvas: Canvas, layerId: string) =>
   canvas.getObjects().find((o) => (o as { layerId?: string }).layerId === layerId);
 
-/** Press, move, release at scene coordinates — and nothing else. dragObject
+/** Press, move, release at scene coordinates â€” and nothing else. dragObject
  *  picks the object first and takes its per-pixel hit testing off, which is the
  *  right thing when the question is what a gesture does to a known object and
  *  the wrong thing when the question is which object Fabric picks. */
@@ -162,7 +162,7 @@ async function rawDrag(
   await frame();
 }
 
-/** A green block cut to a class icon — the pair the icons exist for. */
+/** A green block cut to a class icon â€” the pair the icons exist for. */
 async function blockCutToIcon() {
   const canvas = await editor();
   await addLayoutShape("icon", "Placeholder");
@@ -182,7 +182,7 @@ describe("framing a picture on the wall", () => {
   it("writes what was dragged onto the tile, not onto the layer", async () => {
     /* The tile owns which picture and which part of it; the Layout owns where
      * the frame is and how big. So a drag with the framing tool has to land in
-     * the tile's own map and leave the shared layer exactly as it was —
+     * the tile's own map and leave the shared layer exactly as it was â€”
      * otherwise framing one portrait would move all forty-four. */
     try {
       await wall();
@@ -211,7 +211,7 @@ describe("framing a picture on the wall", () => {
 
       /* The way a hand gets there: click the tile, which opens its row, then
        * press the place button beside the picture in that row. The tool takes
-       * what to place from the list rather than from a click on the canvas —
+       * what to place from the list rather than from a click on the canvas â€”
        * a wall is layers all the way across, and clicking to choose one would
        * take the tile-selection drag with it. */
       const cell = cellAt(visibleIds().indexOf(tile));
@@ -248,8 +248,8 @@ describe("framing a picture on the wall", () => {
     /* The reason the tool grew past pictures: a caption clear of the chin on
      * forty-three portraits lands on it on the forty-fourth, and the tile is
      * the only place that can say so. What it may not do is change the type
-     * size — one caption larger than the rest reads as a mistake rather than
-     * as a choice — so the corner and side handles are not offered. */
+     * size â€” one caption larger than the rest reads as a mistake rather than
+     * as a choice â€” so the corner and side handles are not offered. */
     try {
       await wall();
 
@@ -260,7 +260,7 @@ describe("framing a picture on the wall", () => {
       if (caption.kind !== "text") throw new Error("addLayoutText made something else");
       const before = { x: caption.x, y: caption.y, size: caption.size };
       /* Live, or it bakes into the stamp and the tile has no copy of its own to
-         place — only `perTile` layers are copied onto the tiles (bakeable). */
+         place â€” only `perTile` layers are copied onto the tiles (bakeable). */
       await setLayerField(caption.id, "perTile", true);
 
       const tile = app.folderIds[0];
@@ -294,7 +294,7 @@ describe("framing a picture on the wall", () => {
       const f = app.manifest.tiles[tile].frame![written.id];
       expect(Math.abs(f.x)).toBeGreaterThan(0);
       expect(Math.abs(f.y)).toBeGreaterThan(0);
-      // Dragged, not resized — whatever the stand-in did, no zoom was stored.
+      // Dragged, not resized â€” whatever the stand-in did, no zoom was stored.
       expect(f.z).toBeCloseTo(1, 6);
 
       const shared = app.manifest.layouts.find((l) => l.id === layout.id)!.layers[0];
@@ -314,7 +314,7 @@ describe("framing a picture on the wall", () => {
      * its caption.
      *
      * It hung on one line. Fabric clears its selection whenever a press lands
-     * on bare canvas, and the wall answered that by dropping the chosen layer —
+     * on bare canvas, and the wall answered that by dropping the chosen layer â€”
      * so the frame died on the way to the tile it was being carried to. */
     try {
       await wall();
@@ -360,7 +360,7 @@ describe("framing a picture on the wall", () => {
   });
 
   it("gives a live shape a row of its own, and lets one axis go", async () => {
-    /* A shape carries no per-tile content, so it had no row in the tile list —
+    /* A shape carries no per-tile content, so it had no row in the tile list â€”
      * and with no row there was no way into the tool. For the badge, that meant
      * the icon cutting the block could be placed and the block itself could
      * not. It owns a colour now, and the row that carries the colour carries
@@ -395,7 +395,7 @@ describe("framing a picture on the wall", () => {
       await until(() => !!wallCanvas.getActiveObject(), 8000, "the stand-in to appear");
 
       const stand = wallCanvas.getActiveObject()!;
-      // Sides as well as corners — the handle that stretches is offered.
+      // Sides as well as corners â€” the handle that stretches is offered.
       expect(stand.isControlVisible("mr")).toBe(true);
       await scaleObject(wallCanvas, stand, "mr", 90, 0);
       await until(() => !!app.manifest.tiles[tile].frame?.[bar.id], 5000, "the placement to be written");
@@ -413,7 +413,7 @@ describe("framing a picture on the wall", () => {
     /* The faint whole picture is the only thing to aim by when a mask hides
      * most of what is being dragged. It showed for the first drag and never
      * again: writing a placement rebuilds the wall, `buildGrid` adds its
-     * objects to a canvas the ghost survived on, and Fabric adds to the top —
+     * objects to a canvas the ghost survived on, and Fabric adds to the top â€”
      * so from the second drag on the ghost lay under the tile's own artwork.
      * The frame still looked right, because Fabric draws the active object's
      * controls on the upper canvas whatever is buried below. */
@@ -449,12 +449,12 @@ describe("framing a picture on the wall", () => {
       await dragObject(wallCanvas, wallCanvas.getActiveObject()!, 40, 25);
       await until(() => !!app.manifest.tiles[tile].frame?.[pic.id], 5000, "the placement to be written");
       /* The rebuild the write sets off is asynchronous, and it is the rebuild
-         that does the damage — asserting before it lands measures the canvas
+         that does the damage â€” asserting before it lands measures the canvas
          the drag left behind and passes on a wall that is about to be wrong. */
       await until(() => !app.busy, 5000, "the wall to settle");
       await new Promise((r) => setTimeout(r, 400));
 
-      /* Above everything the rebuild put back — which is what "visible" means
+      /* Above everything the rebuild put back â€” which is what "visible" means
          on a canvas. The stand-in is the last object; the ghost is under it and
          over the wall. */
       const objects = wallCanvas.getObjects();
@@ -471,7 +471,7 @@ describe("framing a picture on the wall", () => {
 
   it("takes the frame away when the tile it moved to shows nothing there", async () => {
     /* "Show no picture on this tile" is a real answer, so the layer is still on
-     * the tile and still listed — there is simply nothing to stand on. The
+     * the tile and still listed â€” there is simply nothing to stand on. The
      * frame used to survive that: the tool bailed before clearing its own
      * furniture, so the violet box stayed on the previous portrait while the
      * selection had moved on, and the next drag wrote onto a tile nobody was
@@ -512,481 +512,6 @@ describe("framing a picture on the wall", () => {
       await until(() => framesOn().length === 0, 5000, "the frame to be taken down");
       // And nothing was written behind our back onto the tile we left.
       expect(app.manifest.tiles[first].frame?.[pic.id]).toBeUndefined();
-    } finally {
-      await teardown();
-    }
-  });
-});
-
-describe("what a gesture does to a mask", () => {
-  beforeEach(() => resetMockFiles());
-
-  it("does not let the mask grow while the layer is dragged", async () => {
-    /* The one that cost an afternoon. The stencil sat at scale 0.22 at rest
-     * and at 1 from the first mousemove, so the mask covered four and a half
-     * times what it should and the block came out very nearly whole —
-     * reported as "the icon is zoomed".
-     *
-     * The cut can only shrink while dragging: the block slides out from under
-     * a mask that stays where the cutter is. So anything above the resting
-     * count is the fault. */
-    try {
-      const { canvas, obj } = await blockCutToIcon();
-      const atRest = countColour(canvas, GREEN);
-      expect(atRest).toBeGreaterThan(0);
-
-      let worst = 0;
-      await dragObject(canvas, obj, 40, 20, () => {
-        worst = Math.max(worst, countColour(canvas, GREEN));
-      });
-      /* A per-cent of slack, and no more. The fault this pins is a fivefold
-       * jump; what the slack absorbs is the edge of an antialiased shape
-       * moving under a stencil, which was 0.7% of the count when measured. */
-      expect(worst).toBeLessThanOrEqual(Math.round(atRest * 1.02));
-    } finally {
-      await teardown();
-    }
-  });
-
-  it("keeps the cut after the layer has been let go", async () => {
-    /* The same fault one step later: it survived the release, so the wall
-     * stayed wrong until something rebuilt the scene. A class icon is line
-     * art — it cannot fill half of the block it cuts. */
-    try {
-      const { canvas, obj } = await blockCutToIcon();
-      /* Measured against the same canvas before the gesture, not against the
-       * layer's box: the count is in device pixels — retina scaling and the
-       * editor's own zoom both multiply it — and the box is in tile units. The
-       * two agreed on this machine at a device ratio of 1 and would have
-       * quadrupled apart on a HiDPI screen, failing for a reason that has
-       * nothing to do with masks. */
-      const atRest = countColour(canvas, GREEN);
-      await dragObject(canvas, obj, 12, 8);
-      const shown = countColour(canvas, GREEN);
-
-      // Still there, and still a cut shape rather than the block behind it.
-      expect(shown).toBeGreaterThan(0);
-      expect(shown).toBeLessThanOrEqual(Math.round(atRest * 1.02));
-    } finally {
-      await teardown();
-    }
-  });
-
-  it("keeps a class icon the size its handle was let go at", async () => {
-    /* An icon's artwork is fitted to its box rather than stretched into it, so
-     * a side handle grew it for as long as the mouse was down and the rebuild
-     * put it back. Corner handles only, for that reason — and a handle the
-     * layer does not show cannot be grabbed, which is the same rule seen from
-     * the other side.
-     *
-     * This one pins `freeScale`, not the mask fix the two above pin. Worth
-     * saying: an earlier commit message claimed all three fail on the mask
-     * bug, and only two of them do. */
-    try {
-      const canvas = await editor();
-      await addLayoutShape("icon", "Placeholder");
-      const icon = openLayout()!.layers[0];
-      await setLayerField(icon.id, "fill", "#00ff00");
-      await until(() => canvas.getObjects().some((o) => (o as { layerId?: string }).layerId === icon.id));
-      const obj = canvas.getObjects().find((o) => (o as { layerId?: string }).layerId === icon.id)!;
-
-      expect(obj.isControlVisible("mr")).toBe(false);
-      const before = countColour(canvas, GREEN);
-      await scaleObject(canvas, obj, "br", 60, 60);
-      await until(() => countColour(canvas, GREEN) !== before, 3000).catch(() => {});
-      expect(countColour(canvas, GREEN)).toBeGreaterThan(before);
-    } finally {
-      await teardown();
-    }
-  });
-
-  it("keeps a dragged caption where it was let go when the stamps are updated", async () => {
-    /* From a screen recording: a caption with a fixed width, used as a mask, on
-     * a Layout stamped across the wall. Dragging it moved it — the X field went
-     * 69 to 92 — and "Update stamps" put it back to 69.
-     *
-     * Driven through the canvas rather than through the model, because a plain
-     * move takes a path of its own: it skips the version bump, so nothing
-     * rebuilds until something else asks for one, and the something else here
-     * is the button that is supposed to keep it. */
-    try {
-      const canvas = await editor();
-      await addLayoutText();
-      const caption = openLayout()!.layers[0];
-      await setLayerField(caption.id, "perTile", true);
-      await setLayerField(caption.id, "text", "TEXT");
-      await setLayerField(caption.id, "w", 0.07);
-      await setLayerField(caption.id, "h", 0.9);
-      await addLayoutShape("rect");
-      const block = openLayout()!.layers.find((l) => l.id !== caption.id)!;
-      await setLayerField(block.id, "perTile", true);
-      await setLayerField(block.id, "fill", "#00ff00");
-      await setLayerField(block.id, "maskId", caption.id);
-      const layoutId = openLayout()!.id;
-      await until(() =>
-        canvas.getObjects().some((o: FabricObject) => !!o.clipPath?.absolutePositioned),
-      );
-
-      const stencil = canvas
-        .getObjects()
-        .find((o) => (o as { layerId?: string }).layerId === caption.id)!;
-      const before = findLayer(openLayout()!.layers, caption.id)!.x;
-      await dragObject(canvas, stencil, 30, 0);
-      await until(
-        () => findLayer(openLayout()!.layers, caption.id)!.x !== before,
-        5000,
-        "the drag to be written",
-      );
-      const moved = findLayer(openLayout()!.layers, caption.id)!.x;
-
-      // Stamped somewhere, or there is nothing for the button to update.
-      await assignTileLayout(app.folderIds[0], layoutId);
-      await saveLayout(layoutId);
-      expect(findLayer(openLayout()!.layers, caption.id)!.x).toBeCloseTo(moved, 6);
-    } finally {
-      await teardown();
-    }
-  });
-
-  it("does not shift a caption's hole the moment it is touched", async () => {
-    /* A caption with a width of its own, used as a mask. Nudging it one pixel
-     * must move the hole one pixel — and the hole is a separate object with
-     * `absolutePositioned`, kept in register by syncMasks while the gesture is
-     * open. Any jump beyond the nudge is that bookkeeping disagreeing with
-     * where the renderer puts the same stencil, which is what a rebuild
-     * afterwards silently corrects: the model was right all along and only the
-     * canvas was wrong, so "it comes back when I press Update". */
-    try {
-      const canvas = await editor();
-      await addLayoutText();
-      /* The reported Layout, to the number: Impact at 81px in a 42x714 box,
-         punched out of a 138x804 strip of paint with rounded corners. */
-      const caption = openLayout()!.layers[0];
-      await setLayerField(caption.id, "text", "T\nE\nX\nT");
-      await setLayerField(caption.id, "font", "Impact");
-      await setLayerField(caption.id, "italic", true);
-      /* Left-aligned, which is the ingredient every earlier attempt was missing
-         — and the one place in this app where the width of a caption decides
-         where it sits. Straight off the reported manifest, along with the rest
-         of these numbers. */
-      await setLayerField(caption.id, "align", "left");
-      await setLayerField(caption.id, "size", 0.130597014925373);
-      await setLayerField(caption.id, "w", 0.08471058593347748);
-      await setLayerField(caption.id, "h", 0.8881571666073222);
-      await setLayerField(caption.id, "x", 0.11039510606528684);
-      await addLayoutShape("rect");
-      const block = openLayout()!.layers.find((l) => l.id !== caption.id)!;
-      await setLayerField(block.id, "fill", "#00ff00");
-      await setLayerField(block.id, "w", 0.2207902121305737);
-      await setLayerField(block.id, "h", 1);
-      await setLayerField(block.id, "x", 0.11039510606528684);
-      await setLayerField(block.id, "cornerRadius", 0.36);
-      await setLayerField(block.id, "maskId", caption.id);
-      // Inverted: the letters are punched out of the paint rather than filled
-      // with it, which is the arrangement the report came from.
-      await setLayerField(block.id, "maskInvert", true);
-      await until(() =>
-        canvas.getObjects().some((o: FabricObject) => !!o.clipPath?.absolutePositioned),
-      );
-
-      const cut = canvas.getObjects().find((o: FabricObject) => !!o.clipPath?.absolutePositioned)!;
-      const stencil = canvas
-        .getObjects()
-        .find((o) => (o as { layerId?: string }).layerId === caption.id)!;
-      const read = () => {
-        const c = cut.clipPath!;
-        return {
-          left: Math.round(c.left ?? 0),
-          top: Math.round(c.top ?? 0),
-          sx: Number((c.scaleX ?? 1).toFixed(3)),
-          sy: Number((c.scaleY ?? 1).toFixed(3)),
-          w: Math.round(c.width ?? 0),
-        };
-      };
-      const before = read();
-      await dragObject(canvas, stencil, 1, 0);
-      const after = read();
-      /* The hole is wherever the stencil is, to the pixel. Measured against the
-         stencil rather than against the nudge, and that distinction is the
-         finding: a one-pixel nudge of this caption lands it six pixels to the
-         *left*, and the hole goes with it. So the mask bookkeeping is sound and
-         something in the drag is not — which is the fault the recording shows,
-         one layer further down than it looked. */
-      expect(after.left).toBeCloseTo(stencil.getCenterPoint().x, -0.5);
-      expect(after.top).toBeCloseTo(stencil.getCenterPoint().y, -0.5);
-      /* And at the size it was. The same bookkeeping copies the stencil's scale
-         onto the hole, and the stencil on canvas is not built the way the hole
-         is — a class icon's stencil once sat at 0.22 at rest and was handed a 1
-         on the first mousemove, which made its mask four and a half times too
-         big. Whatever the equivalent is for a caption belongs here. */
-      expect({ sx: after.sx, sy: after.sy }).toEqual({ sx: before.sx, sy: before.sy });
-
-      /* And the paint keeps its shape through a drag the length of the reported
-         one. Inverted, so this counts the strip minus the letters: it grows if
-         the holes shrink and shrinks if they spread. Either way it must not
-         move much — 23px sideways inside a strip 138 wide changes what the
-         letters sit over, not how much of the strip is left. */
-      /* Zoomed in and scrolled off the origin, the way the sheet is actually
-         worked on — 149% in the recording. A clipPath with absolutePositioned
-         is placed in scene coordinates and drawn through the viewport, so a
-         viewport that is not the identity is the one thing separating this
-         harness from the report. */
-      canvas.setViewportTransform([1.49, 0, 0, 1.49, -180, -90]);
-      canvas.renderAll();
-      await new Promise((r) => requestAnimationFrame(() => r(null)));
-
-      const paint = () => countColour(canvas, GREEN);
-      const still = paint();
-      let widest = still;
-      await dragObject(canvas, stencil, 22, 0, () => {
-        widest = Math.max(widest, paint());
-      });
-      expect(widest).toBeLessThan(Math.round(still * 1.1));
-      expect(paint()).toBeLessThan(Math.round(still * 1.1));
-
-      /* And what is drawn is where the model says it is. Everything above
-         compares Fabric's own numbers with each other, which cannot see a
-         canvas that is painting yesterday's arrangement — the report is that
-         the words move and the hole stays until a rebuild, and only pixels can
-         tell those apart. The mask is inverted, so the middle of the caption is
-         a hole: green there means the paint is drawn where the hole should be. */
-      /* And the handles are where the object is. The report is that the words
-         move while the violet frame stays behind until a rebuild, and Fabric
-         draws that frame from the cached corner coordinates — which only agree
-         with the object's own transform for as long as everything that moves it
-         says so. The snapping in object:moving moves it without Fabric's help,
-         so this is the assertion that would catch a missing setCoords. */
-      const box = stencil.getBoundingRect();
-      const heart = stencil.getCenterPoint();
-      expect(box.left + box.width / 2).toBeCloseTo(heart.x, -0.5);
-      expect(box.top + box.height / 2).toBeCloseTo(heart.y, -0.5);
-
-
-      const mid = stencil.getCenterPoint();
-      const dpr = canvas.getRetinaScaling();
-      const vt = canvas.viewportTransform;
-      const px = canvas.lowerCanvasEl
-        .getContext("2d", { willReadFrequently: true })!
-        .getImageData(
-          Math.round((mid.x * vt[0] + vt[4]) * dpr),
-          Math.round((mid.y * vt[3] + vt[5]) * dpr),
-          1,
-          1,
-        ).data;
-      expect({ r: px[0], g: px[1], b: px[2] }).not.toEqual({ r: 0, g: 255, b: 0 });
-    } finally {
-      await teardown();
-    }
-  });
-
-  it("drags the caption the layer list picked, not whatever is under the pointer", async () => {
-    /* The way a hand does it: pick the caption's row on the right, then press
-     * on the canvas. A stencil is deaf to the pointer until its row is picked,
-     * and the layer it cuts answers clicks per pixel — so if the press lands on
-     * the wrong one of the two, the thing that moves and the thing the violet
-     * frame belongs to come apart. Which is the report: "the text moves, the
-     * frame stays, and Update refreshes it".
-     *
-     * No setActiveObject and no perPixelTargetFind meddling here, unlike
-     * dragObject: the point is to let Fabric choose the target the same way it
-     * does in the app. */
-    try {
-      const canvas = await editor();
-      await addLayoutText();
-      const caption = openLayout()!.layers[0];
-      await setLayerField(caption.id, "text", "Descr");
-      await setLayerField(caption.id, "font", "Impact");
-      await setLayerField(caption.id, "size", 81 / TILE_W);
-      await setLayerField(caption.id, "w", 42 / TILE_W);
-      await setLayerField(caption.id, "h", 714 / TILE_H);
-      await addLayoutShape("rect");
-      const block = openLayout()!.layers.find((l) => l.id !== caption.id)!;
-      await setLayerField(block.id, "fill", "#00ff00");
-      await setLayerField(block.id, "w", 138 / TILE_W);
-      await setLayerField(block.id, "h", 1);
-      await setLayerField(block.id, "maskId", caption.id);
-      await setLayerField(block.id, "maskInvert", true);
-      await until(() =>
-        canvas.getObjects().some((o: FabricObject) => !!o.clipPath?.absolutePositioned),
-      );
-
-      // Picked from the list, exactly as the row's click does it.
-      toggleLayoutPick(caption.id, false);
-      await until(
-        () => canvas.getActiveObject() === objectFor(canvas, caption.id),
-        5000,
-        "the canvas to follow the list",
-      );
-
-      const was = {
-        caption: objectFor(canvas, caption.id)!.getCenterPoint().x,
-        block: objectFor(canvas, block.id)!.getCenterPoint().x,
-      };
-      const start = objectFor(canvas, caption.id)!.getCenterPoint();
-      await rawDrag(canvas, start.x, start.y, 26, 0);
-
-      const now = {
-        caption: objectFor(canvas, caption.id)!.getCenterPoint().x,
-        block: objectFor(canvas, block.id)!.getCenterPoint().x,
-      };
-      // The caption went, the paint stayed, and the frame is on what moved.
-      expect(now.caption - was.caption).toBeGreaterThan(10);
-      expect(now.block).toBeCloseTo(was.block, -0.5);
-      expect(canvas.getActiveObject()).toBe(objectFor(canvas, caption.id));
-    } finally {
-      await teardown();
-    }
-  });
-
-  it("rebuilds the sheet when a stencil is let go, and not when anything else is", async () => {
-    /* A plain move normally skips the rebuild: Fabric has already moved the
-     * very object that was dragged, so tearing the scene down would redraw what
-     * is already right. A stencil is the exception. It does not draw itself —
-     * what it changes is a hole in something else, and that hole is a second
-     * object kept in step by hand while the gesture is open. Filmed on a real
-     * Layout: the words move and the cut stays behind until something rebuilds,
-     * and "Update stamps" was only the nearest button that does one.
-     *
-     * The drift itself is still unexplained. This settles the canvas at the
-     * release instead of leaving it wrong, for one rebuild per mask drag. */
-    try {
-      const canvas = await editor();
-      await addLayoutText();
-      const words = openLayout()!.layers[0];
-      await setLayerField(words.id, "text", "MM");
-      await addLayoutShape("rect");
-      const block = openLayout()!.layers.find((l) => l.id !== words.id)!;
-      await setLayerField(block.id, "maskId", words.id);
-      await until(() =>
-        canvas.getObjects().some((o: FabricObject) => !!o.clipPath?.absolutePositioned),
-      );
-
-      const before = app.version;
-      await dragObject(canvas, objectFor(canvas, words.id)!, 20, 0);
-      await until(() => app.version > before, 5000, "the sheet to be rebuilt");
-
-      /* And the layer it cuts is not a stencil, so it still travels for free —
-         the exception has to stay an exception or every drag pays for it. */
-      const quiet = app.version;
-      await dragObject(canvas, objectFor(canvas, block.id)!, 20, 0);
-      await until(
-        () => findLayer(openLayout()!.layers, block.id)!.x !== 0.5,
-        5000,
-        "the plain move to be written",
-      );
-      expect(app.version).toBe(quiet);
-    } finally {
-      await teardown();
-    }
-  });
-
-  it("keeps a caption's cut whole while the caption is dragged", async () => {
-    /* Words as a stencil. Dragging the caption drags the hole with it — that is
-     * what syncMasks is for — and the cut must stay the same size on the way:
-     * it may land somewhere else, but letters do not lose their strokes in
-     * transit. Reported as "it partly disappears, and only comes back on
-     * Update". */
-    try {
-      const canvas = await editor();
-      await addLayoutText();
-      const words = openLayout()!.layers[0];
-      /* Centred and small, and put back in the middle after the wording
-         changes it. A left-aligned caption holds its left edge while its box
-         grows, so setting the text alone walks the centre right — correct, and
-         it swamped the first version of this test. */
-      await setLayerField(words.id, "align", "center");
-      await setLayerField(words.id, "text", "MM");
-      await setLayerField(words.id, "size", 0.12);
-      await setLayerField(words.id, "x", 0.5);
-      await setLayerField(words.id, "y", 0.5);
-      await addLayoutShape("rect");
-      const block = openLayout()!.layers.find((l) => l.id !== words.id)!;
-      await setLayerField(block.id, "fill", "#00ff00");
-      /* The block fills the tile, so nothing the drag does can carry a letter
-         off its edge — a smaller cut then means the stencil went wrong, not
-         that the words left the paint. */
-      await setLayerField(block.id, "w", 1);
-      await setLayerField(block.id, "h", 1);
-      await setLayerField(block.id, "maskId", words.id);
-      await until(() =>
-        canvas.getObjects().some((o: FabricObject) => !!o.clipPath?.absolutePositioned),
-      );
-      const stencil = canvas
-        .getObjects()
-        .find((o) => (o as { layerId?: string }).layerId === words.id)!;
-
-      const atRest = countColour(canvas, GREEN);
-      expect(atRest).toBeGreaterThan(0);
-      const before = stencil.getCenterPoint();
-      const originBefore = { x: stencil.originX, y: stencil.originY, w: stencil.width };
-      let worst = atRest;
-      /* The object the drag actually moved. Picking a layer rebuilds this
-         canvas — the Layout draws the tile's wording everywhere but on the
-         picked layers — so the reference taken above can be a detached copy by
-         the time the pointer goes down. It reads as "expected 0 to be close to
-         24": the live object moved, the one being measured was not on the
-         canvas any more. */
-      const moved = await dragObject(canvas, stencil, 24, 16, () => {
-        worst = Math.min(worst, countColour(canvas, GREEN));
-      });
-      /* The letters keep their weight all the way. A tenth of slack for the
-         antialiased edges moving over different background, and no more —
-         what this pins is a cut that thins out or vanishes mid-drag. */
-      /* A tenth of slack for antialiased edges over different background, and
-         no more: what this pins is a cut that thins out or vanishes mid-drag. */
-      expect(worst).toBeGreaterThan(Math.round(atRest * 0.9));
-      expect(countColour(canvas, GREEN)).toBeGreaterThan(Math.round(atRest * 0.9));
-
-      /* And the hole went exactly where the hand did. Measured on the canvas
-         and in the model, because the first version of this test moved the
-         caption 224px and blamed the drag: a left-aligned caption holds its
-         left edge while its box grows, so setting the wording had walked its
-         centre right long before any mouse came near it. */
-      const centre = moved.getCenterPoint();
-      expect(centre.x - before.x).toBeCloseTo(24, -0.5);
-      expect(centre.y - before.y).toBeCloseTo(16, -0.5);
-      const now = openLayout()!.layers.find((l) => l.id === words.id)!;
-      expect((now.x - 0.5) * TILE_W).toBeCloseTo(24, -0.5);
-      expect(originBefore.x).toBe("center");
-    } finally {
-      await teardown();
-    }
-  });
-});
-
-describe("a press that picks and drags in the same motion", () => {
-  it("leaves the layer Fabric is moving on the canvas", async () => {
-    /* Picking a layer rebuilds this canvas — the Layout draws the tile's
-     * wording and class on every layer but the picked ones, so which layer is
-     * picked changes what is drawn. A press does the picking and starts the
-     * drag in one motion, and a rebuild answering that pick swaps the object
-     * out from under Fabric's transform: the detached copy follows the mouse,
-     * the one on screen stands still, and the layer only jumps into place when
-     * the release writes the model.
-     *
-     * Measured on the canvas during the gesture, because at rest it looks
-     * right either way. */
-    try {
-      const canvas = await editor();
-      await addLayoutShape("rect");
-      const block = openLayout()!.layers[0];
-      await setLayerField(block.id, "w", 0.3);
-      await setLayerField(block.id, "h", 0.3);
-      await setLayerField(block.id, "x", 0.5);
-      await setLayerField(block.id, "y", 0.5);
-      // Nothing picked, so the press below is what picks it. An insert selects
-      // what it made, and picking it again is what puts it back down.
-      toggleLayoutPick(block.id, false);
-      await until(() => app.layoutSelection.length === 0 && !!objectFor(canvas, block.id));
-      const start = objectFor(canvas, block.id)!.getCenterPoint().x;
-
-      let seen = start;
-      await rawDrag(canvas, TILE_W / 2, TILE_H / 2, 60, 0, () => {
-        const now = objectFor(canvas, block.id);
-        if (now) seen = now.getCenterPoint().x;
-      });
-
-      expect(seen - start).toBeGreaterThan(30);
     } finally {
       await teardown();
     }

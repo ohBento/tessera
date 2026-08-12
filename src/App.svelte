@@ -11,7 +11,6 @@
   import RowIcon from "./RowIcon.svelte";
   import TileRow from "./TileRow.svelte";
   import GridCanvas from "./GridCanvas.svelte";
-  import LayoutCanvas from "./LayoutCanvas.svelte";
   import Properties from "./Properties.svelte";
   import {
     ARCHIVE,
@@ -516,10 +515,6 @@
    *  collapsible for a narrow window, where it would eat the sheet's width. */
   let bedStrip = $state(true);
 
-  /** The Layout canvas — the toolbar's align buttons act on its live objects. */
-  let sheet: LayoutCanvas | undefined = $state();
-  const noPick = $derived(!editing || !app.layoutSelection.length);
-  const fewPicked = $derived(!editing || app.layoutSelection.length < 3);
 
   /* Where a new layer lands. Inside a Layout it joins the sheet; on the wall it
    * goes onto every picked tile at once, which is what the sheet was the only
@@ -968,31 +963,6 @@
           </button>
         {/if}
       {/if}
-      {#if editing}
-        {#if renaming === editing.id}
-          <!-- svelte-ignore a11y_autofocus -->
-          <input
-            class="rename"
-            autofocus
-            onfocus={selectAll}
-            value={editing.name}
-            onblur={(e) => {
-              void renameLayout(editing.id, e.currentTarget.value);
-              renaming = "";
-            }}
-            onkeydown={(e) => renameKey(e, editing.name)}
-          />
-        {:else}
-          <!-- Double-click renames, the same gesture as in the layout list and
-               on a group row. The name is right here while you work on the
-               document; going back to the list to change it is a trip. -->
-          <button
-            class="active"
-            title="Esc closes · double-click renames"
-            ondblclick={() => (renaming = editing.id)}>{editing.name}</button
-          >
-        {/if}
-      {/if}
       <!-- The way to see a folder that changed underneath us. The portraits are
            read once, at startup, and cached for the session — so a restore, or
            files copied into the folder by hand, used to need the app closed and
@@ -1026,21 +996,6 @@
       </button>
     </div>
 
-    {#if editing}
-      <button
-        class="primary"
-        onclick={() => saveLayout(editing.id)}
-        disabled={!canSaveLayout(editing.id) || !!app.busy}
-        title={layoutTiles(editing.id)
-          ? `Applies the changes to ${layoutTiles(editing.id)} tile(s)`
-          : "Not stamped anywhere yet"}
-      >
-        <!-- Not "Save": the Layout is written to disk on every edit, so a
-             save button would promise something that already happened. What
-             this does is re-render and swap the picture in every stamp. -->
-        Update stamps{#if layoutTiles(editing.id)}&nbsp;({layoutTiles(editing.id)}){/if}
-      </button>
-    {:else}
       <!-- Every button below acts on the wall in front of you, and on the
            overview there is none. The open project is deliberately remembered
            while Home shows — that is what makes the way back one click — so
@@ -1135,17 +1090,12 @@
       >
         Reset in game
       </button>
-    {/if}
 
     <span class="status">
       {#if app.busy}
         {app.busy}…
       {:else if app.error}
         {app.error}
-      {:else if editing && canSaveLayout(editing.id)}
-        Saved &middot; changes not on the tiles yet
-      {:else if editing}
-        Saved
       {:else if app.selectedTiles.length}
         <!-- The second half only where it can be anything but zero. Inside a
              project every picked tile is claimed by definition, so it read
@@ -1232,14 +1182,6 @@
            which class it is is the whole question. -->
       {@render tool(`Class icon${insertWhere}`, "✦", () => (iconsOpen = true), !insertInto)}
       <span class="gap"></span>
-      {@render tool("Align left", "⇤", () => sheet?.alignTo("left"), noPick)}
-      {@render tool("Align right", "⇥", () => sheet?.alignTo("right"), noPick)}
-      {@render tool("Center horizontally", "↔", () => sheet?.alignTo("centerX"), noPick)}
-      {@render tool("Center vertically", "↕", () => sheet?.alignTo("centerY"), noPick)}
-      {@render tool("Align top", "⤒", () => sheet?.alignTo("top"), noPick)}
-      {@render tool("Align bottom", "⤓", () => sheet?.alignTo("bottom"), noPick)}
-      {@render tool("Equal horizontal gaps", "⇹", () => sheet?.spreadBy("x"), fewPicked)}
-      {@render tool("Equal vertical gaps", "⇳", () => sheet?.spreadBy("y"), fewPicked)}
     </div>
 
     <!-- Capture phase: Fabric stops contextmenu on its own canvas, so a
@@ -1263,53 +1205,7 @@
         if (moving) void placeTileAt(moving, grid?.tileAtEvent(e) || null);
       }}
     >
-      {#if editing}
-        <!-- The wall's faces beside the sheet, so the design can be tried on
-             one. Composing against black meant stamping to find out whether a
-             caption sat on a forehead; this is the same question answered
-             before the stamp. Clicking a face lays it under the sheet.
-             Deliberately still pictures: rendering the Layout into forty-four
-             of them on every slider drag would cost more than the answer is
-             worth, and the big one shows it already. -->
-        {#if bedChoices().length > 1}
-          <!-- A column of its own beside the tools, not a panel laid over the
-               sheet: the faces are for picking from, and something that covers
-               what it is meant to help with is not a help. Big enough to
-               recognise a character at a glance — at thumbnail size the point
-               of the strip was lost. -->
-          <div class="bedcol">
-            <button
-              class="bedtoggle"
-              title={bedStrip ? "Hide the tile strip" : "Show the tile strip"}
-              onclick={() => (bedStrip = !bedStrip)}
-            >
-              {bedStrip ? "‹" : "›"}
-            </button>
-            {#if bedStrip}
-              <div class="bedstrip">
-                {#each bedChoices() as id (id)}
-                  {@const wearing = tileLayers(id).some((l) => l.layoutId === editing.id)}
-                  <button
-                    class="bed"
-                    class:on={bedFor(editing.id) === id}
-                    class:wearing
-                    title={wearing ? `${id} — already wearing this layout` : id}
-                    onclick={() => setBedTile(id)}
-                  >
-                    <canvas
-                      class="thumb"
-                      width="62"
-                      height="80"
-                      use:portrait={{ id, ready: !!app.deps }}
-                    ></canvas>
-                  </button>
-                {/each}
-              </div>
-            {/if}
-          </div>
-        {/if}
-        <LayoutCanvas bind:this={sheet} />
-      {:else if home}
+      {#if home}
         <!-- The start view, always. With several accounts sharing one folder
              there is no single "the" wall to open, and a newly created
              character has to be visible the moment it turns up — so the way in
@@ -2202,54 +2098,6 @@
     gap: 6px;
     padding: 6px 8px;
     border-bottom: 1px solid #241e3a;
-  }
-
-  /* Its own column in the row, so the sheet keeps the space it had — and no
-     surface of its own: the tools column beside it is separated by one hairline
-     and nothing else, and a second shade here would invent a panel the app does
-     not otherwise have. */
-  .bedcol {
-    display: flex;
-    flex: none;
-    flex-direction: column;
-    align-items: stretch;
-    min-height: 0;
-    border-right: 1px solid #241e3a;
-  }
-
-  .bedstrip {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    padding: 6px;
-    overflow-y: auto;
-    min-height: 0;
-  }
-
-  .bed {
-    padding: 3px;
-    border: 1px solid transparent;
-    border-radius: 4px;
-    background: none;
-    line-height: 0;
-  }
-
-  .bed.on {
-    border-color: #a685ff;
-  }
-
-  /* A tile already carrying this layout — the ones worth checking first. */
-  .bed.wearing {
-    box-shadow: inset 0 0 0 2px #3a2b5e;
-  }
-
-  .bedtoggle {
-    flex: none;
-    padding: 2px 5px;
-    border: 0;
-    border-bottom: 1px solid #241e3a;
-    border-radius: 0;
-    background: none;
   }
 
   .sheetback {
