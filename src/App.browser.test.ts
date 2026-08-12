@@ -1277,10 +1277,10 @@ describe("the Layout editor", () => {
 
   it("imports an SVG at the size its viewBox says, not the browser's 300×150", async () => {
     /* The whole reason importAsset touches SVG at all. Measured the way the app
-     * measures it: an <img> on the stored bytes, which is what Fabric builds
-     * behind every picture layer. Without the rewrite this reads 300×150 — the
-     * CSS default object size — and the icon lands in the Layout at a scale the
-     * file never asked for. */
+     * measures it: an image element on the stored bytes, which is what Fabric
+     * builds behind every picture layer. Without the rewrite this reads
+     * 300×150 — the CSS default object size — and the icon lands in the Layout
+     * at a scale the file never asked for. */
     const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 16"><rect width="64" height="16"/></svg>';
     queuePick(stashPickedFile("klasse.svg", new TextEncoder().encode(svg)));
     await newLayoutDoc("Mit Icon");
