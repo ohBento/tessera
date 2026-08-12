@@ -22,7 +22,10 @@ import {
   app,
   applyLayoutTransform,
   applyTransform,
+  applyTransformBulk,
+  bulkTargets,
   selectLayer,
+  setTileLayerField,
   assignLayoutToSelection,
   assignLayoutToWall,
   canGroupLayers,
@@ -326,6 +329,100 @@ describe("the wall", () => {
     expect(grabbable).toHaveLength(1);
     expect((grabbable[0] as Tagged).tileId).toBe(b);
     expect((canvas.getActiveObject() as Tagged).tileId).toBe(b);
+  });
+
+  it("reaches every picked tile with one field edit, in one undo step", async () => {
+    await enterInbox();
+    const [a, b, c] = app.folderIds;
+    for (const tile of [a, b, c]) {
+      const l = newShapeLayer("rect");
+      l.id = "badge-01";
+      l.fill = "#111111";
+      app.manifest.tiles[tile].layers.push(l);
+    }
+    app.version++;
+    await tick();
+
+    const steps = history.past.length;
+    app.selectedTiles = [a, b];
+    selectLayer("badge-01", a);
+    await setTileLayerField(bulkTargets("badge-01"), "badge-01", "fill", "#ff0000");
+
+    const fill = (tile: string) =>
+      (findLayer(tileLayers(tile), "badge-01") as ShapeLayer).fill;
+    expect(fill(a)).toBe("#ff0000");
+    expect(fill(b)).toBe("#ff0000");
+    // The tile nobody picked keeps its own.
+    expect(fill(c)).toBe("#111111");
+    expect(history.past.length).toBe(steps + 1);
+
+    // And one undo puts all of them back together.
+    await undoEdit();
+    expect(fill(a)).toBe("#111111");
+    expect(fill(b)).toBe("#111111");
+  });
+
+  it("starts a new undo step when the picked tiles change mid-slider", async () => {
+    /* Runs collapse an edit that is still being made — dragging a slider is one
+     * step, not forty. The key says two edits are of the same kind, so the tile
+     * set has to be in it: without that, editing {a,b}, reselecting {c} and
+     * carrying on with the same control folded both into one step, and a single
+     * undo left half the wall changed. */
+    await enterInbox();
+    const [a, b, c] = app.folderIds;
+    for (const tile of [a, b, c]) {
+      const l = newShapeLayer("rect");
+      l.id = "bar-01";
+      app.manifest.tiles[tile].layers.push(l);
+    }
+    app.version++;
+    await tick();
+
+    app.selectedTiles = [a, b];
+    selectLayer("bar-01", a);
+    await setTileLayerField(bulkTargets("bar-01"), "bar-01", "w", 0.3);
+    const afterFirst = history.past.length;
+
+    app.selectedTiles = [c];
+    selectLayer("bar-01", c);
+    await setTileLayerField(bulkTargets("bar-01"), "bar-01", "w", 0.7);
+    expect(history.past.length).toBe(afterFirst + 1);
+  });
+
+  it("places a dragged layer on every picked tile without compounding its size", async () => {
+    /* A shape stores its size and `resize` multiplies it by what Fabric
+     * scaled, so replaying the gesture on each tile would scale each one by
+     * that factor again — tiles that had drifted apart would drift further.
+     * The dragged layer's finished size is what the others copy. */
+    await enterInbox();
+    const [a, b] = app.folderIds;
+    const widths: Record<string, number> = { [a]: 0.4, [b]: 0.2 };
+    for (const tile of [a, b]) {
+      const l = newShapeLayer("rect");
+      l.id = "plate-01";
+      l.w = widths[tile];
+      l.h = 0.1;
+      l.x = 0.5;
+      app.manifest.tiles[tile].layers.push(l);
+    }
+    app.version++;
+    await tick();
+
+    app.selectedTiles = [a, b];
+    selectLayer("plate-01", a);
+    await applyTransformBulk(
+      { layerId: "plate-01", tileId: a, space: "tile", locked: false } as Tagged,
+      { x: 0.3, y: 0.6, rotation: 0, scale: 1, scaleH: 1, fx: 2, fy: 1 },
+      [a, b],
+    );
+
+    const on = (tile: string) => findLayer(tileLayers(tile), "plate-01") as ShapeLayer;
+    // The dragged one took the factor: 0.4 * 2.
+    expect(on(a).w).toBeCloseTo(0.8, 5);
+    // The other one matches it outright rather than doubling its own 0.2.
+    expect(on(b).w).toBeCloseTo(0.8, 5);
+    expect(on(b).x).toBeCloseTo(0.3, 5);
+    expect(on(b).y).toBeCloseTo(0.6, 5);
   });
 
   it("takes a range with shift and a single tile with ctrl", async () => {

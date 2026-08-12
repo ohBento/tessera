@@ -9,7 +9,9 @@
   import {
     app,
     applyTransform,
+    applyTransformBulk,
     assignedTiles,
+    bulkTargets,
     clearAll,
     clearTiles,
     refreshCoverPreview,
@@ -915,7 +917,14 @@
       const obj = opt.target as Tagged | undefined;
       if (!obj?.layerId) return;
       const ids = visibleIds();
-      void applyTransform(obj, readBack(obj, ids.length, ids.indexOf(obj.tileId)));
+      const patch = readBack(obj, ids.length, ids.indexOf(obj.tileId));
+      /* With several tiles picked, one drag places the layer on all of them —
+       * the wall's answer to what a Layout did by owning the design. A layer
+       * spanning the whole wall has no tile and no siblings to match. */
+      const targets = obj.tileId ? bulkTargets(obj.layerId) : [];
+      void (targets.length > 1
+        ? applyTransformBulk(obj, patch, targets)
+        : applyTransform(obj, patch));
     });
 
     const key = (e: KeyboardEvent, down: boolean) => {

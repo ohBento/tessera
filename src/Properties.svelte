@@ -20,7 +20,9 @@
   import {
     openLayout,
     resetCrop,
+    bulkTargets,
     setLayerField,
+    setTileLayerField,
     visibleIds,
     type LayerField,
   } from "./lib/editor.svelte";
@@ -59,7 +61,16 @@
     onPickClass,
   }: { layer: Layer; inLayout?: boolean; onPickClass?: (layerId: string) => void } = $props();
 
-  const set = (key: LayerField, value: unknown) => void setLayerField(layer.id, key, value);
+  /* On the wall an edit reaches every selected tile that carries this layer, in
+   * one undo step; in a Layout, and for a layer spanning the whole wall, there
+   * is one of it and the plain setter is the whole story. bulkTargets answers
+   * with the empty list when no tile is picked, which is what chooses. */
+  const set = (key: LayerField, value: unknown) => {
+    const tiles = inLayout ? [] : bulkTargets(layer.id);
+    void (tiles.length
+      ? setTileLayerField(tiles, layer.id, key, value)
+      : setLayerField(layer.id, key, value));
+  };
 
   /** The shapes this layer could be cut to. Empty outside a Layout, and empty
    *  in one that holds no shape but this — which is what hides the control

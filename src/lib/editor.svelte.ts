@@ -1235,6 +1235,73 @@ export async function applyTransform(
   void refreshCoverPreview();
 }
 
+/** Puts a layer exactly where another one ended up — placement and size, not
+ *  identity: its picture, wording, colour and mask are its own.
+ *
+ *  Absolute values, copied after the gesture has been folded into the layer
+ *  that was dragged. Replaying the gesture instead would be wrong for shapes:
+ *  `resize` multiplies a shape's w and h by what Fabric scaled, so the same
+ *  factor applied to a tile that had drifted would push it further out. The
+ *  intent behind dragging with several tiles picked is "put it here on all of
+ *  them", so here is what gets copied. */
+function copyPlacement(to: Layer, from: Layer, shift: { dx: number; dy: number }) {
+  to.x = from.x + shift.dx;
+  to.y = from.y + shift.dy;
+  to.rotation = from.rotation;
+  if (to.kind === "image" && from.kind === "image") {
+    to.scale = from.scale;
+    if (from.crop) to.crop = { ...from.crop };
+    else delete to.crop;
+  } else if (to.kind === "text" && from.kind === "text") {
+    to.w = from.w;
+    to.h = from.h;
+  } else if (to.kind === "shape" && from.kind === "shape") {
+    to.w = from.w;
+    to.h = from.h;
+  }
+}
+
+/** A canvas gesture, written to the same layer on every tile in `tileIds` —
+ *  one undo step.
+ *
+ *  Only the dragged tile's layer sees the gesture; the rest are placed to match
+ *  it. Fabric moved exactly one object, so every other tile has to be rebuilt
+ *  to show the change — which is why more than one target forces a structural
+ *  bump even when nothing scaled. */
+export async function applyTransformBulk(
+  obj: Tagged,
+  patch: Pick<Layer, "x" | "y" | "rotation"> & Transform,
+  tileIds: string[],
+) {
+  const own = app.manifest.tiles[obj.tileId]?.layers ?? [];
+  const layer = findLayer(own, obj.layerId);
+  if (!layer) return;
+  const others = tileIds
+    .filter((t) => t !== obj.tileId)
+    .map((t) => app.manifest.tiles[t]?.layers ?? [])
+    .map((list) => ({ list, layer: findLayer(list, obj.layerId) }))
+    .filter((x): x is { list: Layer[]; layer: Layer } => !!x.layer);
+  if (!others.length) return applyTransform(obj, patch);
+
+  const shift = nestingShift(own, obj.layerId) ?? { dx: 0, dy: 0 };
+  await mutate(
+    "Move layer",
+    () => {
+      layer.x = patch.x - shift.dx;
+      layer.y = patch.y - shift.dy;
+      layer.rotation = patch.rotation;
+      resize(layer, patch);
+      /* Each target's own nesting, not the dragged one's: the same layer can
+       * sit inside a group on one tile and loose on another, and a position is
+       * stored relative to whatever encloses it. */
+      for (const { list, layer: other } of others)
+        copyPlacement(other, layer, nestingShift(list, obj.layerId) ?? { dx: 0, dy: 0 });
+    },
+    true,
+  );
+  void refreshCoverPreview();
+}
+
 /** Did this gesture actually scale something?
  *
  *  Fabric leaves the factor it applied sitting on the object, and a size that
@@ -1539,19 +1606,85 @@ export type LayerField = keyof TextLayer | keyof ShapeLayer | keyof ImageLayer;
 /** Fields that change how wide a caption's box is. */
 const WIDTH_FIELDS = new Set(["text", "size", "font", "bold", "italic"]);
 
+/** Writes one field onto one layer, keeping an anchored caption's edge put.
+ *
+ *  A caption's x is its centre, so longer words used to push it out sideways in
+ *  both directions — one line of a stack crept left while the next stayed put.
+ *  Left-aligned text has its anchor at the left edge and right-aligned at the
+ *  right, so the centre is moved by half the change to leave that edge where it
+ *  was. Centred text grows around its middle, which is the point of it.
+ *
+ *  Measured per layer, which is why this is a function rather than two lines at
+ *  the one call site: the same edit across several tiles meets a different
+ *  string on each of them once wording lives on the tile, and one width
+ *  measured from whichever tile happened to be first would drift all the
+ *  others. */
+function writeField(layer: Layer, key: LayerField, value: unknown) {
+  const anchored =
+    layer.kind === "text" && WIDTH_FIELDS.has(key) && (layer.align ?? "center") !== "center";
+  const was = anchored ? textWidth(layer) : 0;
+  (layer as unknown as Record<string, unknown>)[key] = value;
+  if (!anchored) return;
+  const grew = textWidth(layer as TextLayer) - was;
+  layer.x += ((layer as TextLayer).align === "right" ? -grew : grew) / 2;
+}
+
+/** The field's own name, spaced out: one setter stands behind every slider,
+ *  swatch and dropdown in the panel, so a single label for the lot would read
+ *  "Change property" forty different ways. */
+const fieldLabel = (key: LayerField) =>
+  `Change ${String(key).replace(/([A-Z])/g, " $1").toLowerCase()}`;
+
+/** Which tiles a field edit reaches: every selected tile that carries a layer
+ *  by this id, or just the one the layer was picked on.
+ *
+ *  Matched on the id alone and deliberately not on the name. Ids are shared
+ *  across tiles because one design was put on all of them, which is exactly the
+ *  set an edit should reach. Auto-names collide between unrelated layers and
+ *  would reach tiles nobody pointed at. */
+export const bulkTargets = (id: string): string[] => {
+  const scope =
+    app.selectedTiles.length > 1
+      ? app.selectedTiles
+      : app.selectedTile
+        ? [app.selectedTile]
+        : [];
+  return scope.filter((t) => !!findLayer(app.manifest.tiles[t]?.layers ?? [], id));
+};
+
+/** One field, on the same layer of every tile in `tileIds` — one undo step.
+ *
+ *  The wall's answer to what a Layout used to do by owning the design: pick the
+ *  tiles, change the thing once. Selection is the whole mechanism, so there is
+ *  no link to go stale and nothing to re-sync; GIMP 3 dropped its chain icons
+ *  for the same reason. */
+export async function setTileLayerField(
+  tileIds: string[],
+  id: string,
+  key: LayerField,
+  value: unknown,
+) {
+  const targets = tileIds
+    .map((t) => findLayer(app.manifest.tiles[t]?.layers ?? [], id))
+    .filter((l): l is Layer => !!l && (l as unknown as Record<string, unknown>)[key] !== value);
+  if (!targets.length) return;
+  await mutate(
+    fieldLabel(key),
+    () => {
+      for (const layer of targets) writeField(layer, key, value);
+    },
+    true,
+    /* The tile set belongs in the key. Without it, editing {A,B}, reselecting
+     * {C} and carrying on with the same slider folds both into one undo step —
+     * the run only ends when the key changes. */
+    `field:${id}:${key}:${tileIds.join(",")}`,
+  );
+}
+
 export async function setLayerField(id: string, key: LayerField, value: unknown) {
   const layer = anyLayer(id) as Record<string, unknown> | undefined;
   if (!layer || layer[key] === value) return;
-  /* A caption's x is its centre, so longer words used to push it out sideways
-   * in both directions — one line of a stack crept left while the next stayed
-   * put. Left-aligned text has its anchor at the left edge and right-aligned at
-   * the right, so the centre is moved by half the change to leave that edge
-   * where it was. Centred text grows around its middle, which is the point of
-   * it. */
   const caption = layer as unknown as Layer;
-  const anchored =
-    caption.kind === "text" && WIDTH_FIELDS.has(key) && (caption.align ?? "center") !== "center";
-  const was = anchored ? textWidth(caption as TextLayer) : 0;
   /* Saying "a class per tile" on a cutter says it for whatever it cuts. The
    * rule only lets a per-tile cutter cut a per-tile layer, so the switch used
    * to void the mask instead of extending it: the gradient block kept a maskId
@@ -1569,18 +1702,12 @@ export async function setLayerField(id: string, key: LayerField, value: unknown)
       ? findLayer(openLayout()?.layers ?? [], value)
       : undefined;
   const follow = !!cutter?.perTile && !(layer as unknown as Layer).perTile;
-  /* The field's own name, spaced out: this one setter stands behind every
-   * slider, swatch and dropdown in the panel, so a single label for the lot
-   * would read "Change property" forty different ways. */
   await mutate(
-    `Change ${String(key).replace(/([A-Z])/g, " $1").toLowerCase()}`,
+    fieldLabel(key),
     () => {
-      layer[key] = value;
+      writeField(caption, key, value);
       if (follow) layer.perTile = true;
       for (const l of travellers) l.perTile = true;
-      if (!anchored) return;
-      const grew = textWidth(caption as TextLayer) - was;
-      caption.x += ((caption as TextLayer).align === "right" ? -grew : grew) / 2;
     },
     true,
     // One run per field per layer: typing a caption is one step, and switching
