@@ -21,6 +21,8 @@ import {
   addLayoutText,
   app,
   applyLayoutTransform,
+  applyTransform,
+  selectLayer,
   assignLayoutToSelection,
   assignLayoutToWall,
   canGroupLayers,
@@ -81,6 +83,8 @@ import {
   groupShift,
   isGradient,
   layerLabel,
+  newImageLayer,
+  newShapeLayer,
   type ImageLayer,
   type ShapeLayer,
   type TextLayer,
@@ -90,7 +94,7 @@ import {
   offLayouts,
 } from "./lib/stamps";
 import { maskChoices, maskOffers } from "./lib/model";
-import { textWidth } from "./lib/scene";
+import { textWidth, type Tagged } from "./lib/scene";
 import {
   canSaveLayout,
   undoLabel,
@@ -251,6 +255,77 @@ describe("the wall", () => {
     expect(openLayout()!.stamped).toBeTruthy();
     // And the tile's own row can find it.
     expect(tileCaptions(a)).toHaveLength(1);
+  });
+
+  it("edits the layer on the tile it was picked on, not the first of that name", async () => {
+    /* Two tiles, one layer id. That is not a contrived shape: the v6→v7 fold
+     * copied every shared stack onto its tiles keeping the ids, and a design
+     * dissolved across a wall keeps them on purpose — the shared id is what
+     * lets one edit reach the same layer on every selected tile.
+     *
+     * So "the selected layer" is a pair, and it has to stay one all the way to
+     * the write. It did not: the write looked the id up by scanning every tile
+     * and taking the first hit, so a caption dragged on the second tile moved
+     * on the first one instead — the portrait under the pointer did not budge,
+     * and a portrait somewhere else on the wall quietly did. */
+    await enterInbox();
+    const [a, b] = app.folderIds;
+
+    const twin = () => {
+      const l = newImageLayer("block:#00ff00");
+      l.id = "shared-01";
+      l.x = 0.5;
+      l.y = 0.5;
+      return l;
+    };
+    app.manifest.tiles[a].layers.push(twin());
+    app.manifest.tiles[b].layers.push(twin());
+    app.version++;
+    await tick();
+
+    selectLayer("shared-01", b);
+    await applyTransform(
+      { layerId: "shared-01", tileId: b, space: "tile", locked: false } as Tagged,
+      { x: 0.25, y: 0.75, rotation: 0, scale: 0.5, scaleH: 0.5, fx: 1, fy: 1 },
+    );
+
+    const on = (tile: string) => findLayer(tileLayers(tile), "shared-01")!;
+    expect(on(b).x).toBeCloseTo(0.25, 5);
+    expect(on(b).y).toBeCloseTo(0.75, 5);
+    // The other portrait was never asked about.
+    expect(on(a).x).toBeCloseTo(0.5, 5);
+    expect(on(a).y).toBeCloseTo(0.5, 5);
+  });
+
+  it("hands the canvas handles to the picked tile's copy alone", async () => {
+    /* The other half of the same pair. Matching on the id alone made every
+     * copy of a dissolved design grabbable at once, and the active handles
+     * landed on whichever one Fabric happened to list first. */
+    await enterInbox();
+    const [a, b] = app.folderIds;
+    /* A shape, not a picture: the app resolves assets through Tauri and a
+     * made-up name never loads, so nothing would reach the canvas to grab. */
+    for (const tile of [a, b]) {
+      const l = newShapeLayer("rect");
+      l.id = "twin-01";
+      l.w = 0.4;
+      l.h = 0.4;
+      app.manifest.tiles[tile].layers.push(l);
+    }
+    app.version++;
+    await tick();
+
+    selectLayer("twin-01", b);
+    const canvas = (window as { tesseraWall?: fabric.Canvas }).tesseraWall!;
+    await until(() => canvas.getObjects().some((o) => (o as Tagged).layerId === "twin-01"));
+    await until(() => !!canvas.getActiveObject());
+
+    const grabbable = canvas
+      .getObjects()
+      .filter((o) => (o as Tagged).layerId === "twin-01" && o.selectable);
+    expect(grabbable).toHaveLength(1);
+    expect((grabbable[0] as Tagged).tileId).toBe(b);
+    expect((canvas.getActiveObject() as Tagged).tileId).toBe(b);
   });
 
   it("takes a range with shift and a single tile with ctrl", async () => {

@@ -473,15 +473,26 @@
    * in the sidebar handed it straight back: anything a Layout owns could be
    * dragged on the wall, and "Stempel aktualisieren" then threw half of those
    * nudges away and kept the other half. */
+  /** Is this object the selected layer *on the selected tile*?
+   *
+   *  The id alone is not the question. A design dissolved onto forty-four tiles
+   *  puts the same layer id on all of them, so matching by id made every copy
+   *  grabbable at once and handed the active handles to whichever one Fabric
+   *  listed first — a caption dragged on tile 40 while the pointer was on
+   *  tile 12. A wall-spanning layer has no tile and answers "" on both sides. */
+  const isPick = (o: fabric.Object) =>
+    (o as Tagged).layerId === app.selected && ((o as Tagged).tileId ?? "") === app.selectedTile;
+
   $effect(() => {
     if (!canvas) return;
-    const chosen = app.selected;
+    app.selected;
+    app.selectedTile;
     app.version;
     void building.then(() => {
       if (!canvas) return;
       for (const o of canvas.getObjects()) {
         const mine = (o as Tagged).layerId;
-        if (mine) o.evented = o.selectable = mine === chosen && !(o as Tagged).locked;
+        if (mine) o.evented = o.selectable = isPick(o) && !(o as Tagged).locked;
       }
       // A rubber band would only ever catch the one grabbable object.
       canvas.selection = false;
@@ -493,12 +504,14 @@
    * every object and the id alone would not have changed. */
   $effect(() => {
     const id = app.selected;
+    app.selectedTile;
     app.version;
     if (!canvas) return;
     void building.then(() => {
       if (!canvas) return;
-      if ((canvas.getActiveObject() as Tagged | null)?.layerId === id) return;
-      const obj = id && canvas.getObjects().find((o) => (o as Tagged).layerId === id);
+      const live = canvas.getActiveObject();
+      if (live && isPick(live)) return;
+      const obj = id && canvas.getObjects().find(isPick);
       if (obj) canvas.setActiveObject(obj);
       else canvas.discardActiveObject();
       canvas.requestRenderAll();
@@ -784,7 +797,9 @@
 
     const pickedOnCanvas = (opt: { selected?: fabric.Object[]; target?: fabric.Object }) => {
       if (rebuilding) return;
-      selectLayer(((opt.selected?.[0] ?? opt.target) as Tagged | undefined)?.layerId ?? "");
+      // The tile comes off the object, so a click says which portrait it meant.
+      const picked = (opt.selected?.[0] ?? opt.target) as Tagged | undefined;
+      selectLayer(picked?.layerId ?? "", picked?.tileId ?? "");
     };
     canvas.on("selection:created", pickedOnCanvas);
     canvas.on("selection:updated", pickedOnCanvas);

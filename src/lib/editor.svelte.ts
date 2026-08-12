@@ -130,6 +130,15 @@ export const app = $state({
   version: 0,
   /** Layer picked in the list or on the canvas, "" for none. */
   selected: "",
+  /** Which tile that layer was picked on, "" for a wall-spanning one.
+   *
+   *  A layer id is not unique across the wall and never was: the v6→v7 fold
+   *  copied every shared stack onto its tiles keeping the ids, and a design
+   *  dissolved onto forty-four tiles keeps them too, on purpose — that shared id
+   *  is what lets one edit reach the same layer on every selected tile. So "the
+   *  selected layer" is a pair, and the id alone is a question with several
+   *  right answers: whichever tile happened to be scanned first got the edit. */
+  selectedTile: "",
   /** Tiles picked on the canvas. What a new project gets built from. */
   selectedTiles: [] as string[],
   /** Where a Shift-range measures from: the last tile picked without Shift. */
@@ -947,14 +956,26 @@ export const jumpEdit = (delta: number) =>
  *
  *  Both, because those are the only two places a layer can be — deleting or
  *  hiding one and finding nothing used to silently do nothing at all. */
-const listOf = (id: string): Layer[] | undefined => {
+const listOf = (id: string, tileId = app.selectedTile): Layer[] | undefined => {
+  /* The named tile first. An id is unique within a tile and not across the
+   * wall, so the scan below answers "some tile holding a layer by this name" —
+   * fine while every such layer was a locked copy of one design, wrong the
+   * moment two tiles carry the same id and either may be edited. Callers that
+   * know the tile say so; the scan stays for the ones that cannot. */
+  const own = tileId ? app.manifest.tiles[tileId]?.layers : undefined;
+  if (own && findLayer(own, id)) return own;
   const grid = openProject()?.gridLayers;
   if (grid && findLayer(grid, id)) return grid;
   return Object.values(app.manifest.tiles).find((t) => !!findLayer(t.layers, id))?.layers;
 };
 
-export function selectLayer(id: string) {
+/** Picks a layer, and the tile it was picked on — "" for a wall-spanning one.
+ *
+ *  Both together, always: leaving the tile behind from a previous pick is how
+ *  an edit lands on the layer of that name on the wrong portrait. */
+export function selectLayer(id: string, tileId = "") {
   if (app.selected !== id) app.selected = id;
+  if (app.selectedTile !== tileId) app.selectedTile = tileId;
 }
 
 /** Hides or shows a layer — and, for a stamp, the whole assignment.
@@ -1187,12 +1208,24 @@ export async function applyTransform(
   obj: Tagged,
   patch: Pick<Layer, "x" | "y" | "rotation"> & Transform,
 ) {
-  const list = listOf(obj.layerId) ?? app.manifest.tiles[obj.tileId]?.layers ?? [];
+  /* The object's own tile decides, not a scan of the wall. Every canvas object
+   * carries the tile it was built for, so the one thing that cannot be
+   * ambiguous here is which stack to write to — and a scan that happened to
+   * find the same id on an earlier tile wrote the drag onto that portrait
+   * instead, leaving the one under the pointer untouched. */
+  const list = obj.tileId
+    ? (app.manifest.tiles[obj.tileId]?.layers ?? [])
+    : (listOf(obj.layerId, "") ?? []);
   const layer = findLayer(list, obj.layerId);
   if (!layer) return;
+  /* A layer inside a group renders at its own position plus every enclosing
+   * group's displacement, so the position read off the canvas has that folded
+   * in — subtract it again, exactly as the Layout path does, or the layer jumps
+   * by the group's offset on the first drag. Groups reach tiles now. */
+  const shift = nestingShift(list, obj.layerId) ?? { dx: 0, dy: 0 };
   await mutate("Move layer", () => {
-    layer.x = patch.x;
-    layer.y = patch.y;
+    layer.x = patch.x - shift.dx;
+    layer.y = patch.y - shift.dy;
     layer.rotation = patch.rotation;
     resize(layer, patch);
   }, scaled(patch));

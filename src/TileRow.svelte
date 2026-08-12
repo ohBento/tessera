@@ -156,7 +156,7 @@
       : "Switched off on this tile — nothing to place"}
     onclick={() => {
       app.selectedTiles = [tileId];
-      selectLayer(layerId);
+      selectLayer(layerId, tileId);
       framing = true;
     }}
   >
@@ -179,8 +179,8 @@
   <ul class="indent">
     {#each rows as layer (layer.id)}
       <li
-        class:selected={app.selected === layer.id}
-        aria-current={app.selected === layer.id ? "true" : undefined}
+        class:selected={app.selected === layer.id && app.selectedTile === id}
+        aria-current={app.selected === layer.id && app.selectedTile === id ? "true" : undefined}
         class:drop-before={drag.on?.id === layer.id && drag.on.where === "before"}
         class:drop-after={drag.on?.id === layer.id && drag.on.where === "after"}
         draggable="true"
@@ -215,7 +215,7 @@
         <button
           class="name"
           class:dimmed={layer.hidden}
-          onclick={() => selectLayer(layer.id)}
+          onclick={() => selectLayer(layer.id, id)}
           ondblclick={() => layer.layoutId && openLayoutDoc(layer.layoutId)}
           title={layer.layoutId ? "Double-click opens the layout" : "Select this layer"}
         >
