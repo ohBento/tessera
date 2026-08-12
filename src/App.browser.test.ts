@@ -74,6 +74,8 @@ import { TILE_H, TILE_W } from "./lib/bmp";
 import { dragObject } from "./test/gestures";
 import {
   undoLabel,
+  redoLabel,
+  tileHeadline,
   tileIcons,
   keepAllCharacters,
   keepCharacter,
@@ -977,5 +979,121 @@ describe("the layer panel", () => {
     // One step, not two: the panel is a bulk editor and undo has to match.
     expect(historySteps().length).toBe(before + 1);
     void layer;
+  });
+});
+
+describe("what the wall lost with the layout editor", () => {
+  /* Rebuilt from the list of tests the demolition removed. Most of that list
+   * described stamps and assignments and went with them; these are the ones
+   * whose behaviour survived the move onto the tiles, so losing their cover
+   * was an accident rather than a consequence. */
+
+  it("adds a layer to every picked tile under one id", async () => {
+    /* One id across the wall is what makes a bulk edit possible at all: the
+     * panel, the row and a drag all find the layer on each tile by the id of
+     * the one that was picked. Insert them under separate ids and every edit
+     * silently reaches one tile. */
+    await enterInbox();
+    const [a, b] = app.folderIds;
+    app.selectedTiles = [a, b];
+    await addTileText();
+
+    const here = tileLayers(a).at(-1)!;
+    const there = tileLayers(b).at(-1)!;
+    expect(there.id).toBe(here.id);
+    expect(historySteps().at(-1)?.label).toBe("Add caption");
+  });
+
+  it("keeps a tile archived when its layers are cleared", async () => {
+    /* Clearing used to hand the tile back a fresh empty one, which took the
+     * archived flag with it and put the portrait back on the wall — the whole
+     * reason stripTile names the fields it clears instead of rebuilding. */
+    await enterInbox();
+    const [id] = app.folderIds;
+    app.selectedTiles = [id];
+    await addTileShape("rect");
+    await archiveSelection(true);
+    expect(archived()).toContain(id);
+
+    app.selectedTiles = [id];
+    await stripSelectedTiles();
+    expect(tileLayers(id)).toHaveLength(0);
+    expect(archived()).toContain(id);
+  });
+
+  it("leads with what the tile says, and treats the shared placeholder as no name", async () => {
+    /* The headline reads the caption's own words. It used to ask the tile's
+     * wording record — where a Layout's shared caption kept each portrait's
+     * name — and the migration empties that, so every row had quietly fallen
+     * back to its id. */
+    await enterInbox();
+    const [id] = app.folderIds;
+    app.selectedTiles = [id];
+    await addTileText();
+    const caption = tileLayers(id).at(-1)!;
+
+    // A caption every tile shares names none of them.
+    await setTileLayerField([id], caption.id, "text", "{{id}}");
+    expect(tileHeadline(id)).toBe("");
+
+    await setTileLayerField([id], caption.id, "text", "Nachtklinge");
+    expect(tileHeadline(id)).toBe("Nachtklinge");
+  });
+
+  it("names the step the undo button is about to take back", async () => {
+    /* Ctrl+Z on a wall of forty-four portraits can reach anywhere, and every
+     * other edit says what it touched by touching it. This one has to say so
+     * in words before it is pressed. */
+    await enterInbox();
+    const [id] = app.folderIds;
+    app.selectedTiles = [id];
+    await addTileShape("rect");
+    expect(undoLabel()).toBe("Add shape");
+
+    await undoEdit();
+    expect(redoLabel()).toBe("Add shape");
+  });
+
+  it("keeps one gesture to one undo step", async () => {
+    /* A slider is a burst of writes. Each one landing in the history would
+     * make Ctrl+Z walk back through a drag a pixel at a time — so a run key
+     * folds them, and a different field starts a new step. */
+    await enterInbox();
+    const [id] = app.folderIds;
+    app.selectedTiles = [id];
+    await addTileShape("rect");
+    const shape = tileLayers(id).at(-1)!;
+    const steps = historySteps().length;
+
+    for (const o of [0.9, 0.8, 0.7]) await setTileLayerField([id], shape.id, "opacity", o);
+    expect(historySteps().length).toBe(steps + 1);
+
+    await setTileLayerField([id], shape.id, "fill", "#123456");
+    expect(historySteps().length).toBe(steps + 2);
+  });
+
+  it("opens the class grid for that tile, from its row", async () => {
+    /* The sheet is App's — one of them serves the whole window — so the row
+     * asks for it rather than owning one. The pair it hands over is what
+     * decides whether the pick writes this tile's layer or a wall-wide one,
+     * and it used to write a per-tile record that nothing read. */
+    await enterInbox();
+    const [id] = app.folderIds;
+    app.selectedTiles = [id];
+    await addTileShape("icon", "Ranger");
+    await tick();
+
+    const badge = [...document.querySelectorAll("button.swatch.art")].at(-1) as HTMLButtonElement;
+    expect(badge).toBeTruthy();
+    badge.click();
+    await tick();
+
+    const witch = [...document.querySelectorAll("button")].find(
+      (b) => b.title === "Witch",
+    ) as HTMLButtonElement;
+    expect(witch).toBeTruthy();
+    witch.click();
+    await until(() => (tileIcons(id)[0]?.icon ?? "") === "Witch");
+    expect(undoLabel()).toBe("Change icon");
   });
 });

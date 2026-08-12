@@ -49,7 +49,6 @@
     tilePaintChoices,
     tileProject,
     tileShapes,
-    tileText,
     unplace,
   } from "./lib/editor.svelte";
   import { ICON_NAMES, iconArt } from "./lib/icons";

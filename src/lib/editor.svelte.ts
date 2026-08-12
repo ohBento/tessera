@@ -535,8 +535,16 @@ export const tileIcons = (tileId: string): ShapeLayer[] =>
  *  and the name is the one at the top. */
 export const tileHeadline = (tileId: string): string => {
   for (const caption of tileCaptions(tileId)) {
-    const own = tileText(tileId, caption.id)?.trim();
-    if (own) return own;
+    /* The caption's own words. It used to ask the tile's wording record, which
+       was where a Layout's shared caption kept each portrait's name — the
+       migration empties that record and the words are on the layer, so the
+       headline had quietly stopped finding any and every row fell back to its
+       id. */
+    const own = caption.text.trim();
+    /* "{{id}}" is the placeholder every tile shares, so it names none of them:
+       the row prints the id on its second line already, and echoing it here
+       would show the same number twice. */
+    if (own && own !== "{{id}}") return own;
   }
   return "";
 };
@@ -601,31 +609,6 @@ export async function pickTileImage(tileId: string, layerId: string) {
     const asset = await importAsset(app.dir, path);
     await setTileLayerField([tileId], layerId, "asset", asset);
   });
-}
-
-/** This tile's wording for a caption, or undefined when it has none of its own
- *  and shows the layer's default. */
-export const tileText = (tileId: string, layerId: string): string | undefined =>
-  app.manifest.tiles[tileId]?.text[layerId];
-
-/** Sets one tile's wording.
- *
- *  An emptied field stores "" and does not delete the key. Deleting it would
- *  make layerText fall back to the layer's default, so the words the user just
- *  cleared would reappear the moment the last character went — which is
- *  exactly the bug this project has already had once. */
-export async function setTileText(tileId: string, layerId: string, text: string) {
-  const tile = app.manifest.tiles[tileId];
-  if (!tile || tile.text[layerId] === text) return;
-  await mutate("Type caption", () => (tile.text[layerId] = text), true, `text:${tileId}:${layerId}`);
-}
-
-/** Drops the override so the tile follows the layer's default again — the only
- *  way back, precisely because clearing the field does not do this. */
-export async function clearTileText(tileId: string, layerId: string) {
-  const tile = app.manifest.tiles[tileId];
-  if (!tile || !(layerId in tile.text)) return;
-  await mutate("Reset caption", () => delete tile.text[layerId]);
 }
 
 export async function renameProject(projectId: string, name: string) {
