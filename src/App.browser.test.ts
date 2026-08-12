@@ -23,6 +23,7 @@ import {
   applyLayoutTransform,
   applyTransform,
   applyTransformBulk,
+  addTileText,
   bulkTargets,
   selectLayer,
   setTileLayerField,
@@ -423,6 +424,28 @@ describe("the wall", () => {
     expect(on(b).w).toBeCloseTo(0.8, 5);
     expect(on(b).x).toBeCloseTo(0.3, 5);
     expect(on(b).y).toBeCloseTo(0.6, 5);
+  });
+
+  it("adds a caption to every picked tile at once, sharing its id", async () => {
+    /* The shared id is the point, not an accident: it is what makes the new
+     * caption bulk-editable straight away, and it is the shape a stamped
+     * design left behind minus the stamp. */
+    await enterInbox();
+    const [a, b, c] = app.folderIds;
+    const steps = history.past.length;
+
+    app.selectedTiles = [a, b];
+    await addTileText();
+
+    const caption = (tile: string) => tileLayers(tile).find((l) => l.kind === "text");
+    expect(caption(a)).toBeTruthy();
+    expect(caption(b)).toBeTruthy();
+    expect(caption(c)).toBeUndefined();
+    expect(caption(a)!.id).toBe(caption(b)!.id);
+    expect(history.past.length).toBe(steps + 1);
+
+    // And it is immediately what a bulk edit reaches.
+    expect(bulkTargets(caption(a)!.id).sort()).toEqual([a, b].sort());
   });
 
   it("takes a range with shift and a single tile with ctrl", async () => {

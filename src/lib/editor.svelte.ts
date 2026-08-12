@@ -26,6 +26,7 @@ import {
   duplicateLayout,
   emptyManifest,
   cutBy,
+  clone,
   findLayer,
   findList,
   groupShift,
@@ -1589,6 +1590,58 @@ export async function addLayoutShape(shape: ShapeKind, icon?: string) {
     layout.layers.push(l);
     selectLayoutLayer(l.id);
   });
+}
+
+/** Puts a new layer on every selected tile — one undo step.
+ *
+ *  The same id on each of them, deliberately. That shared id is what makes the
+ *  new layer bulk-editable straight away: pick the tiles again later and one
+ *  edit reaches all of them. It is the same shape a stamped design left behind,
+ *  minus the stamp.
+ *
+ *  Named per tile rather than once, because a name is a position in that tile's
+ *  own stack — the third caption on one portrait may be the first on another,
+ *  and a name claiming otherwise is worse than a name that differs. */
+async function addToTiles(label: string, make: () => Layer) {
+  const tiles = app.selectedTiles.filter((t) => app.manifest.tiles[t]);
+  if (!tiles.length) return;
+  const proto = make();
+  await mutate(label, () => {
+    for (const t of tiles) {
+      const l = clone(proto);
+      nameInStack(l, app.manifest.tiles[t].layers);
+      app.manifest.tiles[t].layers.push(l);
+    }
+    selectLayer(proto.id, tiles[0]);
+  });
+}
+
+/** Adds a picture to every selected tile. */
+export async function addTileImage() {
+  if (!app.selectedTiles.length) return;
+  const path = await pickFile({ filters: [IMAGE_FILTER] });
+  if (typeof path !== "string") return;
+  await run("import", async () => {
+    const asset = await importAsset(app.dir, path);
+    await addToTiles("Add picture", () => newImageLayer(asset));
+  });
+}
+
+/** Adds a caption to every selected tile.
+ *
+ *  Near the bottom, where a portrait's name goes, and "{{id}}" resolves against
+ *  each tile as it is drawn — so one caption added to forty tiles reads as
+ *  forty different names without anything further being typed. */
+export async function addTileText() {
+  await addToTiles("Add caption", () => {
+    const l = newTextLayer();
+    l.y = 0.85;
+    return l;
+  });
+}
+
+export async function addTileShape(shape: ShapeKind, icon?: string) {
+  await addToTiles("Add shape", () => newShapeLayer(shape, icon));
 }
 
 /** Any field any kind of layer has.
