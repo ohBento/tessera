@@ -49,12 +49,11 @@ import {
   takeSnapshot,
   tileLayers,
   unplace,
+  visibleIds,
   renameLayer,
   tileCaptions,
   toggleLayerHidden,
   toggleTile,
-} from "./lib/editor.svelte";
-import {
 } from "./lib/editor.svelte";
 import {
   emptyManifest,
@@ -69,7 +68,9 @@ import {
   type TextLayer,
 } from "./lib/model";
 import { maskChoices, maskOffers } from "./lib/model";
-import { textWidth, type Tagged } from "./lib/scene";
+import { cellAt, textWidth, type Tagged } from "./lib/scene";
+import { TILE_H, TILE_W } from "./lib/bmp";
+import { dragObject } from "./test/gestures";
 import {
   undoLabel,
   tileIcons,
@@ -807,7 +808,97 @@ describe("putting the game's own portraits back", () => {
   });
 });
 
+describe("the placing tool", () => {
+  /* The one mode the wall has, and the only way to move a layer that is baked
+   * to pixels before its cell clips it — a masked picture, a class icon. The
+   * object on the canvas for those is a flat image at the cell's origin, so
+   * `object:modified` refuses it outright and a transparent stand-in is dragged
+   * instead.
+   *
+   * It went on working the whole time it had stopped doing anything: the drag
+   * wrote a Frame, the tile's offset from a design that no longer exists, into
+   * a record the renderer stopped reading when the stamps came apart. The
+   * stand-in moved, the picture under it did not, and the next rebuild put the
+   * frame back where the layer still was. Nothing failed and nothing said so,
+   * which is why this is a gesture and not a unit test. */
+  async function placing() {
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const layer = tileLayers(tile).at(-1)!;
+    selectLayer(layer.id, tile);
 
+    const mode = [...document.querySelectorAll("button")].find((b) =>
+      (b.title ?? "").startsWith("Place a tile's own layers"),
+    ) as HTMLButtonElement;
+    mode.click();
 
+    const canvas = (window as { tesseraWall?: fabric.Canvas }).tesseraWall!;
+    const current = () =>
+      canvas.getObjects().find((o) => (o as Tagged & { framing?: boolean }).framing);
+    await until(() => !!current());
+    /* Waited out rather than taken as soon as one appears. Adding the layer
+     * bumps the document, the wall redraws the tile, and the effect that owns
+     * the stand-in puts up a fresh one — so the first object to show up is
+     * often replaced a frame later. A gesture against that stale instance is
+     * dropped on the floor by `opt.target === stand`, and the test then fails
+     * having proved nothing about the code it was written for. Held still for
+     * a stretch first, then taken. */
+    let held = current();
+    let steady = 0;
+    await until(() => {
+      const now = current();
+      steady = now && now === held ? steady + 1 : 0;
+      held = now;
+      return steady >= 8;
+    });
+    const stand = held!;
+    return { canvas, stand, tile, layerId: layer.id };
+  }
 
+  it("puts the stand-in on the layer's own tile, not on whichever tile matched first", async () => {
+    const { stand, tile, layerId } = await placing();
+    /* Both, and the tile especially: applyTransform resolves the stack from the
+     * object's own tile, and a stand-in carrying only a layer id sent the drag
+     * through a scan of the wall — which wrote it onto the first tile holding
+     * that id, leaving the one under the pointer alone. */
+    expect((stand as Tagged).layerId).toBe(layerId);
+    expect((stand as Tagged).tileId).toBe(tile);
+  });
 
+  it("moves the layer it stands for", async () => {
+    const { canvas, stand, tile, layerId } = await placing();
+    const before = findLayer(app.manifest.tiles[tile]!.layers, layerId)!;
+    const from = { x: before.x, y: before.y };
+
+    await dragObject(canvas, stand, 120, 90);
+    await until(() => {
+      const l = findLayer(app.manifest.tiles[tile]!.layers, layerId)!;
+      return l.x !== from.x || l.y !== from.y;
+    });
+
+    const after = findLayer(app.manifest.tiles[tile]!.layers, layerId)!;
+    /* Where the frame ended up, not where the hand pushed it: the wall pulls a
+     * dragged edge onto its cell and onto the layer's neighbours, so the layer
+     * is meant to land a few pixels off the raw gesture — 0.175 of the tile for
+     * a drag of 0.192. What must hold is that the two agree, the picture under
+     * the frame that was dragged, which is exactly what stopped being true when
+     * the drag wrote a Frame record nothing read. */
+    const cell = cellAt(visibleIds().indexOf(tile));
+    const centre = stand.getCenterPoint();
+    expect(after.x).toBeCloseTo((centre.x - cell.x) / TILE_W, 3);
+    expect(after.y).toBeCloseTo((centre.y - cell.y) / TILE_H, 3);
+    // And it travelled the way it was pushed, snapping or no snapping.
+    expect(after.x - from.x).toBeGreaterThan(0.1);
+    expect(after.y - from.y).toBeGreaterThan(0.08);
+  });
+
+  it("leaves no per-tile frame record behind", async () => {
+    const { canvas, stand, tile } = await placing();
+    await dragObject(canvas, stand, 60, 40);
+    /* The whole point of the rewiring: the placement is on the layer, and
+     * nothing grows a second copy of it beside the tile. */
+    expect((app.manifest.tiles[tile] as unknown as { frame?: unknown }).frame).toBeUndefined();
+  });
+});

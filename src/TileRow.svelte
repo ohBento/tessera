@@ -29,7 +29,6 @@
   } from "./lib/rows.svelte";
   import {
     app,
-    clearTileFrame,
     dropTileLayer,
     fileTile,
     folders,
@@ -42,7 +41,6 @@
     toggleTile,
     setTileLayerField,
     tileCaptions,
-    tileFrame,
     tileHeadline,
     tileIcons,
     tileImageChoices,
@@ -72,8 +70,6 @@
     openIcons: (target: { tile: string; layer: string }) => void;
   } = $props();
 
-  /** A holder's rows as the list draws them: topmost first, and without the
-   *  live copies a Layout keeps there — the stamp row speaks for them. */
   /** A tile's rows as the list draws them: topmost first. Every layer gets a
    *  row now — the filter that hid a layout's live copies went with layouts. */
   const stampsOf = (layers: Layer[]) => [...layers].reverse();
@@ -116,9 +112,10 @@
 </script>
 
 <!-- Where a tile says "this one, here". The tool needs a tile and one of its
-     live layers; both are on this row already, so the button hands it the pair
-     and switches the mode on rather than asking for three clicks in two places.
-     Beside it the way back: the layer as the Layout placed it. -->
+     layers; both are on this row already, so the button hands it the pair and
+     switches the mode on rather than asking for three clicks in two places.
+     There is no way back beside it any more: the drag writes the layer, so
+     undo is the way back, the same as every other edit on the wall. -->
 {#snippet placeRow(tileId: string, layer: Layer)}
   {@const layerId = layer.id}
   {@const on =
@@ -141,12 +138,6 @@
   >
     <RowIcon name="place" size={13} />
   </button>
-  <button
-    class="swatch"
-    title="Put it back where the Layout placed it"
-    disabled={!tileFrame(tileId, layerId)}
-    onclick={() => void clearTileFrame(tileId, layerId)}>⤢</button
-  >
 {/snippet}
 
 

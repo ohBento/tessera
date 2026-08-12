@@ -16,8 +16,6 @@
     clearTiles,
     refreshCoverPreview,
     selectLayer,
-    setTileFrame,
-    tileFrame,
     swapTilePlaces,
     wall,
     toggleTile,
@@ -42,7 +40,7 @@
     type Tagged,
     type WallPrint,
   } from "./lib/scene";
-  import { findLayer, framed, layerAsset, layerText, type Layer } from "./lib/model";
+  import { findLayer, layerText, type Layer } from "./lib/model";
 
   /* On while the placing tool is chosen in App's toolbar. The wall has no other
      mode, and that is deliberate — see the note on frameAt below. */
@@ -122,20 +120,22 @@
     canvas?.requestRenderAll();
   }
 
-  /** The layer as the Layout asks for it on this tile — this tile's picture or
-   *  class filled in, but without what the tile chose about where it sits.
-   *  What a Frame is measured against. */
+  /** The layer as this tile draws it — what the stand-in has to match.
+   *
+   *  Only a caption still needs filling in, and only because a "{{id}}"
+   *  placeholder resolves against the tile: a box is measured from the words in
+   *  it, and one sized off the placeholder sat at a fifth of the width over a
+   *  caption that fills the tile. A picture and a class icon carry their own
+   *  answers on the layer now. */
   function atRest(tileId: string, layerId: string): Layer | undefined {
     const layer = placeableOn(tileId).find((l) => l.id === layerId);
     if (!layer) return undefined;
     const tile = app.manifest.tiles[tileId];
-    /* This tile's own wording, not the Layout's. A caption's box is measured
-       from the words in it, so a frame sized off the default sat at a fifth of
-       the width over a caption that fills the tile. */
     if (layer.kind === "text") return { ...layer, text: layerText(tile?.text ?? {}, layer, tileId) };
     if (layer.kind !== "image") return layer;
-    const asset = layerAsset(tile?.swap ?? {}, layer);
-    return asset ? { ...layer, asset } : undefined;
+    // "" is a real answer — no picture on this tile — and there is nothing to
+    // put a frame around.
+    return layer.asset ? layer : undefined;
   }
 
   /** Puts the stand-in — and, for a picture, the ghost — on what this tile
@@ -156,7 +156,10 @@
       return;
     }
 
-    const shown = framed(base, tileFrame(tileId, layerId));
+    /* The layer as it stands, with nothing added on top: a Frame used to be the
+       tile's private offset from a shared design, and the layer on this tile is
+       the placement now. */
+    const shown = base;
     const cell = cellAt(index);
     const size = layerSize(shown);
     const width = size.w * TILE_W;
@@ -210,7 +213,10 @@
        stands for instead of clearing the choice — the tool reads that same
        field to know what to place, and an empty write would take its own frame
        down. */
-    Object.assign(stand, { framing: true, keep: true, layerId });
+    /* `tileId` as well as the layer: applyTransform resolves the stack from the
+       object's own tile, and a stand-in without one would fall back to a scan
+       of the wall and write the gesture onto whichever tile matched first. */
+    Object.assign(stand, { framing: true, keep: true, layerId, tileId });
     canvas.add(stand);
     canvas.setActiveObject(stand);
     target = { tileId, layerId };
@@ -230,34 +236,40 @@
     ghost.setCoords();
   }
 
-  /** What the tile chose, as a difference from what the Layout asked for. */
+  /** Where the gesture left the layer, written onto the layer itself.
+   *
+   *  It used to write a Frame: the tile's departure from where a Layout had
+   *  put the layer, kept in a record of its own and added back at draw time.
+   *  There is no Layout to depart from, the layer on this tile is the placement,
+   *  and the record stopped being read when the stamps came apart — so the tool
+   *  went on moving the stand-in over a picture that never followed. Same patch
+   *  and same two functions the direct drag uses now, which is what makes the
+   *  two agree. */
   async function writeFrame() {
     if (!stand || !target) return;
     const base = atRest(target.tileId, target.layerId);
     if (!base) return;
     const ids = visibleIds();
     const back = readBack(stand as Tagged, ids.length, ids.indexOf(target.tileId));
-    /* The zoom measured against the layer's own resting width, whichever field
-       that comes out of — one factor that means the same thing to a picture, an
-       icon and a caption, which each keep their size differently.
-       Not readBack's `scale`: that goes through getScaledWidth, which counts
-       the frame's own 1px stroke. A plain drag then wrote a zoom of 1.003 on a
-       half-tile picture and 1.011 on a caption, and every nudge multiplied it
-       again — a picture that grew a little each time it was moved. */
-    const rest = layerSize(base);
-    const width = ((stand.width ?? 0) * (stand.scaleX ?? 1)) / TILE_W;
-    const height = ((stand.height ?? 0) * (stand.scaleY ?? 1)) / TILE_H;
-    await setTileFrame(target.tileId, target.layerId, {
-      x: back.x - base.x,
-      y: back.y - base.y,
-      z: rest.w ? width / rest.w : 1,
-      a: back.rotation - base.rotation,
-      /* The second axis, and only where there is one to have. Written even when
-         it equals the first, so a shape stretched and then squared back stores
-         the square rather than an absent field the reader would fill in from
-         the width. */
-      ...(freeScale(base) ? { zh: rest.h ? height / rest.h : 1 } : {}),
-    });
+    const patch = {
+      ...back,
+      /* Measured off the stand-in's own box rather than taken from readBack,
+         which goes through getScaledWidth and counts the frame's 1px stroke. A
+         plain drag otherwise wrote 1.003 of the width on a half-tile picture
+         and multiplied it again on every nudge — a picture that grew a little
+         each time it was moved. */
+      scale: ((stand.width ?? 0) * (stand.scaleX ?? 1)) / TILE_W,
+      scaleH: ((stand.height ?? 0) * (stand.scaleY ?? 1)) / TILE_H,
+      /* The stand-in is a rectangle and has no crop of its own to report, and
+         resize() drops a picture's crop when the patch carries none. Handed
+         back what the layer already had, so moving a trimmed picture does not
+         untrim it. */
+      crop: base.kind === "image" ? base.crop : undefined,
+    };
+    const targets = bulkTargets(target.layerId);
+    await (targets.length > 1
+      ? applyTransformBulk(stand as Tagged, patch, targets)
+      : applyTransform(stand as Tagged, patch));
   }
 
   /* The frame follows the choice on the right: one tile picked, one of its live
