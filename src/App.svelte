@@ -273,10 +273,8 @@
   const KEYS: Array<[string, string]> = [
     ["Ctrl + Z", "Undo"],
     ["Ctrl + Y  ·  Ctrl + Shift + Z", "Redo"],
-    ["Ctrl + D", "Duplicate the picked layers (in a Layout)"],
-    ["Delete  ·  Backspace", "Delete the picked layers (in a Layout)"],
-    ["Escape", "Leave the placing tool"],
-    ["Escape", "Close the Layout, or the menu over it"],
+    ["Delete  ·  Backspace", "Take the picked layer off its tile"],
+    ["Escape", "Leave the placing tool, or close the sheet over the page"],
     ["?", "This sheet"],
     ["Wheel", "Zoom"],
     ["Middle-drag", "Pan"],
@@ -286,7 +284,7 @@
     ["Shift + click", "Take the whole range up to it"],
     ["Alt + drag", "Swap two tiles instead of selecting"],
     ["Alt", "Held while dragging a handle: no snapping"],
-    ["Double-click", "Rename a row · open a Layout from its stamp"],
+    ["Double-click", "Rename a row"],
     ["Enter  ·  Escape", "While renaming: keep the new name · put the old one back"],
   ];
 

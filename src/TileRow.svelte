@@ -264,14 +264,18 @@
              forty-four portraits the list was a column of digits to be matched
              against the wall by counting. The number stays — it is what the
              folder is sorted by and the only way to line a row up with a file —
-             but as the second line, where the layout count already lives.
+             but as the second line, where the layer count already lives.
 
              A tile that has not been named keeps the id as its headline, so
              the row never loses the one thing that always identifies it. -->
         {said || id}
         <span class="usage">
           {#if said}{id} &middot;
-          {/if}{own.length ? `${own.length} layout(s)` : owner ? "no layout" : "unassigned"}
+          {/if}{own.length
+            ? `${own.length} layer${own.length === 1 ? "" : "s"}`
+            : owner
+              ? "bare"
+              : "unassigned"}
         </span>
       </button>
       {#if inGroup}
