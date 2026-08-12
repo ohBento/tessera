@@ -1105,7 +1105,7 @@ export async function openFolder(dir?: string) {
      * inside the app. loadManifest puts the document aside first and says what
      * went; the message below is the only thing standing between that and work
      * disappearing without a word. */
-    const { manifest, lost, snapshot, broken } = await loadManifest(app.dir, ids);
+    const { manifest, lost, snapshot, broken, migrated } = await loadManifest(app.dir, ids);
     app.manifest = manifest;
     /* Layers naming a layout the library no longer has: manifests from before
      * the delete cascaded, or a snapshot that brought stamps back after their
@@ -1156,6 +1156,15 @@ export async function openFolder(dir?: string) {
       app.error =
         `manifest.json could not be read and was set aside as "${broken}". ` +
         `This folder starts empty — the old file is still in FaceTexture.tessera.`;
+    /* Said once, on the open that does it. A stamped design has just become
+     * ordinary layers on every tile that wore it: the same picture, now
+     * editable where it is shown, and layouts are gone. That is a change worth
+     * hearing about before the first edit writes the new shape — together with
+     * where the old file is, which is the only way back. */
+    else if (migrated)
+      app.error =
+        `Layouts are gone: every stamp is now editable layers on the tile itself. ` +
+        `The version ${migrated.from} document was copied to "${migrated.backup}" first.`;
   });
 }
 

@@ -183,10 +183,10 @@ describe("restoreTiles", () => {
 });
 
 describe("an SVG gets the size its viewBox already implies", () => {
-  /* Without absolute width/height on the root there is nothing for an <img> to
-   * measure, so the browser hands out the CSS default object size — 300×150 —
-   * and Fabric takes that as the picture's size. A class icon then arrives in
-   * the Layout at a number the file never said. */
+  /* Without absolute width/height on the root there is nothing for an image
+   * element to measure, so the browser hands out the CSS default object size —
+   * 300×150 — and Fabric takes that as the picture's size. A class icon then
+   * arrives in the Layout at a number the file never said. */
   it("copies the viewBox onto a root that carries no size", () => {
     const out = svgWithSize('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 48"><path/></svg>');
     expect(out).toContain('width="64"');
@@ -198,8 +198,9 @@ describe("an SVG gets the size its viewBox already implies", () => {
   });
 
   it("replaces a percentage rather than sitting beside it", () => {
-    // "100%" resolves against a containing block an <img> never provides, so it
-    // is no size at all — and left in place it would win, being first.
+    // "100%" resolves against a containing block an image element never
+    // provides, so it is no size at all — and left in place it would win,
+    // being first.
     const out = svgWithSize(`<svg width='100%' height='100%' viewBox="0 0 20 10"/>`)!;
     expect(out).not.toContain("100%");
     expect(out.match(/width=/g)).toHaveLength(1);
@@ -258,6 +259,34 @@ describe("loadManifest lines the manifest up with the folder", () => {
     for (const id of ["a", "b", "c"]) m.tiles[id] = { base: null, layers: [], text: {} };
     return JSON.stringify(m);
   };
+
+  it("copies an older document aside before this build can write over it", async () => {
+    /* The only way back from a migration. It runs on open and the first edit
+     * saves the new shape, so without this the v7 document is gone one
+     * keystroke later — undo lives in memory and starts empty, and snapshots
+     * re-run the same migration when they are read. */
+    files.clear();
+    const platform = await import("./platform");
+    const old = { version: 7, projects: [], tiles: {}, layouts: [{ id: "L1", name: "Meins" }] };
+    const text = JSON.stringify(old);
+    vi.mocked(platform.readTextFile).mockResolvedValueOnce(text);
+
+    const { manifest: m, migrated } = await loadManifest("/docs/FaceTexture", []);
+
+    expect(m.version).toBe(8);
+    expect(migrated).toEqual({ from: 7, backup: "manifest.v7.bak.json" });
+    // Byte for byte what was on disk, not the migrated shape.
+    expect(files.get("/docs/FaceTexture/../FaceTexture.tessera/manifest.v7.bak.json")).toBe(text);
+  });
+
+  it("keeps the first backup and says nothing on an already-current document", async () => {
+    files.clear();
+    const platform = await import("./platform");
+    vi.mocked(platform.readTextFile).mockResolvedValueOnce(stored());
+    const { migrated } = await loadManifest("/docs/FaceTexture", ["a"]);
+    expect(migrated).toBeNull();
+    expect([...files.keys()].some((k) => k.includes(".bak.json"))).toBe(false);
+  });
 
   it("drops tiles the folder no longer has from grid, shelf and drawers", async () => {
     const platform = await import("./platform");

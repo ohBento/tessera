@@ -53,6 +53,7 @@ import {
   walkLayers,
   type Layer,
   type Manifest,
+  type ShapeLayer,
   type TextLayer,
 } from "./model";
 import {
@@ -807,7 +808,7 @@ describe("migrate v6 into one project", () => {
      * only its slot. The order itself is half an hour of hand-dragging and has
      * to come through untouched. */
     const m = migrate(v6());
-    expect(m.version).toBe(7);
+    expect(m.version).toBe(8);
     expect(m.projects).toHaveLength(1);
     expect(m.projects[0].name).toBe("Main");
     expect(m.projects[0].order).toEqual(["t2", "t0"]);
@@ -815,18 +816,26 @@ describe("migrate v6 into one project", () => {
   });
 
   it("copies a group's stack onto each of its members", () => {
+    /* The stamp "st" is gone by the end of the chain: v8 dissolves it into the
+     * layers of the layout it named, and this fixture's layout holds none. What
+     * has to survive is the copy the group put on each tile, on both tiles,
+     * and as two objects rather than one shared between them. */
     const m = migrate(v6());
-    expect(m.tiles.t0.layers.map((l) => l.id)).toEqual(["st", "cap"]);
-    expect(m.tiles.t2.layers.map((l) => l.id)).toEqual(["st", "cap"]);
+    expect(m.tiles.t0.layers.map((l) => l.id)).toEqual(["cap"]);
+    expect(m.tiles.t2.layers.map((l) => l.id)).toEqual(["cap"]);
     // Copies, not one object shared by both — otherwise moving a layer on one
     // tile would move it on every other member of the old group.
     expect(m.tiles.t0.layers[0]).not.toBe(m.tiles.t2.layers[0]);
   });
 
-  it("keeps layer ids, so per-tile wording still resolves", () => {
+  it("keeps layer ids, so per-tile wording lands in the layer itself", () => {
+    /* The id is what carried the wording across the v6 fold, and it is what
+     * carries it into the layer in v8 — the record is emptied once the words
+     * are where they are drawn from. */
     const m = migrate(v6());
-    expect(m.tiles.t0.text.cap).toBe("Krieger");
-    expect(m.tiles.t0.layers.some((l) => l.id === "cap")).toBe(true);
+    expect(m.tiles.t0.text).toEqual({});
+    const cap = m.tiles.t0.layers.find((l) => l.id === "cap") as TextLayer;
+    expect(cap.text).toBe("Krieger");
   });
 
   it("gives the wall picture to the project, not to the tiles", () => {
@@ -842,22 +851,23 @@ describe("migrate v6 into one project", () => {
     expect(m.tiles.t1.layers).toEqual([]);
   });
 
-  it("keeps each tile's picture and every layout", () => {
+  it("keeps each tile's picture, and takes the layouts away", () => {
     const m = migrate(v6());
     expect(m.tiles.t0.base).toEqual({ asset: "b.png", crop });
-    expect(m.layouts.map((l) => l.name)).toEqual(["Meins"]);
+    // v8 has no layouts: what they held is on the tiles that wore them.
+    expect((m as unknown as { layouts?: unknown[] }).layouts ?? []).toHaveLength(0);
   });
 
   it("takes a v1 tile's bare picture, which sat under the id itself", () => {
     const m = migrate({ version: 1, order: ["a"], tiles: { a: { asset: "x.png", crop } } });
-    expect(m.version).toBe(7);
+    expect(m.version).toBe(8);
     expect(m.tiles.a.base).toEqual({ asset: "x.png", crop });
     expect(m.projects[0].order).toEqual(["a"]);
   });
 
   it("survives a null tile and unreadable input", () => {
     expect(migrate({ version: 1, order: ["a"], tiles: { a: null } }).tiles.a.base).toBeNull();
-    expect(migrate(null).version).toBe(7);
+    expect(migrate(null).version).toBe(8);
   });
 
   it("leaves the input alone and runs again to the same result", () => {
@@ -869,11 +879,11 @@ describe("migrate v6 into one project", () => {
   });
 
   it("reads a document from a newer build rather than gutting it", () => {
-    /* `version: 8` matched neither the v7 test nor the v6 one and fell through
-     * to toV6, which reads a shape that stopped existing two versions ago:
-     * projects, folders, the shelf and every tile layer were dropped. Reachable
-     * by starting an older Tessera once — the first thing anyone does when a
-     * new version misbehaves. */
+    /* A version this build has never heard of matched none of the tests and
+     * fell through to toV6, which reads a shape that stopped existing two
+     * versions ago: projects, folders, the shelf and every tile layer were
+     * dropped. Reachable by starting an older Tessera once — the first thing
+     * anyone does when a new version misbehaves. */
     const doc = emptyManifest();
     const p = newProject("Main");
     p.order = ["t0"];
@@ -881,7 +891,7 @@ describe("migrate v6 into one project", () => {
     doc.projects = [p];
     doc.tiles.t0 = { base: null, layers: [newTextLayer()], text: {} };
 
-    const fromNewer = { ...structuredClone(doc), version: 8, wallpaper: "unknown to us" };
+    const fromNewer = { ...structuredClone(doc), version: 9, wallpaper: "unknown to us" };
     const back = migrate(fromNewer);
 
     expect(back.projects.map((x) => x.name)).toEqual(["Main"]);
@@ -890,6 +900,153 @@ describe("migrate v6 into one project", () => {
     // What this build has no name for rides along instead of being dropped —
     // the whole reason reading it as v7 is a bounded guess.
     expect((back as unknown as Record<string, unknown>).wallpaper).toBe("unknown to us");
+  });
+});
+
+describe("migrate v7 into v8: stamps dissolve into the tiles they dressed", () => {
+  /* A v7 manifest of the shape a real wall had. The layout holds a baked
+   * picture, a baked shape and one live caption; the tile wears the stamp, its
+   * own layer above it, and the caption copy the stamp brought. */
+  const v7 = () => ({
+    version: 7,
+    projects: [{ ...newProject("Main"), id: "p1", order: ["t0", "t1"] }],
+    layouts: [
+      {
+        ...newLayout("Meins"),
+        id: "L1",
+        stamped: "abc",
+        layers: [
+          { ...newImageLayer("frame.png"), id: "frame", x: 0.5, y: 0.5, scale: 0.8 },
+          { ...newShapeLayer("rect"), id: "bar", w: 0.6, h: 0.05 },
+          { ...newTextLayer(), id: "cap", perTile: true, text: "{{id}}" },
+        ],
+      },
+    ],
+    tiles: {
+      t0: {
+        ...emptyTile(),
+        layers: [
+          { ...newImageLayer("baked.png"), id: "stamp", layoutId: "L1", scale: 1 },
+          { ...newShapeLayer("ellipse"), id: "mine", w: 0.2, h: 0.2 },
+          { ...newTextLayer(), id: "cap", layoutId: "L1", live: true, x: 0.5, y: 0.9 },
+        ],
+        text: { cap: "Nachtklinge" },
+        swap: { frame: "eigenes.png" },
+        paint: { bar: "#ff0000" },
+        frame: { cap: { x: 0.1, y: -0.05, z: 1, a: 15 } },
+      },
+      t1: { ...emptyTile(), layers: [] },
+    },
+  });
+
+  const at = (m: Manifest, tile: string) => m.tiles[tile].layers.map((l) => l.id);
+
+  it("puts the layout's baked layers where the stamp stood", () => {
+    /* Order is the whole risk here. A live copy is appended to the end of the
+     * stack and draws over everything; the stamp itself sits lower. Dropping
+     * the full layout in at the stamp's position would push the tile's own
+     * layer down under a design that used to sit beneath it. */
+    const m = migrate(v7());
+    expect(at(m, "t0")).toEqual(["frame", "bar", "mine", "cap"]);
+    expect(m.version).toBe(8);
+  });
+
+  it("keeps the live copy rather than the layout's per-tile original", () => {
+    /* Both carry id "cap". The copy is the one the tile has been editing — it
+     * holds the wording, the placement and the eye — so the bakeable filter
+     * leaves the original out and the copy stays put. Two layers with one id on
+     * one tile would be a stack that cannot be addressed. */
+    const m = migrate(v7());
+    const caps = m.tiles.t0.layers.filter((l) => l.id === "cap");
+    expect(caps).toHaveLength(1);
+    expect((caps[0] as TextLayer).text).toBe("Nachtklinge");
+  });
+
+  it("folds the per-tile records into the layers and drops the records", () => {
+    const m = migrate(v7());
+    const by = (id: string) => findLayer(m.tiles.t0.layers, id)!;
+    expect((by("frame") as ImageLayer).asset).toBe("eigenes.png");
+    expect((by("bar") as ShapeLayer).fill).toBe("#ff0000");
+    expect((by("cap") as TextLayer).text).toBe("Nachtklinge");
+    expect(m.tiles.t0.text).toEqual({});
+    expect((m.tiles.t0 as Record<string, unknown>).swap).toBeUndefined();
+    expect((m.tiles.t0 as Record<string, unknown>).paint).toBeUndefined();
+    expect((m.tiles.t0 as Record<string, unknown>).frame).toBeUndefined();
+  });
+
+  it("applies a frame only to the layer that was actually framed", () => {
+    /* framed() runs at draw time for live copies and for nothing else, so a
+     * frame record belonging to a withdrawn copy describes a layer that is
+     * drawing unframed today. Folding every record found would move layers
+     * nobody ever placed — silent, and visible only as a wall that shifted. */
+    const doc = v7();
+    doc.tiles.t0.frame = {
+      cap: { x: 0.1, y: -0.05, z: 1, a: 15 },
+      // No live copy by this name: left over from one that was withdrawn.
+      bar: { x: 0.4, y: 0.4, z: 2, a: 0 },
+    } as (typeof doc.tiles.t0)["frame"];
+    const m = migrate(doc);
+    const cap = findLayer(m.tiles.t0.layers, "cap") as TextLayer;
+    const bar = findLayer(m.tiles.t0.layers, "bar") as ShapeLayer;
+    expect(cap.x).toBeCloseTo(0.6, 5);
+    expect(cap.rotation).toBeCloseTo(15, 5);
+    // Untouched: still the layout's own numbers.
+    expect(bar.x).toBeCloseTo(0.5, 5);
+    expect(bar.w).toBeCloseTo(0.6, 5);
+  });
+
+  it("carries a hidden stamp's eye onto everything it dissolved into", () => {
+    const doc = v7();
+    doc.tiles.t0.layers[0] = { ...doc.tiles.t0.layers[0], hidden: true };
+    const m = migrate(doc);
+    expect(findLayer(m.tiles.t0.layers, "frame")!.hidden).toBe(true);
+    expect(findLayer(m.tiles.t0.layers, "bar")!.hidden).toBe(true);
+    // The tile's own layer was never part of that assignment.
+    expect(findLayer(m.tiles.t0.layers, "mine")!.hidden).toBeFalsy();
+  });
+
+  it("dissolves a stamp whose layout is gone to nothing, records and all", () => {
+    const doc = v7();
+    doc.layouts = [];
+    const m = migrate(doc);
+    // Its own layer and the copy survive; the stamp and the design go.
+    expect(at(m, "t0")).toEqual(["mine", "cap"]);
+    expect(m.tiles.t0.text).toEqual({});
+  });
+
+  it("keeps an orphaned live copy, which is what the wall was drawing", () => {
+    /* Nothing has swept these since v7, and layerShows only consults a stamp
+     * that is present — so a copy whose stamp was deleted goes on drawing.
+     * Deleting it here would be a visible loss nobody asked for. */
+    const doc = v7();
+    doc.tiles.t1.layers = [
+      { ...newTextLayer(), id: "waise", layoutId: "gone", live: true, text: "bleibt" },
+    ] as (typeof doc.tiles.t1)["layers"];
+    const m = migrate(doc);
+    expect(at(m, "t1")).toEqual(["waise"]);
+    expect((findLayer(m.tiles.t1.layers, "waise") as TextLayer).text).toBe("bleibt");
+  });
+
+  it("strips the flags that only meant something while layouts existed", () => {
+    const m = migrate(v7());
+    for (const l of m.tiles.t0.layers) {
+      const raw = l as unknown as Record<string, unknown>;
+      expect(raw.layoutId).toBeUndefined();
+      expect(raw.live).toBeUndefined();
+      expect(raw.perTile).toBeUndefined();
+    }
+    /* Emptied here rather than absent: the field is still on the type until
+     * the layout editor itself is taken out. Written so it keeps passing once
+     * it is. */
+    expect((m as unknown as { layouts?: unknown[] }).layouts ?? []).toHaveLength(0);
+  });
+
+  it("leaves its input alone and runs again to the same result", () => {
+    const input = v7();
+    const copy = structuredClone(input);
+    const once = migrate(input);
+    expect(input).toEqual(copy);
+    expect(migrate(structuredClone(once))).toEqual(once);
   });
 });
 

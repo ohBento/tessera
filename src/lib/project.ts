@@ -72,9 +72,18 @@ export function localStamp(len: 16 | 19 = 16) {
 export async function loadManifest(
   dir: string,
   ids: string[],
-): Promise<{ manifest: Manifest; lost: string[]; snapshot: string; broken: string }> {
+): Promise<{
+  manifest: Manifest;
+  lost: string[];
+  snapshot: string;
+  broken: string;
+  /** The file's own version when it was older than this build's, and the name
+   *  of the copy kept of it. Empty when nothing was migrated. */
+  migrated: { from: number; backup: string } | null;
+}> {
   let m = emptyManifest();
   let broken = "";
+  let migrated: { from: number; backup: string } | null = null;
   let text = "";
   try {
     text = await readTextFile(await manifestPath(dir));
@@ -84,7 +93,27 @@ export async function loadManifest(
   }
   if (text) {
     try {
-      m = migrate(JSON.parse(text));
+      const raw = JSON.parse(text) as { version?: unknown };
+      const from = typeof raw.version === "number" ? raw.version : 0;
+      m = migrate(raw);
+      /* A copy of the file exactly as it was, before this build gets a chance
+       * to write over it.
+       *
+       * Migration happens on open and the first edit saves the new shape, so
+       * without this the old document is gone one keystroke after a version
+       * that misreads it. Undo is no help — it lives in memory and starts
+       * empty — and neither are snapshots, which re-run the same migration
+       * when they are read. One file copy is the whole insurance.
+       *
+       * Written once per version: the name carries the version it holds, and
+       * a document that has already been migrated never comes through here
+       * again. */
+      if (from > 0 && from < m.version) {
+        const name = `manifest.v${from}.bak.json`;
+        const to = await join(await projectDir(dir), name);
+        if (!(await exists(to))) await writeTextFile(to, text);
+        migrated = { from, backup: name };
+      }
     } catch {
       /* A file that is there but will not parse used to share the catch above,
        * so a damaged document was indistinguishable from a first run: the app
@@ -117,7 +146,7 @@ export async function loadManifest(
     );
   }
   // Characters get created and deleted between sessions; the folder wins.
-  return { manifest: pruneToFolder(m, ids), lost, snapshot, broken };
+  return { manifest: pruneToFolder(m, ids), lost, snapshot, broken, migrated };
 }
 
 /* --- Knowing when the game changed a file under us.
@@ -324,14 +353,14 @@ const attrOf = (tag: string, name: string) =>
   tag.match(new RegExp(`\\s${name}\\s*=\\s*("[^"]*"|'[^']*')`, "i"))?.[1].slice(1, -1);
 
 /** A length the browser can measure without a containing block. Percentages
- *  cannot: they resolve against a block an `<img>` never gives them, which is
- *  why "100%" counts as no size at all here. */
+ *  cannot: they resolve against a block an image element never gives them,
+ *  which is why "100%" counts as no size at all here. */
 const absolute = (v: string | undefined) => !!v && v.trim() !== "" && !v.trim().endsWith("%");
 
 /** Writes a viewBox-only SVG's size onto its root tag, or null if there is
  *  nothing to fix.
  *
- *  An `<img>` needs an intrinsic size, and a raster file carries one in its
+ *  An image element needs an intrinsic size, and a raster file carries one in its
  *  header. An SVG is a description: without absolute width/height on the root
  *  there is nothing to measure, so the browser falls back to the CSS default
  *  object size for replaced elements — 300×150, the same historical 2:1 a bare

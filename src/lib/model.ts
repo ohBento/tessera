@@ -737,9 +737,11 @@ export const layoutNeedsRestamp = (layout: Layout) =>
  *  which wall an id belongs to. That split is what lets a tile move between
  *  projects without its layers, wording or pictures going anywhere. */
 export type Manifest = {
-  version: 7;
+  version: 8;
   projects: Project[];
   tiles: Record<string, Tile>;
+  /** On its way out with the layout editor. A migrated document leaves it
+   *  empty; nothing new is ever put in it. */
   layouts: Layout[];
 };
 
@@ -762,7 +764,7 @@ export function stripTile(t: Tile) {
 }
 
 export const emptyManifest = (): Manifest => ({
-  version: 7,
+  version: 8,
   projects: [],
   tiles: {},
   layouts: [],
@@ -1301,6 +1303,120 @@ function toV7(m: Raw): Raw {
   return { version: 7, projects: [main], tiles, layouts: (m.layouts ?? []) as Layout[] };
 }
 
+/* --- v7 → v8: the stamps come apart. -----------------------------------
+ *
+ * A design used to reach a tile as one baked PNG with the layout's id on it,
+ * plus live copies of whatever could not be baked. The wall could not edit any
+ * of it — everything wearing a layoutId was locked, because the layout was
+ * where the positions came from.
+ *
+ * v8 has no layouts. Each tile carries the design as ordinary layers it owns
+ * outright, which is what makes the grid the editor: the same layers, on the
+ * tile, editable, and still sharing their ids across tiles so one edit can
+ * reach all of them.
+ *
+ * The rules below are spelled out here rather than imported from stamps.ts,
+ * which this release deletes. A migration that reads a file written years from
+ * now must not depend on code that stopped existing. */
+
+/** A layer the tile is holding on a layout's behalf rather than a stamp.
+ *
+ *  A caption counts whether or not it carries the flag — the ones written
+ *  before `live` existed have none, and a stamp is never text. */
+const wasLiveCopy = (l: Layer) => !!l.layoutId && (!!l.live || l.kind === "text");
+
+/** The baked half of a layout: everything that is not kept live per tile.
+ *
+ *  Groups are rebuilt without their live members rather than dropped, so the
+ *  displacement a group applies to its remaining children still holds. */
+const bakedHalf = (layers: Layer[]): Layer[] =>
+  layers
+    .filter((l) => !(l.kind !== "group" && l.perTile))
+    .map((l) => (l.kind === "group" ? { ...l, children: bakedHalf(l.children) } : l));
+
+type V7Tile = Tile & {
+  swap?: Record<string, string>;
+  paint?: Record<string, Paint>;
+  frame?: Record<string, Frame>;
+};
+
+function toV8(m: Raw): Raw {
+  const tiles = clone((m.tiles ?? {}) as Record<string, V7Tile>);
+  const layouts = new Map(
+    ((m.layouts ?? []) as Layout[]).map((l) => [l.id, l] as const),
+  );
+
+  for (const tile of Object.values(tiles)) {
+    if (!tile?.layers) continue;
+    /* Gathered before anything is rewritten: a frame only ever described a
+     * live copy, and framed() applies it at draw time for those and nothing
+     * else. Records left behind by a withdrawn copy survive by design, and
+     * folding one of those would move a layer that draws unframed today. */
+    const framedIds = new Set(tile.layers.filter(wasLiveCopy).map((l) => l.id));
+
+    const out: Layer[] = [];
+    for (const l of tile.layers) {
+      const stamp = l.kind === "image" && !!l.layoutId && !l.live;
+      if (!stamp) {
+        out.push(l);
+        continue;
+      }
+      const layout = layouts.get(l.layoutId!);
+      // A stamp naming a layout nobody has any more dissolves to nothing, which
+      // is what pruneDeadLayoutRefs did on open for the same case.
+      if (!layout) continue;
+      for (const baked of bakedHalf(layout.layers)) {
+        const copy = clone(baked);
+        /* The eye on a stamp was the switch for the whole assignment, so it has
+         * to reach every layer that assignment becomes — otherwise a design
+         * someone switched off comes back at migration. */
+        if (l.hidden) for (const inner of walkLayers([copy])) inner.hidden = true;
+        out.push(copy);
+      }
+    }
+
+    for (const l of walkLayers(out)) {
+      const text = tile.text?.[l.id];
+      if (l.kind === "text" && text !== undefined) l.text = text;
+      const swap = tile.swap?.[l.id];
+      if (swap !== undefined) {
+        // "" is a real answer on both — this tile shows no picture, no class.
+        if (l.kind === "image") l.asset = swap;
+        else if (l.kind === "shape" && l.shape === "icon") l.icon = swap;
+      }
+      const paint = tile.paint?.[l.id];
+      if (paint !== undefined && l.kind === "shape") l.fill = paint;
+      const f = framedIds.has(l.id) ? tile.frame?.[l.id] : undefined;
+      if (f) {
+        l.x += f.x;
+        l.y += f.y;
+        l.rotation += f.a;
+        if (l.kind === "image") l.scale *= f.z;
+        else if (l.kind === "shape") {
+          l.w *= f.z;
+          l.h *= f.zh ?? f.z;
+        }
+      }
+      // Only ever meant something while there were layouts to point at.
+      delete l.layoutId;
+      delete l.live;
+      delete l.perTile;
+    }
+
+    tile.layers = out;
+    /* `text` stays as a field and is emptied: the renderer still threads a
+     * wording map through, and a tile's own layer now holds the words. The
+     * other three described a design the tile did not own and have nothing
+     * left to say. */
+    tile.text = {};
+    delete tile.swap;
+    delete tile.paint;
+    delete tile.frame;
+  }
+
+  return { version: 8, projects: m.projects, tiles };
+}
+
 export function migrate(raw: unknown): Manifest {
   const m = raw as Raw | null;
   if (!m || typeof m !== "object") return emptyManifest();
@@ -1313,6 +1429,7 @@ export function migrate(raw: unknown): Manifest {
    * Reading it as v7 is a guess, but a bounded one: the spread keeps fields
    * this build has no name for, so what it cannot use it carries. Rewriting a
    * newer document as an older shape is not bounded at all. */
-  if (typeof m.version === "number" && m.version >= 7) return { ...emptyManifest(), ...m } as Manifest;
-  return { ...emptyManifest(), ...toV7(m.version === 6 ? m : toV6(m)) } as Manifest;
+  if (typeof m.version === "number" && m.version >= 8) return { ...emptyManifest(), ...m } as Manifest;
+  const v7 = m.version === 7 ? m : toV7(m.version === 6 ? m : toV6(m));
+  return { ...emptyManifest(), ...toV8(v7) } as Manifest;
 }
