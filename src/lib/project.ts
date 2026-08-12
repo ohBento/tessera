@@ -133,14 +133,16 @@ export async function loadManifest(
  * undo must never rewrite what is true about the disk.
  *
  * Every file is hashed on open. The hashing itself is cheap and measured: 70ms
- * for forty-four tile-sized buffers, about 90 MB. The reading is not — see
- * hashTiles, which now starts the reads together for the same reason buildGrid
- * does.
+ * for forty-four tile-sized buffers, about 90 MB. The reading was the cost —
+ * see hashTiles, which starts the reads together for the same reason buildGrid
+ * does. Confirmed in the packaged app on a real folder: the difference is
+ * plain at forty-four tiles, which is the size this tool was built against and
+ * not some future wall nobody has.
  *
- * ponytail: if a folder still opens slowly after that, the next lever is not
- * hashing the files that cannot have changed. readDir in Tauri 2 carries no
- * size or mtime, so that means a new stat path, its permission and its mock —
- * worth it only once a real folder proves the reads are still the cost. --- */
+ * ponytail: the lever left is not hashing files that cannot have changed, and
+ * nothing yet says it is needed. readDir in Tauri 2 carries no size or mtime,
+ * so it means a new stat path, its permission and its mock — worth it only if
+ * a folder several times this size starts to drag. --- */
 
 export type Print = { original: string; written?: string };
 export type Fingerprints = Record<string, Print>;
