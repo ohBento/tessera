@@ -1,4 +1,4 @@
-﻿/* The faults that only exist while a hand is on the mouse.
+/* The faults that only exist while a hand is on the mouse.
  *
  * Every one of these was found by the author dragging something and filming
  * it, after four hundred tests had gone green. They share a shape: the canvas
@@ -7,7 +7,7 @@
  * Mounted, and with a viewport that has a size. Both matter, and finding out
  * which cost an evening: a bare fabric.Canvas driven by the same events does
  * not reproduce any of this, and neither does the app mounted into a host of
- * zero width â€” the editor fits the sheet to its window, so no window means a
+ * zero width — the editor fits the sheet to its window, so no window means a
  * zoom of 0 and a render path that never runs. The mask fault appears at the
  * first mousemove and only here. */
 import type { Canvas, FabricObject } from "fabric";
@@ -60,7 +60,7 @@ let host: HTMLDivElement;
 let ui: Record<string, unknown> | undefined;
 
 /** A button by its tooltip. The rail and the tile rows are icons, so there is
- *  no text to match on â€” and the title is what a hand hovers to find them too. */
+ *  no text to match on — and the title is what a hand hovers to find them too. */
 const byTitle = (title: string) =>
   [...document.querySelectorAll("button")].find((b) => b.title === title) as
     | HTMLButtonElement
@@ -79,7 +79,7 @@ async function editor() {
   host = document.createElement("div");
   host.id = "app";
   // A real window, or LayoutCanvas fits the sheet into nothing and the whole
-  // live render path is skipped â€” see the note at the top.
+  // live render path is skipped — see the note at the top.
   host.style.cssText = "width:1400px;height:900px;position:fixed;left:0;top:0";
   document.body.append(host);
   ui = mount(App, { target: host });
@@ -124,7 +124,7 @@ async function teardown() {
 const objectFor = (canvas: Canvas, layerId: string) =>
   canvas.getObjects().find((o) => (o as { layerId?: string }).layerId === layerId);
 
-/** Press, move, release at scene coordinates â€” and nothing else. dragObject
+/** Press, move, release at scene coordinates — and nothing else. dragObject
  *  picks the object first and takes its per-pixel hit testing off, which is the
  *  right thing when the question is what a gesture does to a known object and
  *  the wrong thing when the question is which object Fabric picks. */
@@ -162,7 +162,7 @@ async function rawDrag(
   await frame();
 }
 
-/** A green block cut to a class icon â€” the pair the icons exist for. */
+/** A green block cut to a class icon — the pair the icons exist for. */
 async function blockCutToIcon() {
   const canvas = await editor();
   await addLayoutShape("icon", "Placeholder");
@@ -182,7 +182,7 @@ describe("framing a picture on the wall", () => {
   it("writes what was dragged onto the tile, not onto the layer", async () => {
     /* The tile owns which picture and which part of it; the Layout owns where
      * the frame is and how big. So a drag with the framing tool has to land in
-     * the tile's own map and leave the shared layer exactly as it was â€”
+     * the tile's own map and leave the shared layer exactly as it was —
      * otherwise framing one portrait would move all forty-four. */
     try {
       await wall();
@@ -211,7 +211,7 @@ describe("framing a picture on the wall", () => {
 
       /* The way a hand gets there: click the tile, which opens its row, then
        * press the place button beside the picture in that row. The tool takes
-       * what to place from the list rather than from a click on the canvas â€”
+       * what to place from the list rather than from a click on the canvas —
        * a wall is layers all the way across, and clicking to choose one would
        * take the tile-selection drag with it. */
       const cell = cellAt(visibleIds().indexOf(tile));
@@ -248,8 +248,8 @@ describe("framing a picture on the wall", () => {
     /* The reason the tool grew past pictures: a caption clear of the chin on
      * forty-three portraits lands on it on the forty-fourth, and the tile is
      * the only place that can say so. What it may not do is change the type
-     * size â€” one caption larger than the rest reads as a mistake rather than
-     * as a choice â€” so the corner and side handles are not offered. */
+     * size — one caption larger than the rest reads as a mistake rather than
+     * as a choice — so the corner and side handles are not offered. */
     try {
       await wall();
 
@@ -260,7 +260,7 @@ describe("framing a picture on the wall", () => {
       if (caption.kind !== "text") throw new Error("addLayoutText made something else");
       const before = { x: caption.x, y: caption.y, size: caption.size };
       /* Live, or it bakes into the stamp and the tile has no copy of its own to
-         place â€” only `perTile` layers are copied onto the tiles (bakeable). */
+         place — only `perTile` layers are copied onto the tiles (bakeable). */
       await setLayerField(caption.id, "perTile", true);
 
       const tile = app.folderIds[0];
@@ -294,7 +294,7 @@ describe("framing a picture on the wall", () => {
       const f = app.manifest.tiles[tile].frame![written.id];
       expect(Math.abs(f.x)).toBeGreaterThan(0);
       expect(Math.abs(f.y)).toBeGreaterThan(0);
-      // Dragged, not resized â€” whatever the stand-in did, no zoom was stored.
+      // Dragged, not resized — whatever the stand-in did, no zoom was stored.
       expect(f.z).toBeCloseTo(1, 6);
 
       const shared = app.manifest.layouts.find((l) => l.id === layout.id)!.layers[0];
@@ -314,7 +314,7 @@ describe("framing a picture on the wall", () => {
      * its caption.
      *
      * It hung on one line. Fabric clears its selection whenever a press lands
-     * on bare canvas, and the wall answered that by dropping the chosen layer â€”
+     * on bare canvas, and the wall answered that by dropping the chosen layer —
      * so the frame died on the way to the tile it was being carried to. */
     try {
       await wall();
@@ -360,7 +360,7 @@ describe("framing a picture on the wall", () => {
   });
 
   it("gives a live shape a row of its own, and lets one axis go", async () => {
-    /* A shape carries no per-tile content, so it had no row in the tile list â€”
+    /* A shape carries no per-tile content, so it had no row in the tile list —
      * and with no row there was no way into the tool. For the badge, that meant
      * the icon cutting the block could be placed and the block itself could
      * not. It owns a colour now, and the row that carries the colour carries
@@ -395,7 +395,7 @@ describe("framing a picture on the wall", () => {
       await until(() => !!wallCanvas.getActiveObject(), 8000, "the stand-in to appear");
 
       const stand = wallCanvas.getActiveObject()!;
-      // Sides as well as corners â€” the handle that stretches is offered.
+      // Sides as well as corners — the handle that stretches is offered.
       expect(stand.isControlVisible("mr")).toBe(true);
       await scaleObject(wallCanvas, stand, "mr", 90, 0);
       await until(() => !!app.manifest.tiles[tile].frame?.[bar.id], 5000, "the placement to be written");
@@ -413,7 +413,7 @@ describe("framing a picture on the wall", () => {
     /* The faint whole picture is the only thing to aim by when a mask hides
      * most of what is being dragged. It showed for the first drag and never
      * again: writing a placement rebuilds the wall, `buildGrid` adds its
-     * objects to a canvas the ghost survived on, and Fabric adds to the top â€”
+     * objects to a canvas the ghost survived on, and Fabric adds to the top —
      * so from the second drag on the ghost lay under the tile's own artwork.
      * The frame still looked right, because Fabric draws the active object's
      * controls on the upper canvas whatever is buried below. */
@@ -449,12 +449,12 @@ describe("framing a picture on the wall", () => {
       await dragObject(wallCanvas, wallCanvas.getActiveObject()!, 40, 25);
       await until(() => !!app.manifest.tiles[tile].frame?.[pic.id], 5000, "the placement to be written");
       /* The rebuild the write sets off is asynchronous, and it is the rebuild
-         that does the damage â€” asserting before it lands measures the canvas
+         that does the damage — asserting before it lands measures the canvas
          the drag left behind and passes on a wall that is about to be wrong. */
       await until(() => !app.busy, 5000, "the wall to settle");
       await new Promise((r) => setTimeout(r, 400));
 
-      /* Above everything the rebuild put back â€” which is what "visible" means
+      /* Above everything the rebuild put back — which is what "visible" means
          on a canvas. The stand-in is the last object; the ghost is under it and
          over the wall. */
       const objects = wallCanvas.getObjects();
@@ -471,7 +471,7 @@ describe("framing a picture on the wall", () => {
 
   it("takes the frame away when the tile it moved to shows nothing there", async () => {
     /* "Show no picture on this tile" is a real answer, so the layer is still on
-     * the tile and still listed â€” there is simply nothing to stand on. The
+     * the tile and still listed — there is simply nothing to stand on. The
      * frame used to survive that: the tool bailed before clearing its own
      * furniture, so the violet box stayed on the previous portrait while the
      * selection had moved on, and the next drag wrote onto a tile nobody was

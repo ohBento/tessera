@@ -1,4 +1,4 @@
-﻿/* The real UI, mounted and clicked.
+/* The real UI, mounted and clicked.
  *
  * This is the layer nothing else covers. Both bugs found by hand in this area
  * were invisible to unit tests and to the render tests: Ctrl-picking a second
@@ -8,7 +8,7 @@
  * canvas can see that.
  *
  * It runs at all because platform.ts falls back to an in-memory filesystem
- * outside Tauri â€” the app opens its mock FaceTexture folder on mount, exactly
+ * outside Tauri — the app opens its mock FaceTexture folder on mount, exactly
  * as it would open the real one. */
 import type * as fabric from "fabric";
 import { mount, tick, unmount } from "svelte";
@@ -132,7 +132,7 @@ let ui: Record<string, unknown>;
 
 async function mountApp() {
   /* Wipe the shared state first. `app` is a module-level rune, so it survives
-   * an unmount â€” and a wait for "the folder has tiles" would then be satisfied
+   * an unmount — and a wait for "the folder has tiles" would then be satisfied
    * by the *previous* test's manifest and return before this mount's load had
    * even started. The load would land mid-test and take the fresh state with
    * it, which reads exactly like the app losing data. */
@@ -143,7 +143,7 @@ async function mountApp() {
   app.openLayoutId = "";
   app.layoutSelection = [];
   app.error = "";
-  // Same story for the sidebar's own state â€” which rows are open, what is
+  // Same story for the sidebar's own state — which rows are open, what is
   // being dragged. See resetRows.
   resetRows();
 
@@ -191,7 +191,7 @@ describe("the wall", () => {
     expect(app.dir).toContain("FaceTexture");
     expect(app.folderIds.length).toBeGreaterThan(0);
     /* The overview first, not a wall. With several accounts sharing one folder
-     * there is no single wall to guess at, and every tile starts unassigned â€”
+     * there is no single wall to guess at, and every tile starts unassigned —
      * so the inbox card is the way in and has to be there before anything
      * else works. */
     expect(document.querySelector("canvas.lower-canvas")).toBeNull();
@@ -200,7 +200,7 @@ describe("the wall", () => {
   });
 
   it("keeps its guide grid off the interaction canvas", async () => {
-    /* Fabric has two canvases and fires after:render for both â€” once for the
+    /* Fabric has two canvases and fires after:render for both — once for the
      * objects, once for the interaction layer it draws handles on. The guide
      * hook answered both, so a copy of the whole lattice was painted onto the
      * top canvas, which only renderTop() ever clears. Every later zoom or pan
@@ -224,7 +224,7 @@ describe("the wall", () => {
 
     /* Sized here on purpose. Mounted in a bare test document the stage collapses
      * to one pixel wide and the wall is drawn at 0.02% zoom, where every guide
-     * is sub-pixel and the probe reads zero however broken the hook is â€” a test
+     * is sub-pixel and the probe reads zero however broken the hook is — a test
      * that passes by measuring nothing. */
     canvas.setDimensions({ width: 900, height: 700 });
     canvas.setViewportTransform([0.1, 0, 0, 0.1, 20, 20]);
@@ -240,7 +240,7 @@ describe("the wall", () => {
 
   it("stamps a per-tile caption onto the tile, live", async () => {
     /* Through the editor, not the model: the unit tests hand syncLiveLayers
-     * plain objects, and the app hands it Svelte $state proxies â€” which is a
+     * plain objects, and the app hands it Svelte $state proxies — which is a
      * different thing entirely, and the difference silently broke the whole
      * feature. Anything reachable only through a real edit belongs here. */
     const [a] = app.folderIds;
@@ -262,15 +262,15 @@ describe("the wall", () => {
   });
 
   it("edits the layer on the tile it was picked on, not the first of that name", async () => {
-    /* Two tiles, one layer id. That is not a contrived shape: the v6â†’v7 fold
+    /* Two tiles, one layer id. That is not a contrived shape: the v6→v7 fold
      * copied every shared stack onto its tiles keeping the ids, and a design
-     * dissolved across a wall keeps them on purpose â€” the shared id is what
+     * dissolved across a wall keeps them on purpose — the shared id is what
      * lets one edit reach the same layer on every selected tile.
      *
      * So "the selected layer" is a pair, and it has to stay one all the way to
      * the write. It did not: the write looked the id up by scanning every tile
      * and taking the first hit, so a caption dragged on the second tile moved
-     * on the first one instead â€” the portrait under the pointer did not budge,
+     * on the first one instead — the portrait under the pointer did not budge,
      * and a portrait somewhere else on the wall quietly did. */
     await enterInbox();
     const [a, b] = app.folderIds;
@@ -364,7 +364,7 @@ describe("the wall", () => {
   });
 
   it("starts a new undo step when the picked tiles change mid-slider", async () => {
-    /* Runs collapse an edit that is still being made â€” dragging a slider is one
+    /* Runs collapse an edit that is still being made — dragging a slider is one
      * step, not forty. The key says two edits are of the same kind, so the tile
      * set has to be in it: without that, editing {a,b}, reselecting {c} and
      * carrying on with the same control folded both into one step, and a single
@@ -393,7 +393,7 @@ describe("the wall", () => {
   it("places a dragged layer on every picked tile without compounding its size", async () => {
     /* A shape stores its size and `resize` multiplies it by what Fabric
      * scaled, so replaying the gesture on each tile would scale each one by
-     * that factor again â€” tiles that had drifted apart would drift further.
+     * that factor again — tiles that had drifted apart would drift further.
      * The dragged layer's finished size is what the others copy. */
     await enterInbox();
     const [a, b] = app.folderIds;
@@ -430,7 +430,7 @@ describe("the wall", () => {
     /* The same button in two places. Inside a Layout it joins the sheet; on the
      * wall it goes onto the picked tiles, which is what the sheet used to be
      * the only way to do. Clicked rather than called, because the wiring is the
-     * thing being tested â€” the actions themselves have their own test. */
+     * thing being tested — the actions themselves have their own test. */
     await enterInbox();
     const [a, b] = app.folderIds;
     app.selectedTiles = [a, b];
@@ -525,7 +525,7 @@ describe("the wall", () => {
   it("puts the document aside and back again, leaving the game folder alone", async () => {
     /* Twenty kilobytes, not a folder copy: assets and vault copies are never
      * deleted, so a restored snapshot finds everything it names still on disk.
-     * The game's own files are a separate decision â€” this is the document. */
+     * The game's own files are a separate decision — this is the document. */
     const [a, b, c] = app.folderIds;
     app.selectedTiles = [a, b, c];
     await newProjectFrom("Konto");
@@ -541,7 +541,7 @@ describe("the wall", () => {
 
     /* Still listed with its wall gone: a snapshot naming a deleted project
      * falls back to the overview, which is the one place it can be reached from
-     * â€” and reaching it is how the wall comes back. */
+     * — and reaching it is how the wall comes back. */
     expect(snapshots().map((s) => s.name)).toContain("Mit Projekt");
 
     await restoreSnapshot({ name: "Mit Projekt", projectId });
@@ -603,7 +603,7 @@ describe("the wall", () => {
     await restoreSnapshot({ name: "Beide", projectId: first });
 
     expect(projects().find((p) => p.id === first)!.order).toEqual([a, b]);
-    // Ownership is exclusive, so the other wall gives it up â€” and the message
+    // Ownership is exclusive, so the other wall gives it up — and the message
     // says so rather than letting a wall change behind the user's back.
     const other = projects().find((p) => p.id === second)!;
     expect([...other.order, ...other.shelf]).toEqual([c]);
@@ -625,7 +625,7 @@ describe("the wall", () => {
     await assignTileLayout(a, layouts()[0].id);
     expect(app.manifest.tiles[a].layers.length).toBeGreaterThan(0);
 
-    // Still on the overview â€” nothing here entered a wall â€” where the alert lives.
+    // Still on the overview — nothing here entered a wall — where the alert lives.
     app.hashes = { ...app.hashes, [a]: "neu-a", [b]: "neu-b" };
     app.changedTiles = [a, b];
     await until(
@@ -646,7 +646,7 @@ describe("the wall", () => {
       () => ![...document.querySelectorAll("button")].every((x) => x.textContent!.trim() !== "All new characters"),
     );
     /* Answered yes on purpose: this is the button that deletes the vaulted
-       originals, so it asks first now â€” and a test that let the dialog default
+       originals, so it asks first now — and a test that let the dialog default
        to "no" would be testing nothing. */
     const asked: string[] = [];
     const real = window.confirm;
@@ -668,7 +668,7 @@ describe("the wall", () => {
 
   it("refuses a rename that would land on another snapshot's file", async () => {
     /* The dedupe compared what was typed while the file was written under a
-     * sanitised name, so "a/b" walked over "a_b" â€” no dialog, no undo, one
+     * sanitised name, so "a/b" walked over "a_b" — no dialog, no undo, one
      * snapshot fewer. Measured on the real folder before the fix. */
     await takeSnapshot("a_b");
     await takeSnapshot("zweiter");
@@ -683,7 +683,7 @@ describe("the wall", () => {
   });
 
   it("never lets the automatic snapshot overwrite the one before it", async () => {
-    /* Named to the minute, so two writes in the same minute were one file â€”
+    /* Named to the minute, so two writes in the same minute were one file —
      * the second replacing the restore point the first had just made, which is
      * the single moment it exists for. */
     const [a] = app.folderIds;
@@ -699,8 +699,8 @@ describe("the wall", () => {
     expect(new Set(auto.map((s) => s.name)).size).toBe(2);
   });
 
-  it("takes one tile off the wall per click on â†©, and redraws the row", async () => {
-    /* A reviewer clicked â†© once, saw nothing move, clicked again and found two
+  it("takes one tile off the wall per click on ↩, and redraws the row", async () => {
+    /* A reviewer clicked ↩ once, saw nothing move, clicked again and found two
      * tiles on the shelf. This pins the click down: one press, one tile, and a
      * list that is already showing the new state when the press returns. */
     const [a, b, c] = app.folderIds;
@@ -724,14 +724,14 @@ describe("the wall", () => {
     await until(() => projects()[0].shelf.length === 1);
 
     expect(projects()[0].order).toEqual([b, c]);
-    // The row is gone from the list too, not just from the model â€” an unchanged
+    // The row is gone from the list too, not just from the model — an unchanged
     // list is what invites the second click.
     await until(() => offWall().length === 2);
   });
 
   it("asks before overwriting the game's own files, and takes No for an answer", async () => {
     /* The only button that reaches out of the app and changes files another
-     * program owns, and it asked nothing â€” while "Reset in game" beside it,
+     * program owns, and it asked nothing — while "Reset in game" beside it,
      * which this one undoes, asked every time. A "No" has to stop everything,
      * the safety snapshot included: it exists for the write, and taking one for
      * a write that never happens buries the real restore points. */
@@ -740,7 +740,7 @@ describe("the wall", () => {
     await newProjectFrom("Konto");
     /* Entered through its card, not through openProjectView: which wall the
      * stage shows is the component's own state, and the toolbar is greyed out
-     * on the overview â€” a test that set the id from outside would find the
+     * on the overview — a test that set the id from outside would find the
      * button disabled for a reason that has nothing to do with the write. */
     const cards = () => [...document.querySelectorAll("button")];
     await until(() => cards().some((b) => b.textContent!.includes("Konto")));
@@ -773,7 +773,7 @@ describe("the wall", () => {
   it("sweeps stamps of a deleted layout out of a restored snapshot", async () => {
     /* A project snapshot restores the wall and its tiles but deliberately not
      * the layout library, so one taken before a layout was deleted put that
-     * layout's stamps back with nothing left to name them â€” pictures labelled
+     * layout's stamps back with nothing left to name them — pictures labelled
      * with a raw id, sitting on the tiles until the next start. The rule is
      * that a layout and its layers do not survive each other, and it has to
      * hold on this route too.
@@ -871,7 +871,7 @@ describe("the wall", () => {
     await newProjectFrom("Erstes");
     expect(projects()).toHaveLength(1);
     expect(projects()[0].order).toEqual([a, b, c]);
-    // Claimed now, so the same pick can no longer start a second project â€” and
+    // Claimed now, so the same pick can no longer start a second project — and
     // the three are out of the inbox.
     app.selectedTiles = [a, b, c];
     expect(freeCount()).toBe(0);
@@ -881,7 +881,7 @@ describe("the wall", () => {
   it("shows one row for a layout, not a second for the picture it keeps live", async () => {
     /* A layout with a per-tile picture puts two layers on the tile: the stamp
      * and the live copy. Both are images carrying the same layoutId, so a rule
-     * written on kind alone kept both â€” the tile read "2 layout(s)" and the
+     * written on kind alone kept both — the tile read "2 layout(s)" and the
      * two rows marked different things on the wall. Live captions were already
      * hidden; the picture is the same kind of copy. */
     const a = app.folderIds[0];
@@ -896,7 +896,7 @@ describe("the wall", () => {
 
     // Through the list, because the list is where it was wrong.
     await closeLayoutDoc();
-    /* The tile-section head, not the project row of the same name â€” both read
+    /* The tile-section head, not the project row of the same name — both read
      * "Unsorted" now, and only this one carries the count. */
     const section = [...document.querySelectorAll("aside button.name")].find((b) =>
       b.textContent!.includes("right-click the wall to assign"),
@@ -915,7 +915,7 @@ describe("the wall", () => {
     /* The real setup, from a real manifest: a block of colour cut to the class
      * icon. The mask is chosen while both are ordinary Layout layers; the
      * switch comes after. The rule only lets a per-tile cutter cut a per-tile
-     * layer, so flipping it used to void the mask in silence â€” the block kept a
+     * layer, so flipping it used to void the mask in silence — the block kept a
      * maskId that no longer applied, the dropdown stopped listing the icon, and
      * the wall showed a whole rectangle beside a badge instead of one cut to
      * the other. */
@@ -938,7 +938,7 @@ describe("the wall", () => {
   it("choosing a mask that lives on the tiles takes the layer along", async () => {
     /* The other half of the same rule. A per-tile cutter may only cut a
      * per-tile layer, so a plain rectangle could not be cut by a class icon
-     * that names a class per tile â€” and the dropdown answered by leaving the
+     * that names a class per tile — and the dropdown answered by leaving the
      * icon out entirely, with nothing said. It is offered now, and picking it
      * sends the rectangle to the tiles as well, which is the only way the pair
      * can exist at all. */
@@ -990,7 +990,7 @@ describe("the wall", () => {
   });
 
   it("hiding a stamp hides the whole assignment, live layers and all", async () => {
-    /* The stamp's row speaks for the copies a Layout keeps beside it â€” they
+    /* The stamp's row speaks for the copies a Layout keeps beside it — they
      * have no row of their own. Hiding it and leaving those drawn meant the
      * eye did nothing you could see: the caption and the logo stayed on the
      * wall with nothing left to switch them off.
@@ -1023,7 +1023,7 @@ describe("the wall", () => {
 
   it("keeps a hidden assignment hidden when the layout is updated", async () => {
     /* The eye said "off", "Update stamps" was pressed, and the design came
-     * back â€” captions and all, into the 624x804 file written to the game â€”
+     * back — captions and all, into the 624x804 file written to the game —
      * with the row still saying "hidden".
      *
      * `syncLiveLayers` rebuilds every live copy from the Layout's own layer, so
@@ -1057,7 +1057,7 @@ describe("the wall", () => {
 
   it("clearing a tile's layers leaves it archived, and keeps its framing out of the way", async () => {
     /* `{ ...emptyTile(), base }` was a whitelist of what to keep, and `Tile`
-     * has grown `swap`, `frame` and `archived` since it was written â€” each one
+     * has grown `swap`, `frame` and `archived` since it was written — each one
      * joined the throw-away side in silence. The last of those meant that
      * clearing the layers on a portrait you had put away quietly brought it
      * back onto the Unsorted wall. Named `stripTile` now, so it cannot drop a
@@ -1079,7 +1079,7 @@ describe("the wall", () => {
     app.selectedTiles = [a];
     await stripSelectedTiles();
     expect(tileLayers(a)).toEqual([]);
-    // Still put away â€” the clearing was of its artwork, not of the tile.
+    // Still put away — the clearing was of its artwork, not of the tile.
     expect(archived()).toContain(a);
     // And its placement went with the layers it belonged to.
     expect(app.manifest.tiles[a].frame).toBeUndefined();
@@ -1088,8 +1088,8 @@ describe("the wall", () => {
   it("takes one layout off the tiles that wear it, and nothing else", async () => {
     /* The inverse of assigning, and it has to be as thorough. A stamp removed
      * on its own leaves the captions and logos the Layout keeps live beside it
-     * drawing on the wall with no row to switch them off â€” the fault
-     * deleteStampCascade exists for â€” and the tile's own wording, pictures and
+     * drawing on the wall with no row to switch them off — the fault
+     * deleteStampCascade exists for — and the tile's own wording, pictures and
      * placements are keyed to those same ids.
      *
      * And it takes only what was asked for: a second design on the same tile
@@ -1121,7 +1121,7 @@ describe("the wall", () => {
 
     // Gone from the one asked for, stamp and live caption together.
     expect(tileLayers(a).some((l) => l.layoutId === doomed.id)).toBe(false);
-    // And its wording and placement with it â€” both keyed by the caption's id.
+    // And its wording and placement with it — both keyed by the caption's id.
     expect(app.manifest.tiles[a].text[caption.id]).toBeUndefined();
     expect(app.manifest.tiles[a].frame?.[caption.id]).toBeUndefined();
     // The other design on the same tile is untouched.
@@ -1131,8 +1131,8 @@ describe("the wall", () => {
   });
 
   it("deleting a stamp takes its live caption with it", async () => {
-    /* The defect this replaces: the caption survived, no list showed it â€”
-     * they are hidden because the stamp row speaks for them â€” and it went on
+    /* The defect this replaces: the caption survived, no list showed it —
+     * they are hidden because the stamp row speaks for them — and it went on
      * rendering on the wall with no row and no way out. Four tiles on the real
      * wall ended up like that. */
     const a = app.folderIds[0];
@@ -1154,7 +1154,7 @@ describe("the wall", () => {
     await until(() => !app.openLayoutId);
 
     /* Through the DOM, because the bug was in the DOM: rename and open cannot
-     * share the name button â€” the first click of a double-click would open
+     * share the name button — the first click of a double-click would open
      * the document and unmount the row, so the second click landed on nothing
      * and layouts were unrenamable. Double-click renames (like a group row),
      * the pencil opens. */
@@ -1201,8 +1201,8 @@ describe("the wall", () => {
 
 describe("dressing a whole wall", () => {
   it("counts only the tiles that still lack the layout, and stamps just those", async () => {
-    /* The two-click way to dress a second account's wall. Placed tiles only â€”
-     * the shelf is a waiting area and the game never sees it â€” and never a
+    /* The two-click way to dress a second account's wall. Placed tiles only —
+     * the shelf is a waiting area and the game never sees it — and never a
      * second stamp on a tile that already wears the design, so the number in
      * the menu is the work that will actually happen. */
     const [a, b, c] = app.folderIds;
@@ -1242,8 +1242,8 @@ describe("the sheets over the page", () => {
     /* Both sheets sit at the same z-index and the grid comes later in the
      * markup, so it covers anything opened behind it. `?` toggled its sheet
      * regardless: it went up out of sight, and the next press put it away
-     * again â€” a key that did nothing, twice. */
-    await newLayoutDoc("BlÃ¤tter");
+     * again — a key that did nothing, twice. */
+    await newLayoutDoc("Blätter");
     // Matched on the start of the title: it now names where the icon will land
     // ("into the layout", "onto 3 selected tiles"), which is not what this test
     // is about.
@@ -1276,7 +1276,7 @@ describe("the sheets over the page", () => {
  * above. What is pinned here is what that test cannot see: which of them eats
  * the vault, and which one deliberately does not. --- */
 describe("keeping and replacing a character", () => {
-  /** A project of `count` tiles, dressed and written to the game â€” which is
+  /** A project of `count` tiles, dressed and written to the game — which is
    *  what puts their pristine originals in the vault. */
   async function written(count: number) {
     const ids = app.folderIds.slice(0, count);
@@ -1297,7 +1297,7 @@ describe("keeping and replacing a character", () => {
     /* The vault is what loadOriginal serves as "the original", in preference to
      * the game's own file. After a restyle it holds the face from before, so
      * keeping it would mean the editor went on showing the old haircut for
-     * good â€” seen on a real folder, thirty-five portraits deep. */
+     * good — seen on a real folder, thirty-five portraits deep. */
     const [a] = await written(1);
 
     app.hashes = { ...app.hashes, [a]: "restyled" };
@@ -1371,7 +1371,7 @@ describe("putting the game's own portraits back", () => {
     await newProjectFrom("Konto");
     openProjectView(projects()[0].id);
     queuePick(await magentaSquare("zurueck"));
-    await newLayoutDoc("ZurÃ¼cktest");
+    await newLayoutDoc("Zurücktest");
     await addLayoutImage();
     await closeLayoutDoc();
     await assignTileLayout(a, layouts()[0].id);
@@ -1420,7 +1420,7 @@ describe("the collapsed tile row", () => {
     for (const l of openLayout()!.layers) await setLayerField(l.id, "perTile", true);
     await closeLayoutDoc();
     await assignTileLayout(a, layouts()[0].id);
-    /* The list is behind its heading, and the heading is a real button â€” a test
+    /* The list is behind its heading, and the heading is a real button — a test
      * that reached past it would keep passing after the rows stopped being
      * reachable. */
     const heading = [...document.querySelectorAll("aside button")].find((b) =>
@@ -1451,7 +1451,7 @@ describe("the collapsed tile row", () => {
 
   it("takes its headline from this tile, never from the Layout's default", async () => {
     /* The default belongs to every tile wearing that Layout, so a headline read
-     * from it is forty-four rows all saying "text01" â€” the same column of
+     * from it is forty-four rows all saying "text01" — the same column of
      * identical strings the id was. */
     const a = await dressed();
     const caption = tileCaptions(a)[0];
@@ -1590,7 +1590,7 @@ describe("undo that says what it takes back", () => {
 
   it("names the gesture, not its last keystroke", async () => {
     /* Typing collapses into one step, and the step is named by the edit that
-     * opened the run â€” take the newest name and it ends up called after the
+     * opened the run — take the newest name and it ends up called after the
      * last letter rather than after the thing you did. */
     const [a] = app.folderIds;
     app.selectedTiles = [a];
@@ -1612,7 +1612,7 @@ describe("undo that says what it takes back", () => {
   });
 
   it("puts it back on redo, and says that too", async () => {
-    /* redo shares travel() with undo, so this is thin â€” but nothing pressed it
+    /* redo shares travel() with undo, so this is thin — but nothing pressed it
      * at all before, and "shares the code path" stops being true the first time
      * someone special-cases one of travel's two callers. */
     await newLayoutDoc("Wiederholen");
@@ -1642,14 +1642,14 @@ describe("the right-click menu", () => {
     app.selectedTiles = [a, b];
     await newProjectFrom("Konto");
     queuePick(await magentaSquare("menue"));
-    await newLayoutDoc("MenÃ¼test");
+    await newLayoutDoc("Menütest");
     await addLayoutImage();
     /* Closing a Layout lands back on the overview, so the wall has to be
        entered after that or there is no canvas to right-click on. */
     await closeLayoutDoc();
     /* Entered by clicking its card, the way the other wall tests do it: the
        card is the only way in, and openProjectView alone leaves the overview
-       showing â€” with no canvas to right-click on. */
+       showing — with no canvas to right-click on. */
     const cards = () => [...document.querySelectorAll("button")];
     await until(() => cards().some((x) => x.textContent!.includes("Konto")));
     cards().find((x) => x.textContent!.includes("Konto"))!.click();
@@ -1667,10 +1667,10 @@ describe("the right-click menu", () => {
     const assign = items().find((i) => i.textContent!.includes("Assign layout"))!;
     expect(assign).toBeTruthy();
     assign.click();
-    await until(() => items().some((i) => i.textContent!.includes("MenÃ¼test")));
-    items().find((i) => i.textContent!.includes("MenÃ¼test"))!.click();
+    await until(() => items().some((i) => i.textContent!.includes("Menütest")));
+    items().find((i) => i.textContent!.includes("Menütest"))!.click();
 
-    // The menu did what the function does â€” and closed behind itself.
+    // The menu did what the function does — and closed behind itself.
     await until(() => tileLayers(app.selectedTiles[0]).length > 0);
     await until(() => items().length === 0);
   });
