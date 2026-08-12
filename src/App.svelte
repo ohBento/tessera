@@ -31,7 +31,6 @@
     clearMosaic,
     coverCounts,
     coverTheWall,
-    clearTileAsset,
     clearTileFrame,
     clearTileText,
     clearTiles,
@@ -73,8 +72,7 @@
     setTileText,
     pickTileImage,
     setLayerField,
-    setTileAsset,
-    tileAsset,
+    setTileLayerField,
     tileCaptions,
     tileHeadline,
     tileImageChoices,
@@ -82,11 +80,8 @@
     tileIcons,
     tileImages,
     tileLayers,
-    tilePaint,
     tilePaintChoices,
     tileShapes,
-    setTilePaint,
-    clearTilePaint,
     shelfIds,
     snapshots,
     takeSnapshot,
@@ -1489,7 +1484,7 @@
           onclick={() => {
             const target = iconTarget;
             closeIconSheet();
-            if (target?.tile) void setTileAsset(target.tile, target.layer, name);
+            if (target?.tile) void setTileLayerField([target.tile], target.layer, "icon", name);
             else if (target) void setLayerField(target.layer, "icon", name);
             // Nothing asked for it: the toolbar did, so it lands wherever a new
             // layer lands — the sheet, or every picked tile.

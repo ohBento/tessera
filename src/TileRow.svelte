@@ -48,7 +48,6 @@
     tileImageChoices,
     tileImages,
     tileLayers,
-    tilePaint,
     tilePaintChoices,
     tileProject,
     tileShapes,

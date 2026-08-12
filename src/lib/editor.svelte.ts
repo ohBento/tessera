@@ -516,7 +516,7 @@ export const tileCaptions = (tileId: string): TextLayer[] =>
 /** The live pictures on one tile — the same bargain as a caption, one kind
  *  over: the Layout owns where and how big, the tile owns which picture. */
 export const tileImages = (tileId: string): ImageLayer[] =>
-  drawnOn(tileId).filter((l): l is ImageLayer => l.kind === "image" && !!l.live);
+  drawnOn(tileId).filter((l): l is ImageLayer => l.kind === "image");
 
 /** This tile's framing of one shared picture, or undefined when it shows the
  *  picture where the Layout put it. */
@@ -551,7 +551,7 @@ export async function clearTileFrame(tileId: string, layerId: string) {
  *  whole point of a wall of characters. */
 export const tileIcons = (tileId: string): ShapeLayer[] =>
   drawnOn(tileId).filter(
-    (l): l is ShapeLayer => l.kind === "shape" && l.shape === "icon" && !!l.live,
+    (l): l is ShapeLayer => l.kind === "shape" && l.shape === "icon",
   );
 
 /** What one tile says, for the row that lists it collapsed.
@@ -581,41 +581,16 @@ export const tileHeadline = (tileId: string): string => {
  *  and coloured by nothing while the icon cutting it could be moved. They own a
  *  colour now, and the row that carries it carries the place button too. */
 export const tileShapes = (tileId: string): ShapeLayer[] =>
-  drawnOn(tileId).filter(
-    (l): l is ShapeLayer => l.kind === "shape" && l.shape !== "icon" && !!l.live,
-  );
+  drawnOn(tileId).filter((l): l is ShapeLayer => l.kind === "shape" && l.shape !== "icon");
 
-/** This tile's picture for a live image layer — or its class for a live icon
- *  layer, which shares the map — or undefined when it shows the layer's own.
- *  "" is a choice, not an absence: nothing here. */
-export const tileAsset = (tileId: string, layerId: string): string | undefined =>
-  app.manifest.tiles[tileId]?.swap?.[layerId];
-
-/** This tile's own fill for a live shape, or undefined when it wears the
- *  layer's. */
-export const tilePaint = (tileId: string, layerId: string): Paint | undefined =>
-  app.manifest.tiles[tileId]?.paint?.[layerId];
-
-/** Paints this tile's copy of a shared shape. */
-export async function setTilePaint(tileId: string, layerId: string, fill: Paint) {
-  const tile = app.manifest.tiles[tileId];
-  if (!tile) return;
-  await mutate("Recolour shape", () => {
-    tile.paint ??= {};
-    tile.paint[layerId] = fill;
-  });
-}
-
-/** Back to the colour the Layout gave it. */
-export async function clearTilePaint(tileId: string, layerId: string) {
-  const tile = app.manifest.tiles[tileId];
-  if (!tile?.paint?.[layerId]) return;
-  await mutate("Reset colour", () => delete tile.paint![layerId]);
-}
-
-/** Every flat colour a live shape wears somewhere on this wall, newest layer
- *  last — what the swatches offer, so the second tile is a click rather than a
- *  trip through the picker.
+/** Every flat colour a shape wears somewhere on this wall, newest layer last —
+ *  what the swatches offer, so the second tile is a click rather than a trip
+ *  through the picker.
+ *
+ *  Read off the shapes themselves rather than out of a per-tile record: the
+ *  record was where a tile's departure from its Layout was written down, and a
+ *  layer holds its own colour now. Same list either way, from the place that
+ *  still has an answer.
  *
  *  Flat colours only: a gradient has no swatch that would tell you what it is,
  *  and picking one out of a row of squares that all look like a smear is not a
@@ -625,8 +600,7 @@ export const tilePaintChoices = (tileId: string, layerId: string): string[] => {
   const seen = new Set<string>();
   if (layer && !isGradient(layer.fill)) seen.add(layer.fill);
   for (const id of app.folderIds)
-    for (const paint of Object.values(app.manifest.tiles[id]?.paint ?? {}))
-      if (!isGradient(paint)) seen.add(paint);
+    for (const l of tileShapes(id)) if (!isGradient(l.fill)) seen.add(l.fill);
   return [...seen];
 };
 
@@ -640,32 +614,15 @@ export const tilePaintChoices = (tileId: string, layerId: string): string[] => {
 export function tileImageChoices(tileId: string, layerId: string): string[] {
   const layer = tileImages(tileId).find((l) => l.id === layerId);
   const seen = new Set<string>(layer ? [layer.asset] : []);
-  for (const tile of Object.values(app.manifest.tiles)) {
-    const a = tile.swap?.[layerId];
-    if (a) seen.add(a);
+  /* The same picture on the same layer of every other tile — read off those
+   * layers now, where it used to be read out of each tile's swap record. A
+   * dissolved design puts the same layer id on every tile it dressed, so the
+   * gallery is the same list it always was. */
+  for (const id of Object.keys(app.manifest.tiles)) {
+    const l = tileImages(id).find((x) => x.id === layerId);
+    if (l?.asset) seen.add(l.asset);
   }
   return [...seen];
-}
-
-/** Points one tile's live picture at an asset. "" means none — see layerAsset. */
-export async function setTileAsset(tileId: string, layerId: string, asset: string) {
-  const tile = app.manifest.tiles[tileId];
-  if (!tile) return;
-  await mutate("Change picture", () => {
-    // The map is optional on Tile, so a manifest written before per-tile
-    // pictures existed has to grow one on first use. Two statements — see
-    // setTileFrame for why the one-liner is a trap on a reactive proxy.
-    tile.swap ??= {};
-    tile.swap[layerId] = asset;
-  });
-}
-
-/** Back to the layer's own picture — the absence of a key, not "" which is the
- *  deliberate "none". */
-export async function clearTileAsset(tileId: string, layerId: string) {
-  const tile = app.manifest.tiles[tileId];
-  if (!tile?.swap || tile.swap[layerId] === undefined) return;
-  await mutate("Reset picture", () => delete tile.swap![layerId]);
 }
 
 /** Imports a picture and gives it to this one tile. */
@@ -674,7 +631,7 @@ export async function pickTileImage(tileId: string, layerId: string) {
   if (typeof path !== "string") return;
   await run("import", async () => {
     const asset = await importAsset(app.dir, path);
-    await setTileAsset(tileId, layerId, asset);
+    await setTileLayerField([tileId], layerId, "asset", asset);
   });
 }
 
