@@ -358,6 +358,9 @@
       (canvas.getWidth() - grid.w * z) / 2,
       (canvas.getHeight() - grid.h * z) / 2,
     ]);
+    // Third of the three viewport changes that have to ask for their own frame
+    // — see the note on the wheel handler.
+    canvas.requestRenderAll();
     zoom = z;
   }
 
@@ -576,6 +579,14 @@
       }
       const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, canvas!.getZoom() * 0.999 ** opt.e.deltaY));
       canvas!.zoomToPoint(new fabric.Point(opt.e.offsetX, opt.e.offsetY), next);
+      /* Asked for outright. Fabric hangs the repaint after a viewport change on
+         renderOnAddRemove, which is off here so that building a wall does not
+         ask for a frame per object — so a zoom moved the transform and
+         requested nothing, and the screen caught up only when some other event
+         happened to paint. Reported as "zoom only takes effect when I click
+         something else". See the test in incremental.browser.test.ts, which
+         pins that behaviour upstream. */
+      canvas!.requestRenderAll();
       zoom = next;
       opt.e.preventDefault();
       opt.e.stopPropagation();
@@ -633,6 +644,9 @@
       if (!(opt.e instanceof MouseEvent)) return;
       if (panning) {
         canvas!.relativePan(new fabric.Point(opt.e.clientX - last.x, opt.e.clientY - last.y));
+        // Same reason as the wheel above: a pan is a viewport change, and a
+        // viewport change asks for nothing while renderOnAddRemove is off.
+        canvas!.requestRenderAll();
         last = { x: opt.e.clientX, y: opt.e.clientY };
         return;
       }

@@ -1097,3 +1097,36 @@ describe("what the wall lost with the layout editor", () => {
     expect(undoLabel()).toBe("Change icon");
   });
 });
+
+describe("the wall follows the wheel", () => {
+  /* The bug this pins was reported as "the zoom only takes effect once I click
+   * something else", with panning moving in steps for the same reason. Neither
+   * was slowness: Fabric asks for the repaint after a viewport change only when
+   * renderOnAddRemove is on, and it is off here so that building a wall of
+   * forty-four does not request a frame per object. So the transform moved and
+   * nothing painted until an unrelated event happened to. */
+  it("paints after a wheel zoom, with no other event to prompt it", async () => {
+    await enterInbox();
+    const canvas = (window as { tesseraWall?: fabric.Canvas }).tesseraWall!;
+    await until(() => canvas.getObjects().length > 0);
+
+    /* Counting after:render is not enough: Fabric fires it for the interaction
+       layer too, and handling the wheel repaints that whichever way this goes —
+       a version of this test that counted those passed without the fix. What
+       has to be true is that the wheel asks for a frame of the object canvas. */
+    let asked = 0;
+    const original = canvas.requestRenderAll.bind(canvas);
+    canvas.requestRenderAll = () => {
+      asked++;
+      return original();
+    };
+    const before = canvas.getZoom();
+
+    canvas.upperCanvasEl.dispatchEvent(
+      new WheelEvent("wheel", { deltaY: -240, clientX: 40, clientY: 40, bubbles: true }),
+    );
+
+    expect(canvas.getZoom()).not.toBe(before);
+    expect(asked).toBeGreaterThan(0);
+  });
+});

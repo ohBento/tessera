@@ -279,3 +279,50 @@ describe("rebuilding one tile", () => {
     }
   });
 });
+
+describe("a canvas that does not paint per object still paints on a zoom", () => {
+  /* renderOnAddRemove is off on the wall, so building it does not repaint once
+   * per object — a wall of forty-four was asking for hundreds of frames it
+   * threw away. Fabric hangs something else on that same flag:
+   *
+   *   setViewportTransform(vpt) {
+   *     this.viewportTransform = vpt;
+   *     this.calcViewportBoundaries();
+   *     this.renderOnAddRemove && this.requestRenderAll();
+   *   }
+   *
+   * So with it off, a zoom and a pan change the transform and ask for nothing.
+   * The screen then catches up only when something else happens to paint —
+   * reported as "zoom only takes effect when I click something", and as a pan
+   * that moves in steps. The flag reads as "render on add/remove"; it is the
+   * canvas's auto-render switch, and the viewport rides on it. */
+  it("asks for no frame at all — which is why GridCanvas asks for its own", async () => {
+    const el = document.createElement("canvas");
+    document.body.append(el);
+    const canvas = new fabric.Canvas(el, { width: 400, height: 300, renderOnAddRemove: false });
+    try {
+      let asked = 0;
+      const original = canvas.requestRenderAll.bind(canvas);
+      canvas.requestRenderAll = () => {
+        asked++;
+        return original();
+      };
+
+      /* Asserted the way it actually is, so that a Fabric upgrade which starts
+         requesting the frame itself fails here and whoever reads it can take
+         the explicit calls in GridCanvas back out. */
+      canvas.zoomToPoint(new fabric.Point(10, 10), 2);
+      expect(asked).toBe(0);
+      canvas.relativePan(new fabric.Point(15, 15));
+      expect(asked).toBe(0);
+
+      // And with the flag on, Fabric does ask — so this really is that switch.
+      canvas.renderOnAddRemove = true;
+      canvas.zoomToPoint(new fabric.Point(10, 10), 3);
+      expect(asked).toBeGreaterThan(0);
+    } finally {
+      await canvas.dispose();
+      el.remove();
+    }
+  });
+});
