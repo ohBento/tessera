@@ -29,16 +29,13 @@
   } from "./lib/rows.svelte";
   import {
     app,
-    assignTileLayout,
     clearTileFrame,
     dropTileLayer,
     fileTile,
     folders,
-    layouts,
     looseIds,
     pickTileImage,
     deleteLayer,
-    openLayoutDoc,
     selectLayer,
     toggleLayerHidden,
     toggleLayerLocked,
@@ -79,7 +76,9 @@
 
   /** A holder's rows as the list draws them: topmost first, and without the
    *  live copies a Layout keeps there — the stamp row speaks for them. */
-  const stampsOf = (layers: Layer[]) => [...layers].reverse().filter((l) => !isLiveCopy(l));
+  /** A tile's rows as the list draws them: topmost first. Every layer gets a
+   *  row now — the filter that hid a layout's live copies went with layouts. */
+  const stampsOf = (layers: Layer[]) => [...layers].reverse();
 
   /* What the row is drawing, read once per render. These opened the snippet as
      {@const}; a component's markup has no such holder, and $derived is the
@@ -89,16 +88,6 @@
   const said = $derived(tileHeadline(id));
   const badge = $derived(tileIcons(id)[0]);
 
-  /** A stamp shows its Layout's name; anything else falls back to layerLabel. */
-  const stampName = (l: Layer) =>
-    (l.kind === "image" && l.layoutId && layouts().find((x) => x.id === l.layoutId)?.name) ||
-    layerLabel(l);
-
-  const stampDirty = (l: Layer) => {
-    if (l.kind !== "image" || !l.layoutId) return false;
-    const layout = layouts().find((x) => x.id === l.layoutId);
-    return !!layout && layoutNeedsRestamp(layout);
-  };
 
   /** Enter walks the tile list: this row closes, the next one opens, and the
    *  cursor lands in its wording field. Shift+Enter goes back.
@@ -210,15 +199,9 @@
           class="name"
           class:dimmed={layer.hidden}
           onclick={() => selectLayer(layer.id, id)}
-          ondblclick={() => layer.layoutId && openLayoutDoc(layer.layoutId)}
-          title={layer.layoutId ? "Double-click opens the layout" : "Select this layer"}
+          title="Select this layer"
         >
-<!-- Marker before the name, not after: the name is what gets
-               ellipsised when the row runs out of width, and a dot hidden
-               behind "…" is the same as no dot at all. -->{#if stampDirty(layer)}<span
-              class="dirty"
-              title="Layout changed — press Update stamps">●&nbsp;</span
-            >{/if}{stampName(layer)}
+          {layerLabel(layer)}
         </button>
         <button title="Delete" onclick={() => deleteLayer(layer.id)}>×</button>
       </li>
@@ -323,21 +306,6 @@
         own,
         (moving, beforeId) => void dropTileLayer(id, moving, beforeId),
       )}
-      <select
-        class="indent assign"
-        disabled={!layouts().length || !!app.busy}
-        onchange={(e) => {
-          const layoutId = e.currentTarget.value;
-          e.currentTarget.value = "";
-          if (layoutId) void assignTileLayout(id, layoutId);
-        }}
-      >
-        <option value="">+ Assign layout…</option>
-        {#each layouts() as layout (layout.id)}
-          <option value={layout.id}>{layout.name}</option>
-        {/each}
-      </select>
-
       <!-- What this tile alone says and shows. In the row rather
            than in a panel below the list: with forty-four rows,
            editing the first one meant scrolling past all of them

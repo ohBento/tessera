@@ -301,46 +301,6 @@ export const openProject = (): Project | undefined =>
 /** Tiles the folder has that no project claims. */
 export const inbox = () => inboxIds(app.manifest, app.folderIds);
 
-/* --- The face under a Layout while it is composed.
- *
- * A Layout belongs to no tile, so the editor has to borrow one. Which one is a
- * view choice and lives here rather than in the manifest: what lay under a
- * design while it was drawn says nothing about the design, and a field for it
- * would be the seventh dead one this project has had to dig out. --- */
-
-/** The tile the Layout editor lays its composition over, "" for none. */
-let bedTile = $state("");
-
-/** Which tiles can be borrowed: the open wall's, in grid order. Another
- *  project's portraits are deliberately out of reach — a Layout is judged
- *  against the wall it is being built for. */
-export const bedChoices = () => (openProject()?.order ?? inbox()).slice();
-
-/** The one currently under the sheet.
- *
- *  Chosen for you until you choose: the tile picked on the wall, because
- *  opening a Layout starts with a portrait that looks wrong and the one under
- *  the sheet should be that portrait. Failing that the first tile already
- *  wearing this Layout, since that is the one whose result is being judged;
- *  failing that the first tile of the wall, so a Layout that has never been
- *  stamped still has a face under it. */
-export const bedFor = (layoutId: string): string => {
-  const choices = bedChoices();
-  if (bedTile && choices.includes(bedTile)) return bedTile;
-  const picked = app.selectedTiles.find((id) => choices.includes(id));
-  if (picked) return picked;
-  const wearing = choices.find((id) =>
-    (app.manifest.tiles[id]?.layers ?? []).some((l) => l.layoutId === layoutId),
-  );
-  return wearing ?? choices[0] ?? "";
-};
-
-export function setBedTile(id: string) {
-  if (bedTile === id) return;
-  bedTile = id;
-  app.version++;
-}
-
 /** The changed-tile question, minus the ones put away.
  *
  *  Archiving is "not now", not "decide for me": the fingerprints are left
@@ -1205,6 +1165,61 @@ export async function addGridImage() {
   });
 }
 
+/** What the canvas reports back after a transform: absolute sizes for layers
+ *  whose size is measured off the object, raw factors for those whose size is
+ *  written onto it. */
+type Transform = {
+  scale: number;
+  scaleH: number;
+  fx: number;
+  fy: number;
+  /** Only a caption has one, and only once a height handle was dragged. */
+  boxH?: number;
+  /** Only a picture has one, and only once its side handles were used. */
+  crop?: Inset;
+};
+
+function resize(layer: Layer, patch: Transform) {
+  if (layer.kind === "image") {
+    layer.scale = patch.scale;
+    /* `scale` measures what the crop leaves, so the two travel together: a
+     * side handle changes both, and storing one without the other would put
+     * the picture back at the wrong size on the next rebuild. */
+    if (patch.crop) layer.crop = patch.crop;
+    else delete layer.crop;
+  } else if (layer.kind === "text") {
+    /* Two gestures, told apart by what Fabric did with them. A side handle on a
+     * Textbox changes `width` and leaves scaleX at 1; a corner scales the whole
+     * object and leaves the width alone. So a factor of one means the width is
+     * the news, and anything else means the letters are.
+     *
+     * The corner takes the box with it, or scaling a caption up would keep the
+     * old wrap width and break the line in a place nobody asked for. */
+    const dragged = Math.abs(patch.fx - 1) < 0.001;
+    /* A corner still says nothing a caption can store: the font size is a
+     * field and only a field, so a corner scale is ignored here exactly as it
+     * always was. Only the side handles have somewhere to land now.
+     *
+     * And only once the width is actually what moved: a plain drag reports the
+     * box's current width, and writing that back would quietly pin a caption
+     * that was still hugging its words while the user only moved it. "Once you
+     * touch it" has to mean the handle, not the layer. */
+    if (dragged && (layer.w !== undefined || Math.abs(patch.scale - textWidth(layer)) > 0.002)) {
+      layer.w = patch.scale;
+    }
+    // Only ever present when a top or bottom handle was actually dragged.
+    if (patch.boxH !== undefined) layer.h = patch.boxH / TILE_H;
+  } else if (layer.kind === "shape") {
+    /* Multiplied by what Fabric actually scaled, not set from the object's
+     * measured width. A shape is built at exactly w×h with scaleX 1, so a
+     * plain drag reports 1 and leaves the size alone — measuring instead made
+     * a polygon shrink on every drag, since a regular n-gon's bounding box is
+     * smaller than the box it is inscribed in. Both axes on their own: a shape
+     * is the one kind that can be stretched. */
+    layer.w *= patch.fx || 1;
+    layer.h *= patch.fy || 1;
+  }
+}
 /** Writes a finished drag/scale/rotate back into the model.
  *
  *  A plain move skips the rebuild: Fabric has already moved the very object
@@ -1402,778 +1417,6 @@ export async function bakeMosaic() {
     await mutate("Apply wall picture", () => {
       bakeMosaicInto(app.manifest, project, layer.id, layer.asset, crops);
       app.selected = "";
-    });
-  });
-}
-
-/* --- Layouts: tile-sized documents composed on their own, then rendered to a
- * flat picture and stamped onto tiles as an ordinary image layer. Editing one
- * means editing this document and re-stamping — there is no live link between
- * a Layout's own layers and what ends up on a tile. --- */
-
-export const layouts = () => app.manifest.layouts;
-export const openLayout = () => app.manifest.layouts.find((l) => l.id === app.openLayoutId);
-
-export async function newLayoutDoc(name: string) {
-  await mutate("New layout", () => {
-    const l = newLayout(name.trim() || `Layout ${app.manifest.layouts.length + 1}`);
-    app.manifest.layouts.push(l);
-    app.openLayoutId = l.id;
-    app.layoutSelected = "";
-  });
-}
-
-/* Neither opening nor closing touches app.selectedTiles: the flow this exists
- * for is picking tiles on the wall, then opening a layout to check or tweak
- * it, then closing and stamping onto the same picked tiles — clearing the
- * selection on either transition would break exactly that. */
-export const openLayoutDoc = (id: string) => {
-  app.openLayoutId = id;
-  // Both, not just the one: leaving layoutSelection behind carried the
-  // previous document's layer id into the next one, where a Ctrl-click then
-  // built a two-layer selection out of one visible row and the properties
-  // panel quietly stayed away.
-  setLayoutSelection([]);
-};
-export const closeLayoutDoc = () => {
-  app.openLayoutId = "";
-  setLayoutSelection([]);
-};
-
-/** Copies a Layout and opens the copy, which is what you wanted it for.
- *
- *  The name gets a suffix rather than a counter: "Layout 1 Kopie 2" says which
- *  one it came from, where "Layout 4" does not. */
-export async function duplicateLayoutDoc(id: string) {
-  const layout = app.manifest.layouts.find((l) => l.id === id);
-  if (!layout) return;
-  const taken = new Set(app.manifest.layouts.map((l) => l.name));
-  let name = `${layout.name} Copy`;
-  for (let n = 2; taken.has(name); n++) name = `${layout.name} Copy ${n}`;
-
-  await mutate("Duplicate layout", () => {
-    const copy = duplicateLayout($state.snapshot(layout), name);
-    app.manifest.layouts.push(copy);
-    app.openLayoutId = copy.id;
-    setLayoutSelection([]);
-  });
-}
-
-/** Deletes a layout and, through the sweep, every stamp and live caption it
- *  put on any tile. One mutation, so Ctrl+Z brings the layout back with all of
- *  its stamps still in place. */
-export async function deleteLayoutDoc(id: string) {
-  await mutate("Delete layout", () => {
-    const at = app.manifest.layouts.findIndex((l) => l.id === id);
-    if (at >= 0) app.manifest.layouts.splice(at, 1);
-    pruneDeadLayoutRefs(app.manifest);
-    if (app.openLayoutId === id) closeLayoutDoc();
-  });
-}
-
-export async function renameLayout(id: string, name: string) {
-  const layout = app.manifest.layouts.find((l) => l.id === id);
-  if (!layout || !name.trim() || layout.name === name.trim()) return;
-  await mutate("Rename layout", () => (layout.name = name.trim()));
-}
-
-/** A layer by id in whichever document holds it: the open Layout's own list,
- *  or the wall's own layers. Rename and lock work the same in both, so they take
- *  this rather than each document getting its own copy. */
-const anyLayer = (id: string) =>
-  findLayer(openLayout()?.layers ?? [], id) ?? findLayer(listOf(id) ?? [], id);
-
-/** `name` lives on Common, so one function renames every kind of layer. */
-export async function renameLayer(id: string, name: string) {
-  const layer = anyLayer(id);
-  if (!layer) return;
-  const next = name.trim();
-  /* Typing the text already shown is not a rename. The input is prefilled
-   * with layerLabel — the display label, which for an unnamed layer is a
-   * fallback, not layer.name — so without the second check a cancelled rename
-   * (Escape restores the label, blur still fires) wrote that fallback in as a
-   * real name and burned an undo step on nothing. */
-  if (next === (layer.name ?? "") || next === layerLabel(layer)) return;
-  await mutate("Rename layer", () => (layer.name = next || undefined));
-}
-
-/** Locking takes a layer out of Fabric's hit testing (makeInteractive in
- *  scene.ts), so it stops being draggable while staying visible. */
-export async function toggleLayerLocked(id: string) {
-  const layer = anyLayer(id);
-  if (!layer) return;
-  await mutate("Lock or unlock layer", () => (layer.locked = !layer.locked));
-}
-
-/** Picks one layer, from the canvas or from a plain list click.
- *
- *  A layer already inside the current multi-selection keeps that selection.
- *  Without that, Ctrl-picking a second row collapsed the set straight back to
- *  one: the pick moves `layoutSelected`, the canvas follows by setting its
- *  active object, Fabric fires selection:created, and the handler landed back
- *  here — undoing the very selection that caused it. */
-/** Replaces the Layout's whole selection — what the canvas reports after a
- *  rubber band, and what the list writes when several rows are picked. */
-export function setLayoutSelection(ids: string[]) {
-  app.layoutSelection = ids;
-  app.layoutSelected = ids.at(-1) ?? "";
-}
-
-export function selectLayoutLayer(id: string) {
-  if (app.layoutSelected !== id) app.layoutSelected = id;
-  app.layoutSelection = id ? [id] : [];
-}
-
-export async function toggleLayoutLayerHidden(id: string) {
-  const l = findLayer(openLayout()?.layers ?? [], id);
-  if (!l) return;
-  await mutate("Show or hide layer", () => (l.hidden = !l.hidden));
-}
-
-/** Deletes layers. On a group this dissolves it instead, handing the members
- *  back — see removeLayerFrom.
- *
- *  Takes a list because the menu above it does: "Group 2 layers" and
- *  "Duplicate 2 layers" act on the selection, and Delete sitting underneath
- *  them removed exactly one of the two without saying so. One mutation for the
- *  lot, so one Ctrl+Z brings them all back. */
-export async function deleteLayoutLayers(ids: string[]) {
-  const layout = openLayout();
-  if (!layout || !ids.length) return;
-  await mutate("Delete layers", () => {
-    for (const id of ids) removeLayerFrom(findList(layout.layers, id) ?? layout.layers, id);
-    app.layoutSelection = app.layoutSelection.filter((x) => !ids.includes(x));
-    if (ids.includes(app.layoutSelected)) app.layoutSelected = "";
-  });
-}
-
-export const deleteLayoutLayer = (id: string) => deleteLayoutLayers([id]);
-
-export async function addLayoutImage() {
-  const layout = openLayout();
-  if (!layout) return;
-  const path = await pickFile({ filters: [IMAGE_FILTER] });
-  if (typeof path !== "string") return;
-  await run("import", async () => {
-    const asset = await importAsset(app.dir, path);
-    await mutate("Add picture", () => {
-      const l = newImageLayer(asset);
-      nameInStack(l, layout.layers);
-      layout.layers.push(l);
-      selectLayoutLayer(l.id);
-    });
-  });
-}
-
-/** Adds a caption to the open Layout.
- *
- *  A Layout is rendered once and stamped as a flat picture, so every tile gets
- *  the same words — the "{{id}}" placeholder cannot vary here the way it does
- *  in a tile-local caption, because by the time the stamp lands there is no
- *  text left, only pixels. Per-tile wording needs a layer on the tile itself,
- *  which buildGrid now draws but nothing yet creates. */
-export async function addLayoutText() {
-  const layout = openLayout();
-  if (!layout) return;
-  await mutate("Add caption", () => {
-    const l = newTextLayer();
-    // Dead centre, not the 0.9 a tile caption defaults to: a Layout is a blank
-    // sheet, and something dropped at the bottom edge reads as misplaced.
-    l.y = 0.5;
-    /* Left, like every other new caption. Centring here was right while a
-     * caption's box was a whole tile wide — left-aligned text then started at
-     * the tile's edge whatever x said — but the box hugs its own words now
-     * (see textObject), so the anchor is already where the letters are. */
-    nameInStack(l, layout.layers);
-    layout.layers.push(l);
-    selectLayoutLayer(l.id);
-  });
-}
-
-export async function addLayoutShape(shape: ShapeKind, icon?: string) {
-  const layout = openLayout();
-  if (!layout) return;
-  await mutate("Add shape", () => {
-    const l = newShapeLayer(shape, icon);
-    nameInStack(l, layout.layers);
-    layout.layers.push(l);
-    selectLayoutLayer(l.id);
-  });
-}
-
-/** Puts a new layer on every selected tile — one undo step.
- *
- *  The same id on each of them, deliberately. That shared id is what makes the
- *  new layer bulk-editable straight away: pick the tiles again later and one
- *  edit reaches all of them. It is the same shape a stamped design left behind,
- *  minus the stamp.
- *
- *  Named per tile rather than once, because a name is a position in that tile's
- *  own stack — the third caption on one portrait may be the first on another,
- *  and a name claiming otherwise is worse than a name that differs. */
-async function addToTiles(label: string, make: () => Layer) {
-  const tiles = app.selectedTiles.filter((t) => app.manifest.tiles[t]);
-  if (!tiles.length) return;
-  const proto = make();
-  await mutate(label, () => {
-    for (const t of tiles) {
-      const l = clone(proto);
-      nameInStack(l, app.manifest.tiles[t].layers);
-      app.manifest.tiles[t].layers.push(l);
-    }
-    selectLayer(proto.id, tiles[0]);
-  });
-}
-
-/** Adds a picture to every selected tile. */
-export async function addTileImage() {
-  if (!app.selectedTiles.length) return;
-  const path = await pickFile({ filters: [IMAGE_FILTER] });
-  if (typeof path !== "string") return;
-  await run("import", async () => {
-    const asset = await importAsset(app.dir, path);
-    await addToTiles("Add picture", () => newImageLayer(asset));
-  });
-}
-
-/** Adds a caption to every selected tile.
- *
- *  Near the bottom, where a portrait's name goes, and "{{id}}" resolves against
- *  each tile as it is drawn — so one caption added to forty tiles reads as
- *  forty different names without anything further being typed. */
-export async function addTileText() {
-  await addToTiles("Add caption", () => {
-    const l = newTextLayer();
-    l.y = 0.85;
-    return l;
-  });
-}
-
-export async function addTileShape(shape: ShapeKind, icon?: string) {
-  await addToTiles("Add shape", () => newShapeLayer(shape, icon));
-}
-
-/** Any field any kind of layer has.
- *
- *  `keyof Layer` would only be the handful every kind shares, since Layer is a
- *  union — so a caption's `size` would not typecheck. Spelling the union out
- *  still rejects a field that exists nowhere, which is the typo this is
- *  guarding against; pairing the right field with the right kind is the
- *  caller's job, and the properties panel does it by rendering each field
- *  inside the branch that narrowed the layer to that kind. */
-export type LayerField = keyof TextLayer | keyof ShapeLayer | keyof ImageLayer;
-
-/** Edits one field of a layer. Everything the properties panel changes goes
- *  through here, so each edit is one undo step and one save. */
-/** Fields that change how wide a caption's box is. */
-const WIDTH_FIELDS = new Set(["text", "size", "font", "bold", "italic"]);
-
-/** Writes one field onto one layer, keeping an anchored caption's edge put.
- *
- *  A caption's x is its centre, so longer words used to push it out sideways in
- *  both directions — one line of a stack crept left while the next stayed put.
- *  Left-aligned text has its anchor at the left edge and right-aligned at the
- *  right, so the centre is moved by half the change to leave that edge where it
- *  was. Centred text grows around its middle, which is the point of it.
- *
- *  Measured per layer, which is why this is a function rather than two lines at
- *  the one call site: the same edit across several tiles meets a different
- *  string on each of them once wording lives on the tile, and one width
- *  measured from whichever tile happened to be first would drift all the
- *  others. */
-function writeField(layer: Layer, key: LayerField, value: unknown) {
-  const anchored =
-    layer.kind === "text" && WIDTH_FIELDS.has(key) && (layer.align ?? "center") !== "center";
-  const was = anchored ? textWidth(layer) : 0;
-  (layer as unknown as Record<string, unknown>)[key] = value;
-  if (!anchored) return;
-  const grew = textWidth(layer as TextLayer) - was;
-  layer.x += ((layer as TextLayer).align === "right" ? -grew : grew) / 2;
-}
-
-/** The field's own name, spaced out: one setter stands behind every slider,
- *  swatch and dropdown in the panel, so a single label for the lot would read
- *  "Change property" forty different ways. */
-const fieldLabel = (key: LayerField) =>
-  `Change ${String(key).replace(/([A-Z])/g, " $1").toLowerCase()}`;
-
-/** Which tiles a field edit reaches: every selected tile that carries a layer
- *  by this id, or just the one the layer was picked on.
- *
- *  Matched on the id alone and deliberately not on the name. Ids are shared
- *  across tiles because one design was put on all of them, which is exactly the
- *  set an edit should reach. Auto-names collide between unrelated layers and
- *  would reach tiles nobody pointed at. */
-export const bulkTargets = (id: string): string[] => {
-  const scope =
-    app.selectedTiles.length > 1
-      ? app.selectedTiles
-      : app.selectedTile
-        ? [app.selectedTile]
-        : [];
-  return scope.filter((t) => !!findLayer(app.manifest.tiles[t]?.layers ?? [], id));
-};
-
-/** One field, on the same layer of every tile in `tileIds` — one undo step.
- *
- *  The wall's answer to what a Layout used to do by owning the design: pick the
- *  tiles, change the thing once. Selection is the whole mechanism, so there is
- *  no link to go stale and nothing to re-sync; GIMP 3 dropped its chain icons
- *  for the same reason. */
-export async function setTileLayerField(
-  tileIds: string[],
-  id: string,
-  key: LayerField,
-  value: unknown,
-) {
-  const targets = tileIds
-    .map((t) => findLayer(app.manifest.tiles[t]?.layers ?? [], id))
-    .filter((l): l is Layer => !!l && (l as unknown as Record<string, unknown>)[key] !== value);
-  if (!targets.length) return;
-  await mutate(
-    fieldLabel(key),
-    () => {
-      for (const layer of targets) writeField(layer, key, value);
-    },
-    true,
-    /* The tile set belongs in the key. Without it, editing {A,B}, reselecting
-     * {C} and carrying on with the same slider folds both into one undo step —
-     * the run only ends when the key changes. */
-    `field:${id}:${key}:${tileIds.join(",")}`,
-  );
-}
-
-export async function setLayerField(id: string, key: LayerField, value: unknown) {
-  const layer = anyLayer(id) as Record<string, unknown> | undefined;
-  if (!layer || layer[key] === value) return;
-  const caption = layer as unknown as Layer;
-  /* Saying "a class per tile" on a cutter says it for whatever it cuts. The
-   * rule only lets a per-tile cutter cut a per-tile layer, so the switch used
-   * to void the mask instead of extending it: the gradient block kept a maskId
-   * that had stopped applying, the dropdown stopped listing the icon, and the
-   * block drew whole with nothing said. Travelling together is the only way the
-   * pair can exist at all. */
-  const travellers =
-    key === "perTile" && value === true ? cutBy(openLayout()?.layers ?? [], id) : [];
-  /* And the other direction: choosing a cutter that lives on the tiles takes
-   * this layer there too. The rule only lets a per-tile cutter cut a per-tile
-   * layer, so without this the dropdown would offer a mask that does nothing —
-   * the silence that made the feature look broken in the first place. */
-  const cutter =
-    key === "maskId" && typeof value === "string"
-      ? findLayer(openLayout()?.layers ?? [], value)
-      : undefined;
-  const follow = !!cutter?.perTile && !(layer as unknown as Layer).perTile;
-  await mutate(
-    fieldLabel(key),
-    () => {
-      writeField(caption, key, value);
-      if (follow) layer.perTile = true;
-      for (const l of travellers) l.perTile = true;
-    },
-    true,
-    // One run per field per layer: typing a caption is one step, and switching
-    // to a different slider starts a new one.
-    `field:${id}:${key}`,
-  );
-}
-
-/** Gives a trimmed picture back whole — see `uncrop`, which is where the sums
- *  live, because "reset" has to put the scale back as well as the crop. */
-export async function resetCrop(id: string) {
-  const layer = anyLayer(id);
-  if (layer?.kind !== "image" || !layer.crop) return;
-  await mutate("Reset crop", () => uncrop(layer), true);
-}
-
-/** Writes a finished drag/scale/rotate back into a Layout's own layer. A plain
- *  move skips the rebuild — nothing inside one Layout is ever shared with
- *  itself, so there is no second instance left showing a stale position — but
- *  a scale must rebuild; see `scaled`. */
-export async function applyLayoutTransform(
-  layerId: string,
-  patch: Pick<Layer, "x" | "y" | "rotation"> & Transform,
-  /** Names the gesture, so a multi-selection's one write per member collapses
-   *  into a single undo step instead of one per layer. */
-  gesture?: string,
-) {
-  const layout = openLayout();
-  const layer = findLayer(layout?.layers ?? [], layerId);
-  if (!layout || !layer) return;
-  /* A layer inside a group renders at its own position plus every enclosing
-   * group's displacement, so the position read off the canvas has that folded
-   * in — subtract it again or the layer jumps by the group's offset on the
-   * first drag after grouping. */
-  const shift = nestingShift(layout.layers, layerId) ?? { dx: 0, dy: 0 };
-  /* A stencil rebuilds the sheet even on a plain move. Everything else may skip
-     it — Fabric has already moved the very object that was dragged, so tearing
-     the scene down would redraw what is already right — but a stencil does not
-     draw itself: what it changes is the hole in something else, and that hole
-     is a second object kept in step by hand while the gesture is open
-     (LayoutCanvas.syncMasks). Reported from a real Layout, filmed: the words
-     move and the cut stays behind until something rebuilds, and "Update stamps"
-     was simply the nearest button that does. The cause of the drift is not
-     found; this makes the release the moment it is settled rather than the
-     moment it is left wrong, and costs one rebuild per mask drag. */
-  const cuts = [...walkLayers(layout.layers)].some((l) => l.maskId === layerId);
-  await mutate("Move layer", () => {
-    layer.x = patch.x - shift.dx;
-    layer.y = patch.y - shift.dy;
-    layer.rotation = patch.rotation;
-    resize(layer, patch);
-  }, scaled(patch) || cuts, gesture);
-}
-
-/** Ends the current undo run, so the next edit starts a new step. The one
- *  thing history cannot work out for itself: a run key says two edits are of
- *  the same kind, not that the user is still in the middle of making them.
- *  Called at every boundary — a finished canvas gesture here, and every form
- *  control's `change` event in App.svelte. */
-export const endGesture = () => endRun(history);
-
-/** Folds a canvas resize back into whatever field a layer keeps its size in.
- *
- *  `patch.scale` is the object's on-screen width as a fraction of the tile, so
- *  each kind has to undo its own way of turning a model value into that width
- *  — an image scales its picture, a caption its font size, a shape its box.
- *  Fabric's own scaleX is deliberately not stored: the scene is rebuilt from
- *  the model, so anything left in scaleX would be applied twice. */
-/** What the canvas reports back after a transform: absolute sizes for layers
- *  whose size is measured off the object, raw factors for those whose size is
- *  written onto it. */
-type Transform = {
-  scale: number;
-  scaleH: number;
-  fx: number;
-  fy: number;
-  /** Only a caption has one, and only once a height handle was dragged. */
-  boxH?: number;
-  /** Only a picture has one, and only once its side handles were used. */
-  crop?: Inset;
-};
-
-function resize(layer: Layer, patch: Transform) {
-  if (layer.kind === "image") {
-    layer.scale = patch.scale;
-    /* `scale` measures what the crop leaves, so the two travel together: a
-     * side handle changes both, and storing one without the other would put
-     * the picture back at the wrong size on the next rebuild. */
-    if (patch.crop) layer.crop = patch.crop;
-    else delete layer.crop;
-  } else if (layer.kind === "text") {
-    /* Two gestures, told apart by what Fabric did with them. A side handle on a
-     * Textbox changes `width` and leaves scaleX at 1; a corner scales the whole
-     * object and leaves the width alone. So a factor of one means the width is
-     * the news, and anything else means the letters are.
-     *
-     * The corner takes the box with it, or scaling a caption up would keep the
-     * old wrap width and break the line in a place nobody asked for. */
-    const dragged = Math.abs(patch.fx - 1) < 0.001;
-    /* A corner still says nothing a caption can store: the font size is a
-     * field and only a field, so a corner scale is ignored here exactly as it
-     * always was. Only the side handles have somewhere to land now.
-     *
-     * And only once the width is actually what moved: a plain drag reports the
-     * box's current width, and writing that back would quietly pin a caption
-     * that was still hugging its words while the user only moved it. "Once you
-     * touch it" has to mean the handle, not the layer. */
-    if (dragged && (layer.w !== undefined || Math.abs(patch.scale - textWidth(layer)) > 0.002)) {
-      layer.w = patch.scale;
-    }
-    // Only ever present when a top or bottom handle was actually dragged.
-    if (patch.boxH !== undefined) layer.h = patch.boxH / TILE_H;
-  } else if (layer.kind === "shape") {
-    /* Multiplied by what Fabric actually scaled, not set from the object's
-     * measured width. A shape is built at exactly w×h with scaleX 1, so a
-     * plain drag reports 1 and leaves the size alone — measuring instead made
-     * a polygon shrink on every drag, since a regular n-gon's bounding box is
-     * smaller than the box it is inscribed in. Both axes on their own: a shape
-     * is the one kind that can be stretched. */
-    layer.w *= patch.fx || 1;
-    layer.h *= patch.fy || 1;
-  }
-}
-
-/* --- Layer groups inside a Layout. A group is which layers move together —
- * the other axis from a tile group, which is which tiles a stack lands on. --- */
-
-export function toggleLayoutPick(id: string, additive: boolean) {
-  const at = app.layoutSelection.indexOf(id);
-  if (!additive) {
-    app.layoutSelection = at >= 0 && app.layoutSelection.length === 1 ? [] : [id];
-  } else {
-    app.layoutSelection =
-      at >= 0
-        ? app.layoutSelection.filter((x) => x !== id)
-        : [...app.layoutSelection, id];
-  }
-  app.layoutSelected = app.layoutSelection.at(-1) ?? "";
-}
-
-/** Grouping needs at least two, and only top-level layers: a group inside a
- *  group is a nesting level with no button to get back out of. */
-export function canGroupLayers(): boolean {
-  const list = openLayout()?.layers ?? [];
-  const picked = app.layoutSelection.filter((id) => list.some((l) => l.id === id));
-  return picked.length >= 2;
-}
-
-export async function groupLayoutLayers() {
-  const layout = openLayout();
-  if (!layout || !canGroupLayers()) return;
-  const picked = new Set(app.layoutSelection);
-  await mutate("Group layers", () => {
-    const members = layout.layers.filter((l) => picked.has(l.id));
-    /* The group goes where the *topmost* member was, so nothing that was
-     * above a member ends up below the group. findIndex gives the bottom-most
-     * one, which restacked the pick: grouping A and C out of A,B,C,D put the
-     * group under B, and C stopped drawing over it.
-     *
-     * Counted in the list with the members removed, since that is the list the
-     * group is spliced into. */
-    const kept = layout.layers.filter((l) => !picked.has(l.id));
-    let topMost = -1;
-    for (const [i, l] of layout.layers.entries()) if (picked.has(l.id)) topMost = i;
-    const above = layout.layers.slice(topMost + 1).filter((l) => !picked.has(l.id)).length;
-    const group = newGroupLayer(members);
-    // Counted in the list the group is spliced into, which no longer holds its
-    // members — they moved inside it, and nameInStack walks in there anyway.
-    nameInStack(group, kept);
-    kept.splice(kept.length - above, 0, group);
-    layout.layers = kept;
-    setLayoutSelection([group.id]);
-  });
-}
-
-/** The groups a Layout holds, for the "move into" menu. Top level only —
- *  nesting a group inside a group is a level with no button to climb back out
- *  of, so it is not offered. */
-export const layoutGroups = () =>
-  (openLayout()?.layers ?? []).filter((l): l is Layer & { kind: "group" } => l.kind === "group");
-
-/** Moves the picked layers into an existing group, keeping them where they
- *  visibly are: a group's x/y is a displacement applied on top of its members,
- *  so entering one has to subtract that displacement or everything jumps by
- *  exactly the group's offset. The mirror of what removeLayerFrom folds in on
- *  the way out. */
-export async function moveLayersIntoGroup(groupId: string, layerIds: string[]) {
-  const layout = openLayout();
-  const group = layout && findLayer(layout.layers, groupId);
-  if (!layout || group?.kind !== "group") return;
-
-  /* Every layer that is not already in this group, wherever it currently
-   * sits. Looking only at the top level made this a silent no-op on a layer
-   * nested in some other group — it still cleared the selection and pushed an
-   * undo step, so it looked like something had happened. */
-  const own = new Set(group.children.map((c) => c.id));
-  const moving = layerIds.filter((id) => id !== groupId && !own.has(id));
-  if (!moving.length) return;
-
-  await mutate("Move layers into group", () => {
-    const target = groupShift(group);
-    const taken: Layer[] = [];
-    for (const id of moving) {
-      const from = findList(layout.layers, id);
-      const layer = from && findLayer(from, id);
-      if (!from || !layer) continue;
-      // Where it renders now, minus where the target group will put it: the
-      // layer has to stay exactly where it visibly is.
-      const was = nestingShift(layout.layers, id) ?? { dx: 0, dy: 0 };
-      from.splice(from.indexOf(layer), 1);
-      shiftLayer(layer, was.dx - target.dx, was.dy - target.dy);
-      group.children.push(layer);
-      taken.push(layer);
-    }
-    if (taken.length) setLayoutSelection(taken.map((l) => l.id));
-  });
-}
-
-/** Drops a Layout layer in front of another, optionally into a group.
- *
- *  `parentId` null means the top level. What the list's drag-and-drop calls;
- *  the ↑/↓ buttons stay for the keyboard and for precision. */
-export async function dropLayoutLayer(id: string, parentId: string | null, beforeId: string | null) {
-  const layout = openLayout();
-  if (!layout) return;
-  // Checked on a copy first, so a refused move — a group into itself — costs
-  // neither an undo step nor a save.
-  const trial = plain(layout.layers) as Layer[];
-  if (!relocateLayer(trial, id, parentId, beforeId)) return;
-  await mutate("Reorder layers", () => {
-    relocateLayer(layout.layers, id, parentId, beforeId);
-    setLayoutSelection([id]);
-  });
-}
-
-/** The same for a stamp on the wall, which has no nesting to worry about —
- *  only the order things are drawn in. Takes the list rather than an owner, so
- *  the project's wall picture and a tile's own stack are the same call. */
-async function dropInto(layers: Layer[] | undefined, id: string, beforeId: string | null) {
-  if (!layers) return;
-  // Checked on a copy first, so a refused move costs neither an undo step nor
-  // a save.
-  const trial = plain(layers) as Layer[];
-  if (!relocateLayer(trial, id, null, beforeId)) return;
-  await mutate("Move layer into group", () => {
-    relocateLayer(layers, id, null, beforeId);
-    app.selected = id;
-  });
-}
-
-export const dropTileLayer = (tileId: string, id: string, beforeId: string | null) =>
-  dropInto(app.manifest.tiles[tileId]?.layers, id, beforeId);
-
-/** Duplicates the picked layers in the open Layout.
- *
- *  The copies land directly above the topmost original, nudged so they are not
- *  hiding underneath it, named for the stack they join — and selected, since
- *  the next thing anyone does with a copy is move it. */
-export async function duplicateLayoutLayers() {
-  const layout = openLayout();
-  if (!layout) return;
-  /* Resolved before anything else, and the whole thing gives up if that finds
-   * nothing: mutate() takes its checkpoint before it runs the callback, so
-   * bailing out inside would leave an undo step that undoes nothing. */
-  const picked = app.layoutSelection
-    .map((id) => findLayer(layout.layers, id))
-    .filter((l): l is Layer => !!l);
-  if (!picked.length) return;
-
-  await mutate("Duplicate layers", () => {
-    const copies = duplicateLayers(picked);
-    /* Each copy goes back into the list its original came out of. A selection
-     * can name a layer nested in a group — the list wires the same handlers to
-     * those rows — and putting the copy at the top level instead would move it
-     * out of the group it belongs to. */
-    for (const [i, copy] of copies.entries()) {
-      const list = findList(layout.layers, picked[i].id) ?? layout.layers;
-      nameInStack(copy, layout.layers);
-      list.splice(list.findIndex((l) => l.id === picked[i].id) + 1, 0, copy);
-    }
-    setLayoutSelection(copies.map((c) => c.id));
-  });
-}
-
-/** Renders `layout` and points a stamp at the result. */
-async function stampAsset(layout: Layout): Promise<{ asset: string; seen: string }> {
-  const seen = layoutFingerprint(layout);
-  const bytes = await renderLayout(layout, app.deps!);
-  return { asset: await saveGeneratedAsset(app.dir, bytes), seen };
-}
-
-/** Puts a layout into a tile's own layer stack. */
-async function stampOnto(into: { layers: Layer[] } | undefined, layoutId: string) {
-  const layout = app.manifest.layouts.find((l) => l.id === layoutId);
-  if (!into || !layout || !app.deps) return;
-  await run("stamp", async () => {
-    const { asset, seen } = await stampAsset(layout);
-    await mutate("Stamp layout", () => {
-      stampInto(into, layoutId, asset);
-      // After the stamp, so a live caption sits on top of the picture it was
-      // composed over rather than behind it.
-      syncLiveLayers(into, layout);
-      layout.stamped = seen;
-    });
-  });
-}
-
-/** Stamps a layout onto one portrait — the only way a layout reaches a tile
- *  now that groups no longer hold layers of their own. */
-export const assignTileLayout = (tileId: string, layoutId: string) =>
-  stampOnto(app.manifest.tiles[tileId], layoutId);
-
-/** Stamps one layout onto every picked tile.
- *
- *  Rendered once, not once per tile: it is the same flat sheet for all of
- *  them, so forty-four renders would be forty-three too many — and one
- *  mutation, so giving a wall its design is one undo step rather than
- *  forty-four. */
-/** The placed tiles of the open wall that are not already wearing this layout.
- *
- *  What "assign to the whole wall" means, spelled once for the menu label and
- *  the action so they cannot disagree. Placed only: the shelf is a waiting
- *  area and "Write to game" does not write it either. And never a second stamp
- *  on a tile that has one — the count in the label is the work that will
- *  actually happen. */
-export const remainingFor = (layoutId: string): string[] => {
-  const p = openProject();
-  if (!p) return [];
-  return p.order.filter(
-    (id) => !(app.manifest.tiles[id]?.layers ?? []).some((l) => l.layoutId === layoutId),
-  );
-};
-
-/** Puts a layout on every placed tile that lacks it — the two-click way to
- *  dress a second account's wall, instead of selecting forty-four tiles first. */
-export async function assignLayoutToWall(layoutId: string) {
-  const ids = remainingFor(layoutId);
-  if (!ids.length) return;
-  await assignLayoutTo(layoutId, ids);
-}
-
-export async function assignLayoutToSelection(layoutId: string) {
-  await assignLayoutTo(layoutId, [...app.selectedTiles]);
-}
-
-async function assignLayoutTo(layoutId: string, ids: string[]) {
-  const layout = app.manifest.layouts.find((l) => l.id === layoutId);
-  if (!layout || !app.deps || !ids.length) return;
-  await run("stamp", async () => {
-    const { asset, seen } = await stampAsset(layout);
-    await mutate("Assign layout", () => {
-      let landed = 0;
-      for (const id of ids) {
-        const tile = app.manifest.tiles[id];
-        if (!tile) continue;
-        stampInto(tile, layoutId, asset);
-        // After the stamp, so a live caption sits on top of the picture it was
-        // composed over rather than behind it.
-        syncLiveLayers(tile, layout);
-        landed++;
-      }
-      /* Only once something actually carries it. Recording the fingerprint
-       * regardless would leave "Update stamps" greyed out on a Layout that had
-       * never reached a tile. */
-      if (landed) layout.stamped = seen;
-    });
-  });
-}
-
-/** One tile's own layers — what the tile list shows under its row. */
-export const tileLayers = (tileId: string) => app.manifest.tiles[tileId]?.layers ?? [];
-
-/** The project owning this tile, if any — what the tile list shows as context,
- *  and what says whether a tile is still sitting in the inbox. */
-export const tileProject = (tileId: string) => projectOf(app.manifest, tileId);
-
-/** How many portraits carry this Layout — what a refresh re-renders and what a
- *  delete leaves behind, which since groups lost their shared stack is one
- *  number rather than two. It was shown as two, and they were always equal. */
-export const layoutTiles = (layoutId: string) => tilesWearing(app.manifest, layoutId).length;
-
-/** Whether saving would do anything: the Layout has to be stamped somewhere,
- *  and changed since. Offering it otherwise gives a button that re-renders an
- *  identical picture and looks like it did nothing. */
-export function canSaveLayout(layoutId: string): boolean {
-  const layout = app.manifest.layouts.find((l) => l.id === layoutId);
-  return !!layout && !!layoutTiles(layoutId) && layoutNeedsRestamp(layout);
-}
-
-/** Re-renders once and refreshes every existing stamp of this Layout across
- *  every tile that carries it, so a design used in several places updates everywhere at
- *  once instead of being re-stamped by hand at each. */
-export async function saveLayout(layoutId: string) {
-  const layout = app.manifest.layouts.find((l) => l.id === layoutId);
-  if (!layout || !app.deps || !canSaveLayout(layoutId)) return;
-  await run("save", async () => {
-    const { asset, seen } = await stampAsset(layout);
-    await mutate("Update stamps", () => {
-      const n = refreshStamps(app.manifest, layoutId, asset);
-      // Live captions travel with the stamp: repositioning or restyling one in
-      // the Layout has to reach everywhere it is used, the same as the picture.
-      for (const tile of tilesWearing(app.manifest, layoutId)) syncLiveLayers(tile, layout);
-      layout.stamped = seen;
-      app.error = `${n} stamp(s) updated`;
     });
   });
 }
@@ -2514,3 +1757,233 @@ export async function saveToGame() {
     app.error = `${n} tile(s) written`;
   });
 }
+
+/* --- Recovered from the layout section: these are wall functions that
+ * happened to live inside it. --- */
+/** Edits one field of a layer. Everything the properties panel changes goes
+ *  through here, so each edit is one undo step and one save. */
+/** Fields that change how wide a caption's box is. */
+const WIDTH_FIELDS = new Set(["text", "size", "font", "bold", "italic"]);
+
+/** Any field any kind of layer has.
+ *
+ *  `keyof Layer` would only be the handful every kind shares, since Layer is a
+ *  union — so a caption's `size` would not typecheck. Spelling the union out
+ *  still rejects a field that exists nowhere, which is the typo this is
+ *  guarding against; pairing the right field with the right kind is the
+ *  caller's job, and the properties panel does it by rendering each field
+ *  inside the branch that narrowed the layer to that kind. */
+export type LayerField = keyof TextLayer | keyof ShapeLayer | keyof ImageLayer;
+
+/** Writes one field onto one layer, keeping an anchored caption's edge put.
+ *
+ *  A caption's x is its centre, so longer words used to push it out sideways in
+ *  both directions — one line of a stack crept left while the next stayed put.
+ *  Left-aligned text has its anchor at the left edge and right-aligned at the
+ *  right, so the centre is moved by half the change to leave that edge where it
+ *  was. Centred text grows around its middle, which is the point of it.
+ *
+ *  Measured per layer, which is why this is a function rather than two lines at
+ *  the one call site: the same edit across several tiles meets a different
+ *  string on each of them once wording lives on the tile, and one width
+ *  measured from whichever tile happened to be first would drift all the
+ *  others. */
+function writeField(layer: Layer, key: LayerField, value: unknown) {
+  const anchored =
+    layer.kind === "text" && WIDTH_FIELDS.has(key) && (layer.align ?? "center") !== "center";
+  const was = anchored ? textWidth(layer) : 0;
+  (layer as unknown as Record<string, unknown>)[key] = value;
+  if (!anchored) return;
+  const grew = textWidth(layer as TextLayer) - was;
+  layer.x += ((layer as TextLayer).align === "right" ? -grew : grew) / 2;
+}
+
+/** The field's own name, spaced out: one setter stands behind every slider,
+ *  swatch and dropdown in the panel, so a single label for the lot would read
+ *  "Change property" forty different ways. */
+const fieldLabel = (key: LayerField) =>
+  `Change ${String(key).replace(/([A-Z])/g, " $1").toLowerCase()}`;
+
+/** Which tiles a field edit reaches: every selected tile that carries a layer
+ *  by this id, or just the one the layer was picked on.
+ *
+ *  Matched on the id alone and deliberately not on the name. Ids are shared
+ *  across tiles because one design was put on all of them, which is exactly the
+ *  set an edit should reach. Auto-names collide between unrelated layers and
+ *  would reach tiles nobody pointed at. */
+export const bulkTargets = (id: string): string[] => {
+  const scope =
+    app.selectedTiles.length > 1
+      ? app.selectedTiles
+      : app.selectedTile
+        ? [app.selectedTile]
+        : [];
+  return scope.filter((t) => !!findLayer(app.manifest.tiles[t]?.layers ?? [], id));
+};
+
+/** One field, on the same layer of every tile in `tileIds` — one undo step.
+ *
+ *  The wall's answer to what a Layout used to do by owning the design: pick the
+ *  tiles, change the thing once. Selection is the whole mechanism, so there is
+ *  no link to go stale and nothing to re-sync; GIMP 3 dropped its chain icons
+ *  for the same reason. */
+export async function setTileLayerField(
+  tileIds: string[],
+  id: string,
+  key: LayerField,
+  value: unknown,
+) {
+  const targets = tileIds
+    .map((t) => findLayer(app.manifest.tiles[t]?.layers ?? [], id))
+    .filter((l): l is Layer => !!l && (l as unknown as Record<string, unknown>)[key] !== value);
+  if (!targets.length) return;
+  await mutate(
+    fieldLabel(key),
+    () => {
+      for (const layer of targets) writeField(layer, key, value);
+    },
+    true,
+    /* The tile set belongs in the key. Without it, editing {A,B}, reselecting
+     * {C} and carrying on with the same slider folds both into one undo step —
+     * the run only ends when the key changes. */
+    `field:${id}:${key}:${tileIds.join(",")}`,
+  );
+}
+
+/** The layer behind an id: a tile's, where the selection names one, otherwise
+ *  the open wall's own. Two places, because those are the only two a layer can
+ *  live in now. */
+const anyLayer = (id: string): Layer | undefined =>
+  findLayer(app.manifest.tiles[app.selectedTile]?.layers ?? [], id) ??
+  findLayer(openProject()?.gridLayers ?? [], id);
+
+/** One field on one layer — the wall-spanning case, and the fallback for a
+ *  layer picked with no tile behind it. A layer on a tile goes through
+ *  setTileLayerField, which reaches every tile the selection covers. */
+export async function setLayerField(id: string, key: LayerField, value: unknown) {
+  const layer = anyLayer(id);
+  if (!layer || (layer as unknown as Record<string, unknown>)[key] === value) return;
+  await mutate(
+    fieldLabel(key),
+    () => writeField(layer, key, value),
+    true,
+    // One run per field per layer: typing a caption is one step, and switching
+    // to a different slider starts a new one.
+    `field:${id}:${key}`,
+  );
+}
+
+/** Gives a trimmed picture back whole — see `uncrop`, which is where the sums
+ *  live, because "reset" has to put the scale back as well as the crop. */
+export async function resetCrop(id: string) {
+  const layer = anyLayer(id);
+  if (layer?.kind !== "image" || !layer.crop) return;
+  await mutate("Reset crop", () => uncrop(layer), true);
+}
+
+/** Ends the current undo run, so the next edit starts a new step. The one
+ *  thing history cannot work out for itself: a run key says two edits are of
+ *  the same kind, not that the user is still in the middle of making them.
+ *  Called at every boundary — a finished canvas gesture here, and every form
+ *  control's `change` event in App.svelte. */
+export const endGesture = () => endRun(history);
+
+/** `name` lives on Common, so one function renames every kind of layer. */
+export async function renameLayer(id: string, name: string) {
+  const layer = anyLayer(id);
+  if (!layer) return;
+  const next = name.trim();
+  /* Typing the text already shown is not a rename. The input is prefilled
+   * with layerLabel — the display label, which for an unnamed layer is a
+   * fallback, not layer.name — so without the second check a cancelled rename
+   * (Escape restores the label, blur still fires) wrote that fallback in as a
+   * real name and burned an undo step on nothing. */
+  if (next === (layer.name ?? "") || next === layerLabel(layer)) return;
+  await mutate("Rename layer", () => (layer.name = next || undefined));
+}
+
+/** One tile's own layers — what the tile list shows under its row. */
+export const tileLayers = (tileId: string) => app.manifest.tiles[tileId]?.layers ?? [];
+
+/** The project owning this tile, if any — what the tile list shows as context,
+ *  and what says whether a tile is still sitting in the inbox. */
+export const tileProject = (tileId: string) => projectOf(app.manifest, tileId);
+
+/** Locking takes a layer out of Fabric's hit testing (makeInteractive in
+ *  scene.ts), so it stops being draggable while staying visible. */
+export async function toggleLayerLocked(id: string) {
+  const layer = anyLayer(id);
+  if (!layer) return;
+  await mutate("Lock or unlock layer", () => (layer.locked = !layer.locked));
+}
+
+
+/** Reorders a tile's own stack. Takes the list rather than an owner, so the
+ *  project's wall picture and a tile's stack are the same call. */
+async function dropInto(layers: Layer[] | undefined, id: string, beforeId: string | null) {
+  if (!layers) return;
+  // Checked on a copy first, so a refused move costs neither an undo step nor
+  // a save.
+  const trial = plain(layers) as Layer[];
+  if (!relocateLayer(trial, id, null, beforeId)) return;
+  await mutate("Reorder layer", () => {
+    relocateLayer(layers, id, null, beforeId);
+    app.selected = id;
+  });
+}
+
+export const dropTileLayer = (tileId: string, id: string, beforeId: string | null) =>
+  dropInto(app.manifest.tiles[tileId]?.layers, id, beforeId);
+
+/** Puts a new layer on every selected tile — one undo step.
+ *
+ *  The same id on each of them, deliberately. That shared id is what makes the
+ *  new layer bulk-editable straight away: pick the tiles again later and one
+ *  edit reaches all of them. It is the same shape a stamped design left behind,
+ *  minus the stamp.
+ *
+ *  Named per tile rather than once, because a name is a position in that tile's
+ *  own stack — the third caption on one portrait may be the first on another,
+ *  and a name claiming otherwise is worse than a name that differs. */
+async function addToTiles(label: string, make: () => Layer) {
+  const tiles = app.selectedTiles.filter((t) => app.manifest.tiles[t]);
+  if (!tiles.length) return;
+  const proto = make();
+  await mutate(label, () => {
+    for (const t of tiles) {
+      const l = clone(proto);
+      nameInStack(l, app.manifest.tiles[t].layers);
+      app.manifest.tiles[t].layers.push(l);
+    }
+    selectLayer(proto.id, tiles[0]);
+  });
+}
+
+/** Adds a picture to every selected tile. */
+export async function addTileImage() {
+  if (!app.selectedTiles.length) return;
+  const path = await pickFile({ filters: [IMAGE_FILTER] });
+  if (typeof path !== "string") return;
+  await run("import", async () => {
+    const asset = await importAsset(app.dir, path);
+    await addToTiles("Add picture", () => newImageLayer(asset));
+  });
+}
+
+/** Adds a caption to every selected tile.
+ *
+ *  Near the bottom, where a portrait's name goes, and "{{id}}" resolves against
+ *  each tile as it is drawn — so one caption added to forty tiles reads as
+ *  forty different names without anything further being typed. */
+export async function addTileText() {
+  await addToTiles("Add caption", () => {
+    const l = newTextLayer();
+    l.y = 0.85;
+    return l;
+  });
+}
+
+export async function addTileShape(shape: ShapeKind, icon?: string) {
+  await addToTiles("Add shape", () => newShapeLayer(shape, icon));
+}
+

@@ -18,7 +18,8 @@
   import { TILE_H, TILE_W } from "./lib/bmp";
   import { gridSize } from "./lib/geometry";
   import {
-    openLayout,
+    app,
+    openProject,
     resetCrop,
     bulkTargets,
     setLayerField,
@@ -72,15 +73,23 @@
       : setLayerField(layer.id, key, value));
   };
 
-  /** The shapes this layer could be cut to. Empty outside a Layout, and empty
-   *  in one that holds no shape but this — which is what hides the control
-   *  rather than offering a list with nothing in it. */
-  const masks = $derived(inLayout ? maskChoices(openLayout()?.layers ?? [], layer.id) : []);
+  /** The stack this layer lives in — the tile it was picked on, or the wall's
+   *  own layers when it spans the grid. What a mask can be chosen from. */
+  const siblings = $derived(
+    app.selectedTile
+      ? (app.manifest.tiles[app.selectedTile]?.layers ?? [])
+      : (openProject()?.gridLayers ?? []),
+  );
 
-  /** What the dropdown lists. Wider than `masks`: a cutter that lives on the
-   *  tiles is offered to a layer that does not yet, because picking it takes
-   *  the layer along rather than doing nothing. */
-  const offers = $derived(inLayout ? maskOffers(openLayout()?.layers ?? [], layer.id) : []);
+  /** The shapes this layer could be cut to. Empty in a stack that holds no
+   *  shape but this one — which is what hides the control rather than offering
+   *  a list with nothing in it.
+   *
+   *  Read off the tile now. A mask used to be a Layout-only arrangement because
+   *  the cutter and the layer had to travel together to the tiles; both live on
+   *  the tile from the start, so the pair is an ordinary thing about a stack. */
+  const masks = $derived(maskChoices(siblings, layer.id));
+  const offers = $derived(maskOffers(siblings, layer.id));
 
   /** How many tiles the open wall holds — the span a grid-space layer's x and y
    *  are fractions of. A layer on a tile is measured against the tile. */
@@ -91,7 +100,7 @@
    *  layer. Empty when the mask is fine or absent. */
   const stale = $derived.by(() => {
     if (!layer.maskId || masks.some((m) => m.id === layer.maskId)) return "";
-    const held = findLayer(openLayout()?.layers ?? [], layer.maskId);
+    const held = findLayer(siblings, layer.maskId);
     return held ? layerLabel(held) : "";
   });
 

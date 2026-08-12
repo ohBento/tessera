@@ -12,9 +12,7 @@
 import { ask } from "./platform";
 import {
   app,
-  deleteLayoutDoc,
   deleteProject,
-  layoutTiles,
   openProject,
   projects,
   replaceAllCharacters,
@@ -40,24 +38,6 @@ export async function confirmed(message: string, title: string) {
     app.error = `Could not ask for confirmation: ${e}`;
     return false;
   }
-}
-
-/** Deleting a Layout takes its stamps and live captions off every tile with
- *  it — a layout and its layers on the wall do not survive each other. One
- *  undo step brings the lot back, but it is still a wall-wide change, which
- *  is worth saying out loud first. */
-export async function removeLayout(id: string, name: string) {
-  const used = layoutTiles(id);
-  /* Asked either way. An unstamped Layout is not a cheap thing — it is a
-     design somebody built and has not put on a wall yet — and it was one
-     click from gone while a stamped one got a dialog. */
-  const message = used
-    ? // One unit. This used to name stamps and tiles separately, and the two
-      // numbers were equal by construction — see tilesWearing.
-      `"${name}" is on ${used} tile(s). Deleting it removes those stamps too.`
-    : `Delete the layout "${name}"? It is not on any tile yet.`;
-  if (!(await confirmed(message, "Delete layout?"))) return;
-  await deleteLayoutDoc(id);
 }
 
 /** Puts the game's own portraits back over this project's tiles.
