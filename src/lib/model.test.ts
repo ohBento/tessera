@@ -16,8 +16,6 @@ import {
   archivedIds,
   setArchived,
   layerLabel,
-  layerAsset,
-  layerIcon,
   layerText,
   migrate,
   maskChoices,
@@ -917,51 +915,6 @@ describe("newTextLayer", () => {
 });
 
 
-describe("layerAsset", () => {
-  const layer = () => ({ ...newImageLayer("default.png"), id: "L1" });
-
-  it("falls back to the layer's own picture when the tile has none", () => {
-    expect(layerAsset({}, layer())).toBe("default.png");
-  });
-
-  it("takes the tile's picture over the layer's", () => {
-    expect(layerAsset({ L1: "witch.png" }, layer())).toBe("witch.png");
-  });
-
-  it('treats "" as a choice, not as absence', () => {
-    /* "No picture on this tile" has to survive. `||` here would put the
-     * default straight back — the same trap the caption text fell into. */
-    expect(layerAsset({ L1: "" }, layer())).toBe("");
-  });
-});
-
-describe("layerIcon", () => {
-  const layer = () => ({ ...newShapeLayer("icon", "Ranger"), id: "L1" });
-
-  it("falls back to the layer's own class when the tile names none", () => {
-    expect(layerIcon({}, layer())).toBe("Ranger");
-  });
-
-  it("takes the tile's class over the layer's", () => {
-    expect(layerIcon({ L1: "Witch" }, layer())).toBe("Witch");
-  });
-
-  it('treats "" as a choice, not as absence', () => {
-    /* "No icon on this tile" has to survive, exactly as it does for a picture:
-     * `||` would put the layer's class straight back. */
-    expect(layerIcon({ L1: "" }, layer())).toBe("");
-  });
-
-  it("keys on the layer, so two icon layers on a tile choose apart", () => {
-    /* One map per tile carries every layer's choice — a wall with a class badge
-     * and a guild badge must not have one answer the other's question. */
-    const guild = { ...newShapeLayer("icon", "Nova"), id: "L2" };
-    const swaps = { L1: "Witch", L2: "Shai" };
-    expect(layerIcon(swaps, layer())).toBe("Witch");
-    expect(layerIcon(swaps, guild)).toBe("Shai");
-  });
-});
-
 describe("pruneToFolder", () => {
   /** One project holding three tiles: two placed, one shelved, and a folder
    *  naming two of them. */
@@ -1022,10 +975,10 @@ describe("droppedWork", () => {
     expect(droppedWork(m, ["d"]).sort()).toEqual(["b", "c"]);
   });
 
-  it("counts a baked picture and a per-tile swap as work", () => {
+  it("counts a baked picture and a tile's own wording as work", () => {
     const m = wall();
     m.tiles.a.base = { asset: "mosaic.png", crop: { x: 0, y: 0, w: 10, h: 10 } };
-    m.tiles.b.swap = { L1: "face.png" };
+    m.tiles.b.text = { L1: "Nachtklinge" };
     expect(droppedWork(m, []).sort()).toEqual(["a", "b"]);
   });
 

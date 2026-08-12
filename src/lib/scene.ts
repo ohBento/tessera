@@ -22,8 +22,6 @@ import {
   findLayer,
   groupShift,
   isGradient,
-  layerAsset,
-  layerIcon,
   layerText,
   nestingShift,
   resolveLayers,
@@ -1156,35 +1154,21 @@ async function cutToShape(
   deps: SceneDeps,
   tileId: string,
   texts: Record<string, string>,
-  swaps: Record<string, string>,
 ): Promise<fabric.FabricImage | undefined> {
-  /* The cutter's own per-tile picture, where the tile chose one. It is the
-   * same layer either way — it just happens to be cutting rather than drawing,
-   * and it used to keep the Layout's picture in that role while honouring the
-   * tile's in the other.
-   *
-   * "" is a real answer, and it means this tile shows nothing: no picture to
+  /* "" is a real answer, and it means this tile shows nothing: no picture to
    * cut with is not the same as no mask, so the layer does not fall back to
    * drawing whole — the caller drops it. Chosen deliberately on 2026-08-09
    * over the other reading, because a tile that was told "no icon here" asking
-   * for a bare rectangle of paint instead is the louder surprise. The comment
-   * used to promise the opposite of what the code did. */
-  const stencilLayer =
-    cutter.kind === "image"
-      ? { ...cutter, asset: layerAsset(swaps, cutter) }
-      : /* And the tile's own class, where a class icon is the one cutting. The
-         * whole point of the pair — a block of colour cut to each character's
-         * class — lives here, and it read the Layout's class for every tile
-         * while the tile row went on offering a picker that moved nothing. */
-        cutter.kind === "shape" && cutter.shape === "icon"
-        ? { ...cutter, icon: layerIcon(swaps, cutter) }
-        : cutter;
-  if (stencilLayer.kind === "image" && !stencilLayer.asset) return undefined;
-  if (stencilLayer.kind === "shape" && stencilLayer.shape === "icon" && !stencilLayer.icon)
-    return undefined;
+   * for a bare rectangle of paint instead is the louder surprise.
+   *
+   * The cutter is read as it stands. It used to be resolved against the tile's
+   * swap record first — the Layout owned the picture, the tile owned which one
+   * — and the layer carries its own answer now. */
+  if (cutter.kind === "image" && !cutter.asset) return undefined;
+  if (cutter.kind === "shape" && cutter.shape === "icon" && !cutter.icon) return undefined;
 
   const shape = await layerObject(
-    silhouette(stencilLayer),
+    silhouette(cutter),
     deps,
     { w: TILE_W, h: TILE_H, x: 0, y: 0 },
     tileId,
@@ -1370,7 +1354,6 @@ async function tileLayerObjects(
     const at = cellAt(index);
     const box = { w: TILE_W, h: TILE_H, x: at.x, y: at.y };
     const texts = m.tiles[id]?.text ?? {};
-    const swaps = m.tiles[id]?.swap ?? {};
     /* A tile can carry a cutter now: a per-tile layer that is masked brings the
      * shape along, because the Layout it came from is not there to look it up
      * in. Same rule as in a Layout — a shape that is cutting something has
@@ -1422,7 +1405,7 @@ async function tileLayerObjects(
        * merely slowing — the entire wall shares one bake now. */
       const cacheable = flat && l.kind !== "text" && (!cut || cut.kind !== "text");
       const key = cacheable
-        ? JSON.stringify([l, cut ?? null, cut ? (swaps[cut.id] ?? null) : null])
+        ? JSON.stringify([l, cut ?? null])
         : "";
       const hit = key ? flattened.get(key) : undefined;
       let obj: fabric.Object;
@@ -1431,7 +1414,7 @@ async function tileLayerObjects(
       } else {
         const drawn = await layerObject(l, deps, local, id, texts);
         if (!drawn) continue;
-        const made = cut ? await cutToShape(l, drawn, cut, deps, id, texts, swaps) : drawn;
+        const made = cut ? await cutToShape(l, drawn, cut, deps, id, texts) : drawn;
         if (!made) continue;
         if (flat) {
           /* A cut layer arrives as a picture already — cutToShape composited it

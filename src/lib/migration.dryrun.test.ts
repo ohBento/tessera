@@ -10,6 +10,12 @@
  * Skipped when there is no such document, so a checkout on another machine
  * still has a green suite. That is the point of a dry run rather than a
  * fixture: the fixture can only be as good as the imagination behind it.
+ *
+ * The counts it logs are of the moment and will not match twice — the file is
+ * a real document that gets edited between runs, and 58 of its records sat on
+ * a layer one day and 72 the next. What is asserted is the shape, not the
+ * size: nothing dissolves to nothing, nothing carrying a layout survives, and
+ * no record names a layer the old document had and the new one does not.
  */
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";

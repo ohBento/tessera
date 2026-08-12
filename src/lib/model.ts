@@ -358,21 +358,6 @@ export type Tile = {
   layers: Layer[];
   /** Text content per shared layer — style syncs across tiles, wording does not. */
   text: Record<string, string>;
-  /** Picture per shared image layer — and class per shared icon layer, which is
-   *  the same idea and shares the map: the layout owns where and how big, the
-   *  tile owns which picture or which class. "" means this tile deliberately
-   *  shows none. Optional so manifests written before per-tile pictures existed
-   *  still load unchanged. */
-  swap?: Record<string, string>;
-  /** Fill per shared shape layer — the same bargain as a picture's, one kind
-   *  over: the Layout owns the form and where it sits, the tile owns what
-   *  colour it is. A whole `Paint`, so a tile can answer a gradient with a flat
-   *  colour and the other way round.
-   *
-   *  Its own map rather than a third meaning for `swap`, which holds strings:
-   *  a gradient is an object, and widening that map would touch every reader of
-   *  it for one new kind. Optional, like the two above. */
-  paint?: Record<string, Paint>;
   /** Put away: out of Unsorted, into the archive, still on disk and still
    *  carrying whatever was made for it. Absent is the ordinary state — see
    *  archivedIds, and setArchived for why it is only ever true on a tile no
@@ -633,8 +618,6 @@ export const emptyTile = (): Tile => ({ base: null, layers: [], text: {} });
 export function stripTile(t: Tile) {
   t.layers = [];
   t.text = {};
-  delete t.swap;
-  delete t.paint;
 }
 
 export const emptyManifest = (): Manifest => ({
@@ -833,15 +816,6 @@ export const resolveLayers = (m: Manifest, id: string): Layer[] => m.tiles[id]?.
 export const layerText = (texts: Record<string, string>, layer: TextLayer, tileId: string) =>
   (texts[layer.id] ?? layer.text).replaceAll("{{id}}", tileId);
 
-/** Which picture one tile shows for a live image layer, or "" for none.
- *
- *  Same `??` reasoning as layerText: "" is a real answer — this tile shows no
- *  logo on purpose — and only an absent key falls back to the layer's own
- *  picture. `||` here would put the default back the moment someone chose
- *  "none". */
-export const layerAsset = (swaps: Record<string, string>, layer: ImageLayer) =>
-  swaps[layer.id] ?? layer.asset;
-
 /** A tile's own placement of a shared layer: a nudge, a zoom and a turn, all
  *  relative to what the Layout asked for. Absent is the ordinary state and
  *  means "as the Layout placed it".
@@ -851,16 +825,6 @@ export const layerAsset = (swaps: Record<string, string>, layer: ImageLayer) =>
  *  every time; a bar drawn longer on one is a decision. Absent means "the same
  *  as `z`", which is what every placement written before this stored and what
  *  every other kind still means. */
-/** Which class one tile shows for a live icon layer, or "" for none.
- *
- *  The same map as a picture's, one kind over. A wall of characters is the
- *  reason the icons exist at all: one layer, placed and coloured once in the
- *  Layout, and each portrait naming its own class. Stored by name — the
- *  artwork ships with the application, so there is nothing to import and
- *  nothing to carry. */
-export const layerIcon = (swaps: Record<string, string>, layer: ShapeLayer) =>
-  swaps[layer.id] ?? layer.icon;
-
 /** Brings a manifest into line with the folder it belongs to.
  *
  *  Characters get created and deleted between sessions — and a folder can be
@@ -909,8 +873,7 @@ export function droppedWork(m: Manifest, ids: string[]): string[] {
     return (
       !!t.base ||
       t.layers.length > 0 ||
-      Object.keys(t.text).length > 0 ||
-      Object.keys(t.swap ?? {}).length > 0
+      Object.keys(t.text).length > 0
     );
   });
 }
