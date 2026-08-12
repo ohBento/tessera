@@ -422,7 +422,15 @@ describe("what the wall costs in a window", () => {
 
   const inWindow = async (m: Manifest, count: number) => {
     const grid = gridSize(count);
-    const canvas = new fabric.StaticCanvas(undefined, {
+    /* Attached to the document, which is the whole difference between a number
+     * worth having and one that reassured nobody's screen. A detached canvas is
+     * never handed to the compositor, so the frame it reports is the drawing
+     * work alone — and it came out fifteen times cheaper than the same wall in
+     * a page. That is why this gate stayed green while zooming and panning
+     * stuttered on a real wall of forty-four. */
+    const el = document.createElement("canvas");
+    document.body.append(el);
+    const canvas = new fabric.StaticCanvas(el, {
       ...WINDOW,
       enableRetinaScaling: false,
       renderOnAddRemove: false,
@@ -440,6 +448,7 @@ describe("what the wall costs in a window", () => {
       return { paint: (performance.now() - start) / runs, zoom: z };
     } finally {
       await canvas.dispose();
+      el.remove();
     }
   };
 

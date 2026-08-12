@@ -26,7 +26,13 @@ import { migrate, walkLayers, type Layer, type Manifest, type Paint } from "./mo
 const DIR =
   process.env.TESSERA_DRYRUN_DIR ??
   join(homedir(), "Documents", "Black Desert", "FaceTexture.tessera");
-const FILE = join(DIR, "manifest.json");
+/* The v7 copy the app sets aside the first time it migrates, and the live file
+ * before that has happened. Once the document has been opened by a build that
+ * writes v8 there is no v7 left in manifest.json — and that is exactly when
+ * this test matters most, because the backup is the only record of what the
+ * migration was handed. */
+const BACKUP = join(DIR, "manifest.v7.bak.json");
+const FILE = existsSync(BACKUP) ? BACKUP : join(DIR, "manifest.json");
 
 /* The v7 shapes this reads. Deliberately spelled out here rather than imported:
  * the point is to check the migration against what a real file says, and

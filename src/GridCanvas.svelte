@@ -53,6 +53,12 @@
   /** Wheel zoom switched off. View state, so it is gone again on restart —
    *  the same rule every other "what am I looking at" flag in this app follows. */
   let zoomLocked = $state(false);
+  /** Slowest of the last thirty frames, in milliseconds, for the HUD. Measured
+   *  around Fabric's own render rather than with requestAnimationFrame: what is
+   *  wanted is the cost of drawing the wall, not the interval between paints,
+   *  which idles at 16ms whatever the code does. */
+  let worst = $state(0);
+  const frames: number[] = [];
   /** Tile a swap-drag is currently hovering, drawn by the after:render hook. */
   let dropTarget = "";
   /** The rubber band being dragged, in scene coordinates, or null. */
@@ -688,6 +694,11 @@
      * it. Adding them as Fabric objects instead would have put them in the BMP.
      * Each existing cell is stroked individually rather than drawing full-width
      * lines, so a ragged last row shows only the tiles that are really there. */
+    let renderStart = 0;
+    canvas.on("before:render", () => {
+      renderStart = performance.now();
+    });
+
     canvas.on("after:render", (opt) => {
       const ctx = opt?.ctx ?? canvas?.getContext();
       const vt = canvas?.viewportTransform;
@@ -700,6 +711,14 @@
        * on the top canvas: 61456 opaque pixels after one renderTop, still
        * 61456 after panning 180px. */
       if (!ctx || !vt || ctx !== canvas?.getContext()) return;
+      /* Published once every thirty frames, not on each one: `worst` is $state,
+         and writing it per frame puts a Svelte update inside the render loop
+         being measured. */
+      frames.push(performance.now() - renderStart);
+      if (frames.length >= 30) {
+        worst = Math.max(...frames);
+        frames.length = 0;
+      }
       const ids = visibleIds();
       if (!ids.length) return;
       const picked = new Set(app.selectedTiles);
@@ -1019,6 +1038,13 @@
     {Math.round(zoom * 100)}% &middot; {TILE_W}&times;{TILE_H} &middot; {zoomLocked
       ? "wheel locked"
       : "wheel = zoom"} &middot; middle-drag = pan
+    <!-- Diagnostics, and meant to be read off the screen rather than trusted
+         from a bench: a frame measured in a test harness came out under a
+         millisecond while zooming stuttered on a real wall, so the number that
+         settles it has to come from the machine doing the stuttering. Slowest
+         of the last thirty frames, because an average hides exactly the spikes
+         that are felt. -->
+    {#if worst}&middot; {worst.toFixed(0)}ms/frame{/if}
     <!-- Written out rather than drawn as 🔒/🔓: an emoji is painted by the
          system font in its own colours, which fights the theme and changes
          shape between machines — the rule App.svelte states beside its own
