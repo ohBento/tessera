@@ -983,6 +983,25 @@ describe("the placing tool", () => {
     expect(after.y - from.y).toBeGreaterThan(0.08);
   });
 
+  it("scales a shape by exactly what the frame was scaled by", async () => {
+    /* Reported as the frame growing a little and the shape growing a lot. The
+     * stand-in is built at the layer's own size, so the factor Fabric reports
+     * is the factor the layer takes — anything else means the two are being
+     * measured against different boxes. */
+    const { canvas, stand, tile, layerId } = await placing();
+    const before = { ...(findLayer(app.manifest.tiles[tile]!.layers, layerId)! as ShapeLayer) };
+
+    canvas.fire("object:modified", {
+      target: Object.assign(stand, { scaleX: 2, scaleY: 2 }) as fabric.Object,
+    });
+    await tick();
+    await new Promise((r) => setTimeout(r, 200));
+
+    const after = findLayer(app.manifest.tiles[tile]!.layers, layerId)! as ShapeLayer;
+    expect(after.w).toBeCloseTo(before.w * 2, 4);
+    expect(after.h).toBeCloseTo(before.h * 2, 4);
+  });
+
   it("will not let a gesture scale a layer down to nothing", async () => {
     /* Seen happening: a shape left at Width 0, Height 0, gone from the wall
      * with its row still in the list.
