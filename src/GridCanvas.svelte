@@ -267,9 +267,18 @@
       crop: base.kind === "image" ? base.crop : undefined,
     };
     const targets = bulkTargets(target.layerId);
+    /* Structural even for a plain move, where a direct drag skips it. There the
+       canvas already shows the result because the object the hand moved is the
+       layer. Here the hand moved the stand-in — a transparent rectangle — and
+       the layer it stands for is a different object that nothing redraws
+       without a rebuild. So the frame ended up in the new place with the
+       picture still in the old one, and stayed that way until anything else
+       bumped the document: a lock, a hide, a field in the panel. With several
+       tiles picked the bulk path bumps it regardless, which is the difference
+       the report led with. */
     await (targets.length > 1
       ? applyTransformBulk(stand as Tagged, patch, targets)
-      : applyTransform(stand as Tagged, patch));
+      : applyTransform(stand as Tagged, patch, true));
   }
 
   /* The frame follows the choice on the right: one tile picked, one of its live

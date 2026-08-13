@@ -1081,6 +1081,12 @@ function resize(layer: Layer, patch: Transform) {
 export async function applyTransform(
   obj: Tagged,
   patch: Pick<Layer, "x" | "y" | "rotation"> & Transform,
+  /** Overrides the rule below, and the wall's stand-in is why it exists. The
+   *  rule reads "the canvas already shows the result", which holds only while
+   *  the object the hand moved is the layer. Dragging the stand-in moves a
+   *  transparent rectangle; the layer it stands for is a different object, and
+   *  nothing redraws that without a rebuild. */
+  structural?: boolean,
 ) {
   /* The object's own tile decides, not a scan of the wall. Every canvas object
    * carries the tile it was built for, so the one thing that cannot be
@@ -1102,7 +1108,7 @@ export async function applyTransform(
     layer.y = patch.y - shift.dy;
     layer.rotation = patch.rotation;
     resize(layer, patch);
-  }, scaled(patch));
+  }, structural ?? scaled(patch));
   /* After the write, not before: the outline answers "where would this land"
    * and a plain drag does not bump `version`, so nothing else would recompute
    * it. Cheap — the picture is already decoded and cached. */
