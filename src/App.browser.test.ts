@@ -1270,3 +1270,89 @@ describe("three the demolition took and nobody missed", () => {
     expect(app.selectedTiles).toEqual([under, other]);
   });
 });
+
+describe("two guards the wall was given and nothing checked", () => {
+  async function wallWith(make: () => Promise<void>) {
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await make();
+    const layer = tileLayers(tile).at(-1)!;
+    selectLayer(layer.id, tile);
+    const canvas = (window as { tesseraWall?: fabric.Canvas }).tesseraWall!;
+    await until(() => canvas.getObjects().some((o) => (o as Tagged).layerId === layer.id));
+    return { canvas, tile, layer };
+  }
+
+  it("refuses to read a flattened object back into the model", async () => {
+    /* A cut layer and a class icon are composited to pixels and placed at the
+     * cell's origin, so the object on the canvas sits at 0,0 at scale 1 whatever
+     * the model says. Reading its transform back would write that over a real
+     * placement — the layer would jump to the corner of its tile. The stand-in
+     * is how these get moved; nothing else may. */
+    const { canvas, tile, layer } = await wallWith(() => addTileShape("icon", "Ranger"));
+    const obj = canvas
+      .getObjects()
+      .find((o) => (o as Tagged).layerId === layer.id) as fabric.Object & { flattened?: boolean };
+    expect(obj.flattened).toBe(true);
+
+    const before = { ...findLayer(app.manifest.tiles[tile]!.layers, layer.id)! };
+    obj.set({ left: (obj.left ?? 0) + 120, top: (obj.top ?? 0) + 90 });
+    obj.setCoords();
+    canvas.fire("object:modified", { target: obj });
+    await tick();
+
+    const after = findLayer(app.manifest.tiles[tile]!.layers, layer.id)!;
+    expect(after.x).toBe(before.x);
+    expect(after.y).toBe(before.y);
+  });
+
+  it("pulls a dragged layer onto its cell's centre", async () => {
+    /* The wall snaps a tile layer against its own cell and its neighbours on
+     * that tile — the same pull the layout editor had, with the cell where the
+     * sheet used to be. Asserted as an outcome: dragged to just short of the
+     * centre, it has to land exactly on it. */
+    const { canvas, tile, layer } = await wallWith(async () => {
+      await addTileShape("rect");
+      const l = tileLayers(app.folderIds[0]).at(-1)!;
+      await setTileLayerField([app.folderIds[0]], l.id, "x", 0.3);
+    });
+
+    /* Given a real size and zoom first, for the reason the guide-grid test
+       gives: mounted in a bare document the stage collapses to a pixel wide and
+       the wall is drawn at 0.02% zoom, where a drag of sixty scene pixels is
+       sub-pixel on screen and Fabric's transform does nothing at all. */
+    canvas.setDimensions({ width: 900, height: 700 });
+    canvas.setViewportTransform([0.5, 0, 0, 0.5, 0, 0]);
+    canvas.renderAll();
+    await tick();
+
+    /* Held still first. Setting the field bumps the document and the wall
+       redraws the tile, so the object fetched a moment earlier is replaced and
+       the gesture lands on an orphan — the same race the placing-tool tests
+       ran into, with the same silent pass-or-fail. */
+    const current = () => canvas.getObjects().find((o) => (o as Tagged).layerId === layer.id);
+    let held = current();
+    let steady = 0;
+    await until(() => {
+      const now = current();
+      steady = now && now === held ? steady + 1 : 0;
+      held = now;
+      return steady >= 8;
+    });
+    const obj = held!;
+    /* The number, not the layer. findLayer hands back the live object, so
+       holding it and comparing `.x` against itself later is a condition that
+       can never come true — this test waited out its own deadline on exactly
+       that while the drag underneath had worked perfectly. */
+    const startX = findLayer(app.manifest.tiles[tile]!.layers, layer.id)!.x;
+    // Short of the middle by a couple of scene pixels: inside the pull, and
+    // nowhere near it without one.
+    const gap = (0.5 - startX) * TILE_W - 3;
+    await dragObject(canvas, obj, gap, 0);
+    await until(() => findLayer(app.manifest.tiles[tile]!.layers, layer.id)!.x !== startX);
+
+    const landed = findLayer(app.manifest.tiles[tile]!.layers, layer.id)!;
+    expect(landed.x).toBeCloseTo(0.5, 3);
+  });
+});

@@ -10,6 +10,7 @@ import {
   emptyManifest,
   emptyTile,
   migrate,
+  newGroupLayer,
   newImageLayer,
   newProject,
   newShapeLayer,
@@ -795,6 +796,78 @@ describe("a caption says what the tile is", () => {
         .getObjects()
         .find((o) => o instanceof fabric.Textbox) as fabric.Textbox | undefined;
       expect(drawn?.text).toBe(id);
+    } finally {
+      await canvas.dispose();
+    }
+  });
+});
+
+describe("what a tile carries beyond a flat list", () => {
+  /* Two things Phase 0 gave the tile path and nothing has rendered since: a
+   * group, which displaces its children instead of drawing, and a shared bake
+   * for a cut layer, which is what stopped a masked wall from taking the
+   * browser down. */
+
+  it("displaces a group's children and draws nothing for the group itself", async () => {
+    const m = manifest(2);
+    const id = order(m)[0];
+    const inner = { ...newShapeLayer("rect"), id: "inner" };
+    inner.x = 0.5;
+    inner.y = 0.5;
+    inner.w = 0.2;
+    inner.h = 0.2;
+    const group = { ...newGroupLayer([inner]), id: "grp" };
+    // A group's own x/y is the displacement it applies to what it holds.
+    group.x = 0.5 + 0.25;
+    group.y = 0.5;
+    m.tiles[id].layers.push(group);
+
+    const grid = gridSize(order(m).length);
+    const canvas = new fabric.StaticCanvas(undefined, {
+      width: grid.w,
+      height: grid.h,
+      enableRetinaScaling: false,
+    });
+    try {
+      await buildGrid(canvas, view(m), m, testDeps, true);
+      const drawn = canvas.getObjects().filter((o) => (o as { layerId?: string }).layerId);
+      // The group is not an object; its child is, and it has moved with it.
+      expect(drawn.map((o) => (o as { layerId?: string }).layerId)).toEqual(["inner"]);
+      const at = cellAt(0);
+      expect(drawn[0].left).toBeCloseTo(at.x + 0.75 * TILE_W, 0);
+    } finally {
+      await canvas.dispose();
+    }
+  });
+
+  it("bakes one canvas for a cut layer and hands it to every tile that matches", async () => {
+    /* cutToShape composites onto a tile-sized canvas. Before the bake was
+     * shared, a wall of 301 asked for 602 of them — about 1.2GB, and the
+     * browser went down mid-render rather than merely slowing. Two tiles
+     * carrying the same cut layer have to come out holding the same element. */
+    const m = manifest(2);
+    const [a, b] = order(m);
+    const cutter = { ...newShapeLayer("ellipse"), id: "cut" };
+    cutter.w = 0.3;
+    cutter.h = 0.3;
+    const pic = { ...newImageLayer("block:#00ff00"), id: "pic" };
+    pic.scale = 1;
+    pic.maskId = "cut";
+    for (const id of [a, b]) m.tiles[id].layers.push({ ...cutter }, { ...pic });
+
+    const grid = gridSize(order(m).length);
+    const canvas = new fabric.StaticCanvas(undefined, {
+      width: grid.w,
+      height: grid.h,
+      enableRetinaScaling: false,
+    });
+    try {
+      await buildGrid(canvas, view(m), m, testDeps, true);
+      const cut = canvas
+        .getObjects()
+        .filter((o) => (o as { layerId?: string }).layerId === "pic") as fabric.FabricImage[];
+      expect(cut).toHaveLength(2);
+      expect(cut[0].getElement()).toBe(cut[1].getElement());
     } finally {
       await canvas.dispose();
     }
