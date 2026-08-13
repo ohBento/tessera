@@ -73,6 +73,8 @@
     pasteLayerOntoTiles,
     layersOnSelection,
     removeLayerFromSelection,
+    setLayerHiddenOnSelection,
+    setLayerLockedOnSelection,
     strippableCount,
     pickTileImage,
     setLayerField,
@@ -515,21 +517,31 @@
       x: e.clientX,
       y: e.clientY,
       items: [
-        {
-          /* "free", not "picked": only tiles no project has claimed can start
-             one, and the count said "New project from 0 tiles" with three
-             portraits highlighted — true, and no help at all. Same name as the
-             header button and the sidebar one, because it is the same action. */
-          label:
-            picked > 1
-              ? `Project from ${freeCount()} free tile(s)`
-              : "Project from selection",
-          run: () => {
-            reveal("projects");
-            void newProjectFrom("");
-          },
-          disabled: !freeCount(),
-        },
+        /* Only where a tile can actually be free. Inside a project every tile
+           on the wall belongs to it, so freeCount() is nought and the item was
+           permanently greyed out — an entry that can never do anything is a
+           row of noise on every right-click. It stays on the overview, which is
+           where starting a project is the thing you came to do. */
+        ...(app.openProjectId
+          ? []
+          : [
+              {
+                /* "free", not "picked": only tiles no project has claimed can
+                   start one, and the count said "New project from 0 tiles" with
+                   three portraits highlighted — true, and no help at all. Same
+                   name as the header button and the sidebar one, because it is
+                   the same action. */
+                label:
+                  picked > 1
+                    ? `Project from ${freeCount()} free tile(s)`
+                    : "Project from selection",
+                run: () => {
+                  reveal("projects");
+                  void newProjectFrom("");
+                },
+                disabled: !freeCount(),
+              } as Item,
+            ]),
         ...(elsewhere.length ? [{ separator: true } as Item] : []),
         // Moving carries the tile's layers with it: artwork belongs to the
         // portrait, not to the wall it happens to be arranged on.
@@ -558,16 +570,33 @@
         },
         ...(onSelection.length
           ? [
-              {
-                label: "Remove layer",
-                /* One entry per layer id on the selection, with the reach
-                   written out: "Descr — 14 tiles" answers "how far does this
-                   click go" before it is made rather than after. */
-                items: onSelection.map((l) => ({
-                  label: `${l.label} — ${l.tiles} tile(s)`,
-                  run: () => void removeLayerFromSelection(l.id),
-                })),
-              } as Item,
+              /* One submenu per action, one entry per layer id on the
+                 selection, with the reach written out: "Descr — 14 tile(s)"
+                 answers "how far does this click go" before it is made rather
+                 than after.
+
+                 Hide and Show are separate items rather than one that toggles.
+                 Across fourteen tiles the flag can disagree, and a toggle would
+                 then hide seven and show seven — a result nobody asked for
+                 whichever way they meant it. */
+              ...(
+                [
+                  ["Hide layer", (id: string) => setLayerHiddenOnSelection(id, true)],
+                  ["Show layer", (id: string) => setLayerHiddenOnSelection(id, false)],
+                  ["Lock layer", (id: string) => setLayerLockedOnSelection(id, true)],
+                  ["Unlock layer", (id: string) => setLayerLockedOnSelection(id, false)],
+                  ["Remove layer", (id: string) => removeLayerFromSelection(id)],
+                ] as [string, (id: string) => Promise<void>][]
+              ).map(
+                ([label, act]) =>
+                  ({
+                    label,
+                    items: onSelection.map((l) => ({
+                      label: `${l.label} — ${l.tiles} tile(s)`,
+                      run: () => void act(l.id),
+                    })),
+                  }) as Item,
+              ),
             ]
           : []),
         {
@@ -1100,33 +1129,37 @@
          scroll event can still arrive after that, so the assertion was a lie
          waiting for the pane to be long enough to scroll — which it became the
          day the layer panel moved in. -->
+    <!-- The picked layer's own fields. Everything with no other way in: a
+         caption's face and colour, a shape's corners and gradient, a picture's
+         grading, the mask. Position, rotation and size are not here — those are
+         the canvas handles, and repeating them would give two answers to the
+         same question.
+
+         One home for both kinds of layer. A tile's layer and one spread across
+         the whole wall carry the same fields, and Properties knows which it
+         has: it writes through every picked tile when there are tiles, and
+         straight to the layer when there are none.
+
+         Its own column, not the top of the list beside it. It sat there first,
+         and the cost was paid on every edit: the tile list is forty-four rows
+         of accordion, so picking a layer near the bottom scrolled its fields
+         off the screen — the panel was above the list and moved with it. A
+         column of its own has one scroll each and neither pushes the other
+         away. Only while something is picked, so the wall keeps the width the
+         rest of the time. -->
+    {#if picked}
+      <aside class="props">
+        <Properties
+          layer={picked}
+          onPickClass={(layerId) => {
+            iconTarget = { tile: app.selectedTile || undefined, layer: layerId };
+            iconsOpen = true;
+          }}
+        />
+      </aside>
+    {/if}
+
     <aside bind:this={pane} onscroll={() => (scrolled = (pane?.scrollTop ?? 0) > 200)}>
-        <!-- The picked layer's own fields. Everything with no other way in:
-             a caption's face and colour, a shape's corners and gradient, a
-             picture's grading, the mask. Position, rotation and size are not
-             here — those are the canvas handles, and repeating them would give
-             two answers to the same question.
-
-             One home for both kinds of layer. A tile's layer and one spread
-             across the whole wall carry the same fields, and Properties knows
-             which it has: it writes through every picked tile when there are
-             tiles, and straight to the layer when there are none.
-
-             It lives at the top rather than beside the row a layer was picked
-             in, which is the honest cost of one site instead of two — the tile
-             list is long, so picking a layer far down means looking up here for
-             its fields. The wording, the picture and the class stay in the row
-             itself, so what is up here is the part reached rarely. -->
-        {#if picked}
-          <Properties
-            layer={picked}
-            onPickClass={(layerId) => {
-              iconTarget = { tile: app.selectedTile || undefined, layer: layerId };
-              iconsOpen = true;
-            }}
-          />
-        {/if}
-
         {#if wallLayers.length}
           <h2>Wall</h2>
           <ul>
@@ -1971,6 +2004,12 @@
     overflow-y: auto;
     padding: 8px;
     border-left: 1px solid #241e3a;
+  }
+
+  /* Narrower than the list beside it: it holds fields and no tile names, and
+     every pixel here is one the wall does not get. */
+  .props {
+    width: 256px;
   }
 
   /* The browser's own scrollbar is a bright slab in a dark app. Chromium draws

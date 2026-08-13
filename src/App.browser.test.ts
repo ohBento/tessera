@@ -61,6 +61,8 @@ import {
   pasteLayerOntoTiles,
   layersOnSelection,
   removeLayerFromSelection,
+  setLayerHiddenOnSelection,
+  setLayerLockedOnSelection,
 } from "./lib/editor.svelte";
 import {
   emptyManifest,
@@ -1176,6 +1178,61 @@ describe("carrying one layer's properties to another", () => {
     // hunt for.
     expect(listed[0].tiles).toBe(3);
     expect(listed[1].tiles).toBe(1);
+  });
+
+  it("switches a layer off across the selection, whatever each tile said before", async () => {
+    /* Set outright, not flipped per tile. With the flag disagreeing between
+     * tiles a toggle hides half and shows half, which reads as a bug whichever
+     * way it was meant — so the menu asks for a direction and gets one. */
+    await enterInbox();
+    const [a, b, c] = app.folderIds;
+    app.selectedTiles = [a, b, c];
+    await addTileShape("rect");
+    const id = tileLayers(a).at(-1)!.id;
+    findLayer(tileLayers(b), id)!.hidden = true;
+
+    app.selectedTiles = [a, b];
+    await setLayerHiddenOnSelection(id, true);
+    expect(findLayer(tileLayers(a), id)!.hidden).toBe(true);
+    expect(findLayer(tileLayers(b), id)!.hidden).toBe(true);
+    // Not picked, not touched.
+    expect(findLayer(tileLayers(c), id)!.hidden).toBeFalsy();
+
+    await setLayerHiddenOnSelection(id, false);
+    expect(findLayer(tileLayers(a), id)!.hidden).toBeFalsy();
+    expect(findLayer(tileLayers(b), id)!.hidden).toBeFalsy();
+  });
+
+  it("locks and unlocks across the selection in one step each", async () => {
+    await enterInbox();
+    const [a, b] = app.folderIds;
+    app.selectedTiles = [a, b];
+    await addTileShape("rect");
+    const id = tileLayers(a).at(-1)!.id;
+
+    const steps = historySteps().length;
+    await setLayerLockedOnSelection(id, true);
+    for (const t of [a, b]) expect(findLayer(tileLayers(t), id)!.locked).toBe(true);
+    expect(historySteps().length).toBe(steps + 1);
+
+    await setLayerLockedOnSelection(id, false);
+    for (const t of [a, b]) expect(findLayer(tileLayers(t), id)!.locked).toBeFalsy();
+  });
+
+  it("renames the layer on the row's own tile", async () => {
+    /* The third caller of the (id, tile) pair, and it resolved through
+     * anyLayer, which answers for the selected tile alone — so a rename typed
+     * on an unselected row wrote nothing at all. */
+    await enterInbox();
+    const [a, b] = app.folderIds;
+    app.selectedTiles = [a, b];
+    await addTileShape("rect");
+    const id = tileLayers(a).at(-1)!.id;
+    selectLayer("", "");
+
+    await renameLayer(id, "Frame", b);
+    expect(findLayer(tileLayers(b), id)!.name).toBe("Frame");
+    expect(findLayer(tileLayers(a), id)!.name).not.toBe("Frame");
   });
 
   it("opens the menu on the row and pastes through it", async () => {

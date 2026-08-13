@@ -35,6 +35,7 @@
     looseIds,
     pickTileImage,
     deleteLayer,
+    renameLayer,
     selectLayer,
     toggleLayerHidden,
     toggleLayerLocked,
@@ -80,6 +81,19 @@
   /* What the row is drawing, read once per render. These opened the snippet as
      {@const}; a component's markup has no such holder, and $derived is the
      same idea with a name. */
+  /** The layer whose name is being typed, "" for none. Local to the row: two
+   *  rows can never be renaming at once, because opening one blurs the other. */
+  let renaming = $state("");
+
+  /** Focus *and* select, the way the tile's own name field does it. Focus
+   *  alone leaves the caret at the end of the existing name, so the first
+   *  thing typed is appended to it — "rect01" became "rect01Nameplate". The
+   *  point of double-clicking a name is to replace it. */
+  const takeName = (el: HTMLInputElement) => {
+    el.focus();
+    el.select();
+  };
+
   const own = $derived(stampsOf(tileLayers(id)));
   const owner = $derived(tileProject(id));
   const said = $derived(tileHeadline(id));
@@ -186,14 +200,36 @@
         >
           <RowIcon name="lock" on={!!layer.locked} />
         </button>
-        <button
-          class="name"
-          class:dimmed={layer.hidden}
-          onclick={() => selectLayer(layer.id, id)}
-          title="Select this layer"
-        >
-          {layerLabel(layer)}
-        </button>
+        <!-- Double-click to rename, the way the tile above it is renamed. The
+             input replaces the button rather than sitting beside it, so the row
+             keeps its width and nothing shifts under the pointer.
+
+             `layerLabel`, not `layer.name`: an unnamed layer shows what the
+             list calls it, which is the text somebody double-clicking means to
+             change. renameLayer knows that fallback and refuses to write it
+             back as a real name — see the note there. -->
+        {#if renaming === layer.id}
+          <input
+            class="name"
+            use:takeName
+            value={layerLabel(layer)}
+            onkeydown={(e) => renameKey(e, layerLabel(layer))}
+            onblur={(e) => {
+              renaming = "";
+              void renameLayer(layer.id, e.currentTarget.value, id);
+            }}
+          />
+        {:else}
+          <button
+            class="name"
+            class:dimmed={layer.hidden}
+            onclick={() => selectLayer(layer.id, id)}
+            ondblclick={() => (renaming = layer.id)}
+            title="Select this layer — double-click to rename"
+          >
+            {layerLabel(layer)}
+          </button>
+        {/if}
         <button title="Delete" onclick={() => deleteLayer(layer.id, id)}>×</button>
       </li>
     {/each}

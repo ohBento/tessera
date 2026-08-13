@@ -1765,8 +1765,8 @@ export async function resetCrop(id: string) {
 export const endGesture = () => endRun(history);
 
 /** `name` lives on Common, so one function renames every kind of layer. */
-export async function renameLayer(id: string, name: string) {
-  const layer = anyLayer(id);
+export async function renameLayer(id: string, name: string, tileId = app.selectedTile) {
+  const layer = anyLayer(id, tileId);
   if (!layer) return;
   const next = name.trim();
   /* Typing the text already shown is not a rename. The input is prefilled
@@ -1921,6 +1921,35 @@ export const layersOnSelection = (): { id: string; label: string; tiles: number 
     }
   return [...seen.values()].sort((a, b) => b.tiles - a.tiles || a.label.localeCompare(b.label));
 };
+
+/** Switches one layer off, or on, across every picked tile carrying it — one
+ *  undo step.
+ *
+ *  Set outright rather than flipped per tile: with fourteen tiles the flag can
+ *  disagree between them, and "toggle" would then hide seven and show seven
+ *  and read as a bug whichever way you meant it. The menu asks for a direction
+ *  and gets one. Same for the lock beside it. */
+export async function setLayerHiddenOnSelection(id: string, hidden: boolean) {
+  await writeFlagOnSelection(id, hidden ? "Hide layer" : "Show layer", (l) => {
+    if (hidden) l.hidden = true;
+    else delete l.hidden;
+  });
+}
+
+export async function setLayerLockedOnSelection(id: string, locked: boolean) {
+  await writeFlagOnSelection(id, locked ? "Lock layer" : "Unlock layer", (l) => {
+    if (locked) l.locked = true;
+    else delete l.locked;
+  });
+}
+
+async function writeFlagOnSelection(id: string, label: string, write: (l: Layer) => void) {
+  const found = app.selectedTiles
+    .map((t) => findLayer(app.manifest.tiles[t]?.layers ?? [], id))
+    .filter((l): l is Layer => !!l);
+  if (!found.length) return;
+  await mutate(label, () => found.forEach(write));
+}
 
 /** Takes one layer off every picked tile that has it — one undo step.
  *
