@@ -1361,7 +1361,21 @@ async function tileLayerObjects(
      * the eye on the stamp that put it here, because a live copy had no row of
      * its own to switch off. */
     for (const l of own) {
-      if (l.hidden || l.space === "grid" || stencils.has(l.id)) continue;
+      if (l.hidden || l.space === "grid") continue;
+      /* A layer that is cutting another one draws nothing — but it is still a
+       * layer somebody has to be able to move and resize, and until now it had
+       * no object at all: nothing on the canvas to click, so the placing tool's
+       * stand-in was the only handle it had. Built like any other and made
+       * fully transparent instead, which puts it back on the ordinary path —
+       * drag, scale, snap and read-back all work on it without a case of their
+       * own.
+       *
+       * Invisible and clickable is only safe because of the rule the wall
+       * already keeps: none but the layer picked in the list is evented, so
+       * this can never swallow a click meant for something else. In the export
+       * it is transparent and inert like everywhere else, so the picture
+       * written to the game is unchanged. */
+      const stencil = stencils.has(l.id);
       // "" is a real answer — no picture on this tile — and the layer simply
       // does not render.
       if (l.kind === "image" && !l.asset) continue;
@@ -1507,6 +1521,9 @@ async function tileLayerObjects(
        * placement: dragging one and writing that back puts the layer at 0,0 and
        * loses where it actually was. The wall's stand-in exists for these, and
        * the flag is how it knows. */
+      // The cutter's own pixels are not the point — the hole it makes in
+      // something else is. It is here to be grabbed, not to be seen.
+      if (stencil) obj.opacity = 0;
       Object.assign(obj, { layerId: l.id, tileId: id, space: "tile", locked, flattened: flat });
       out.push(obj);
     }

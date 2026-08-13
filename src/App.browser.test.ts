@@ -1388,6 +1388,32 @@ describe("the layer panel", () => {
     expect(offered).toContain(layerLabel(cutter));
   });
 
+  it("keeps a cutter on the canvas, invisible, so it can still be grabbed", async () => {
+    /* A layer that is cutting another one draws nothing, and used to have no
+     * object at all — so there was nothing on the wall to click and the placing
+     * tool's stand-in was the only handle a mask had. Asked here as two things
+     * at once, because either alone is satisfied by the old behaviour: there is
+     * an object for it, and that object paints nothing. */
+    const { tile } = await pickedShape();
+    const cutter = tileLayers(tile).at(-1)!;
+    app.selectedTiles = [tile];
+    await addTileShape("ellipse");
+    const cutLayer = tileLayers(tile).at(-1)!;
+    await setTileLayerField([tile], cutLayer.id, "maskId", cutter.id);
+    await tick();
+
+    const canvas = (window as { tesseraWall?: fabric.Canvas }).tesseraWall!;
+    await until(() =>
+      canvas.getObjects().some((o) => (o as Tagged).layerId === cutter.id),
+    );
+    const obj = canvas.getObjects().find((o) => (o as Tagged).layerId === cutter.id)!;
+    expect(obj.opacity).toBe(0);
+    // And the layer it cuts is still baked, which is what made the cutter
+    // undrawable in the first place.
+    const cutObj = canvas.getObjects().find((o) => (o as Tagged).layerId === cutLayer.id);
+    expect((cutObj as Tagged & { flattened?: boolean }).flattened).toBe(true);
+  });
+
   it("writes a field onto every picked tile in one step", async () => {
     const { tile, layer } = await pickedShape();
     const second = app.folderIds[1];
