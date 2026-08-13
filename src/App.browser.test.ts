@@ -1155,18 +1155,73 @@ describe("the placing tool", () => {
     await new Promise((r) => setTimeout(r, 200));
 
     const once = findLayer(app.manifest.tiles[tile]!.layers, layerId)! as ShapeLayer;
-    /* And again, with the stand-in exactly as Fabric left it. A second gesture
-     * on a frame that was never rebuilt must not take the first one's factor a
-     * second time — which is what "the frame grew a little and the shape grew a
-     * lot" looks like from the inside. */
-    canvas.fire("object:modified", { target: stand as fabric.Object });
-    await tick();
-    await new Promise((r) => setTimeout(r, 200));
-    const twice = findLayer(app.manifest.tiles[tile]!.layers, layerId)! as ShapeLayer;
-
     expect(once.w).toBeCloseTo(before.w * 2, 4);
     expect(once.h).toBeCloseTo(before.h * 2, 4);
-    expect(twice.w).toBeCloseTo(once.w, 4);
+
+    /* The frame the write left behind stands for a document that has moved on,
+     * so it is rebuilt from the layer rather than kept. It used to be built
+     * once and never re-derived, which is what made "the frame grew a little
+     * and the shape grew a lot" possible: the scale of the finished gesture sat
+     * on it and was read again by the next one. Checked on the frame that is
+     * actually there now, not on the detached one this test still holds. */
+    await until(() => {
+      const now = canvas
+        .getObjects()
+        .find((o) => (o as Tagged & { framing?: boolean }).framing) as fabric.Object | undefined;
+      return !!now && now !== stand && (now.scaleX ?? 1) === 1;
+    });
+  });
+
+  it("takes the frame down when the layer is locked", async () => {
+    /* The padlock's whole job is to put a layer out of reach, and the frame is
+     * the one way to reach a baked one. It is built here and carries none of
+     * the object's own flags, so locking a masked layer left its frame standing
+     * and fully draggable — the lock looked like it had worked and had not. */
+    const { canvas, tile, layerId } = await placing();
+    const framing = () =>
+      canvas.getObjects().some((o) => (o as Tagged & { framing?: boolean }).framing);
+    expect(framing()).toBe(true);
+
+    await toggleLayerLocked(layerId, tile);
+    await until(() => !framing());
+
+    await toggleLayerLocked(layerId, tile);
+    await until(() => framing());
+  });
+
+  it("does not write a stale frame back over a panel edit", async () => {
+    /* The frame is marked `keep`, so it survives every rebuild — and it was
+     * built once and never re-derived. Type a Size into the panel and the layer
+     * grows on the wall while the frame stays the size it was; nudge the frame
+     * one pixel afterwards and the layer snaps back, because what a drop writes
+     * is the frame's own box in absolute numbers. The panel edit was gone with
+     * no undo step naming it. */
+    const { canvas, stand, tile, layerId } = await placing();
+    /* A window with a size. Mounted in a bare document the stage is one pixel
+     * wide, the wall is drawn at almost no zoom, and the frame's corner handles
+     * then cover its own middle — a press meant as a drag lands on a control
+     * and scales instead of moving. */
+    canvas.setDimensions({ width: 900, height: 700 });
+    canvas.setViewportTransform([0.5, 0, 0, 0.5, 0, 0]);
+    canvas.renderAll();
+    await tick();
+    const layer = () => findLayer(app.manifest.tiles[tile]!.layers, layerId)! as ShapeLayer;
+    const grown = layer().w * 2;
+    await setTileLayerField([tile], layerId, "w", grown);
+    await until(() => layer().w === grown);
+
+    // The frame that stands there now, which must be the new size's.
+    const framing = () =>
+      canvas.getObjects().find((o) => (o as Tagged & { framing?: boolean }).framing) as
+        | fabric.Object
+        | undefined;
+    await until(() => !!framing() && framing() !== stand);
+    const fresh = framing()!;
+    const sxBefore = fresh.scaleX;
+    await dragObject(canvas, fresh, 30, 0);
+    await until(() => layer().x !== 0.5);
+
+    expect(layer().w).toBeCloseTo(grown, 4);
   });
 
   it("takes the size from the handle a hand actually dragged", async () => {
@@ -2513,6 +2568,43 @@ describe("two guards the wall was given and nothing checked", () => {
     expect(now.x - was.group.x).toBeCloseTo(120 / TILE_W, 4);
     expect(findLayer(tileLayers(tile), one.id)!.x).toBeCloseTo(was.one.x, 6);
     expect(findLayer(tileLayers(tile), two.id)!.x).toBeCloseTo(was.two.x, 6);
+  });
+
+  it("keeps a group's frame the size of what is in it after it moves", async () => {
+    /* A group's x/y is a displacement, neutral at 0.5, and its members are
+     * drawn at their own coordinates plus it. The frame's reach was measured
+     * from the group's own x instead of from the neutral middle, so every move
+     * grew the box by twice the displacement: half a tile to the right and the
+     * frame came out three times too wide, hanging off the members it is meant
+     * to enclose — and the snap reasons about that box too. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const one = tileLayers(tile).at(-1)!;
+    await addTileShape("ellipse");
+    const two = tileLayers(tile).at(-1)!;
+    selectLayer(one.id, tile);
+    alsoSelect(two.id, tile);
+    await groupPicked();
+    const group = tileLayers(tile).find((l) => l.kind === "group")!;
+
+    const canvas = (window as { tesseraWall?: fabric.Canvas }).tesseraWall!;
+    const frame = () =>
+      canvas.getObjects().find((o) => (o as Tagged & { framing?: boolean }).framing) as
+        | fabric.Object
+        | undefined;
+    await until(() => !!frame());
+    const first = frame()!;
+    const before = first.getScaledWidth();
+
+    // Moved half a tile. The members did not move relative to the group, so
+    // the box that encloses them is the same size in the same place on the
+    // tile — only the whole thing has shifted.
+    await setTileLayerField([tile], group.id, "x", 1);
+    await until(() => !!frame() && frame() !== first);
+
+    expect(frame()!.getScaledWidth()).toBeCloseTo(before, 0);
   });
 
   it("takes a layer out of its group and leaves it where it was drawn", async () => {

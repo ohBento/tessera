@@ -482,10 +482,18 @@ export const layerSize = (l: Layer): { w: number; h: number } =>
 function groupReach(g: GroupLayer): { w: number; h: number } {
   let w = 0;
   let h = 0;
+  /* Measured from the neutral middle, not from the group's own x/y. A group's
+     position is a *displacement*: `groupShift` reads it as `x - 0.5`, and a
+     member is drawn at its own coordinate plus that. So the distance from the
+     frame's centre to a member is `c.x - 0.5`, and using `g.x` made the box
+     grow by twice the displacement every time the group was moved — half a
+     tile to the right and the frame came out three times too wide, hanging off
+     the members it is supposed to enclose, with the snap reasoning about that
+     box too. */
   for (const c of g.children) {
     const size = layerSize(c);
-    w = Math.max(w, Math.abs(c.x - g.x) + size.w / 2);
-    h = Math.max(h, Math.abs(c.y - g.y) + size.h / 2);
+    w = Math.max(w, Math.abs(c.x - 0.5) + size.w / 2);
+    h = Math.max(h, Math.abs(c.y - 0.5) + size.h / 2);
   }
   return w && h ? { w: w * 2, h: h * 2 } : { w: 1, h: 1 };
 }

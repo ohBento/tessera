@@ -96,6 +96,18 @@
    * without which you would be nudging an invisible thing until something
    * happened to appear. */
   let target: { tileId: string; layerId: string } | null = null;
+  /** Which state the frame was measured against.
+   *
+   *  It stands for a layer and is built from that layer's own numbers, so it
+   *  is only true of the document it was built from. It also survives every
+   *  rebuild (`keep`), which is what let it go stale: a Size typed into the
+   *  panel, an undo, a tile swapped into another slot — the layer moved and the
+   *  frame stayed. And the frame is what the next gesture writes back, in
+   *  absolute numbers, so a one-pixel nudge afterwards put the layer back where
+   *  the stale frame still thought it was and the panel edit was gone. */
+  let framedAt = -1;
+  /** Counts the calls to frameAt, so one that finishes late can tell. */
+  let frameGen = 0;
   let stand: fabric.Object | undefined;
   let ghost: fabric.Object | undefined;
   /** Whether what is being placed may be stretched — see the handles in
@@ -155,6 +167,16 @@
    *  currently shows for that layer. */
   async function frameAt(tileId: string, layerId: string) {
     if (!canvas || !app.deps) return;
+    /* Which call this is. Building a frame awaits a picture off disk, and two
+       picks in quick succession resolve in decode order rather than click
+       order: the first one to finish last tore down the second one's frame,
+       put up its own, and pointed `target` at a layer nobody had selected —
+       so the panel showed one layer and the frame wrote to another. Worse when
+       the layer was deleted in between: nothing checked, and a transparent
+       `keep` rectangle stayed over that cell for the rest of the session,
+       swallowing every click on the tile underneath. */
+    const mine = ++frameGen;
+    const stale = () => mine !== frameGen || !canvas || app.selected !== layerId;
     const ids = visibleIds();
     const base = atRest(tileId, layerId);
     const index = ids.indexOf(tileId);
@@ -190,6 +212,8 @@
        ponytail: if a masked caption turns out to need one, extend ghostImage
        in scene.ts — the renderer's reading of a layer lives there, not here. */
     const drawn = shown.kind === "image" ? await ghostImage(shown, app.deps) : undefined;
+    // Overtaken while that was decoding: put nothing up, take nothing down.
+    if (stale()) return;
     const height = drawn ? width * ((drawn.height || 1) / (drawn.width || 1)) : size.h * TILE_H;
 
     dropFrameTools();
@@ -233,6 +257,8 @@
     canvas.add(stand);
     canvas.setActiveObject(stand);
     target = { tileId, layerId };
+    // Measured against this state; see framedAt.
+    framedAt = app.version;
     canvas.requestRenderAll();
   }
 
@@ -331,7 +357,15 @@
        single thing is drawn. So it needs the same frame a bake does, and
        dragging it writes the group's own x/y — which is exactly how its
        members all move by the same amount. */
-    const needsFrame = !!picked && (isFlattened(picked, own) || picked.kind === "group");
+    /* A padlock takes a layer out of reach, and the frame is a way to reach it
+       — the one the lock never covered, because the stand-in is built here and
+       carries none of the object's own flags. Locking a class icon left its
+       violet frame standing and fully draggable. `layoutId` goes with it for
+       the reason the tile objects give: a Layout owns that placement and would
+       throw the drag away on the next update. */
+    const held = !!picked && (!!picked.locked || !!picked.layoutId);
+    const needsFrame =
+      !!picked && !held && (isFlattened(picked, own) || picked.kind === "group");
     if (!tile || !layerId || !needsFrame) {
       if (target) {
         target = null;
@@ -343,6 +377,7 @@
     if (
       target?.tileId !== tile ||
       target.layerId !== layerId ||
+      framedAt !== app.version ||
       !(canvas && stand && canvas.getObjects().includes(stand))
     )
       /* Reported, not dropped. This awaits a picture off disk, and both
