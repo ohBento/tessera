@@ -1362,6 +1362,17 @@ export async function buildGrid(
  *
  *  A hidden group takes its children with it, exactly as in a Layout: the eye
  *  on the row has to mean what it says. */
+/** What the wall actually draws for one tile: its stack with the groups folded
+ *  away, each member carrying its group's displacement, fade and lock.
+ *
+ *  Exported because the frame has to follow the same list. Reading the tile's
+ *  own stack instead meant a layer inside a group could not be found at all —
+ *  it is not in that array — so picking one showed no frame and no ghost. The
+ *  positions here are the drawn ones, which is what a frame is for; the write
+ *  goes back through applyTransform, which subtracts the nesting again. */
+export const drawnLayers = (m: Manifest, tileId: string): Layer[] =>
+  dissolved(resolveLayers(m, tileId));
+
 function dissolved(layers: Layer[], dx = 0, dy = 0, fade = 1, locked = false): Layer[] {
   const out: Layer[] = [];
   for (const l of layers) {

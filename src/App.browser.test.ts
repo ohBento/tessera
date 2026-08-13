@@ -2027,6 +2027,47 @@ describe("two guards the wall was given and nothing checked", () => {
     expect(findLayer(tileLayers(tile), two.id)!.x).toBeCloseTo(was.two.x, 6);
   });
 
+  it("frames a layer picked inside a group, where the group has put it", async () => {
+    /* Reported as: clicking the picture inside a group shows no frame and no
+     * ghost on the wall.
+     *
+     * The frame looked the layer up in the tile's own stack, and a layer inside
+     * a group is not in that array — it is in the group's children. It reads
+     * what the wall draws instead, which is the stack with the groups folded
+     * away and their displacement carried by the members. That second half
+     * matters as much as the first: the frame has to stand where the layer is
+     * drawn, not where its own coordinates say. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("icon", "Ranger");
+    const member = tileLayers(tile).at(-1)!;
+    await addTileShape("rect");
+    const other = tileLayers(tile).at(-1)!;
+    selectLayer(member.id, tile);
+    alsoSelect(other.id, tile);
+    await groupPicked();
+
+    const group = tileLayers(tile).find((l) => l.kind === "group")!;
+    // Move the group, so the member's drawn place and its own differ.
+    await setTileLayerField([tile], group.id, "x", 0.75);
+    selectLayer(member.id, tile);
+
+    const canvas = (window as { tesseraWall?: fabric.Canvas }).tesseraWall!;
+    await until(() =>
+      canvas.getObjects().some((o) => (o as Tagged & { framing?: boolean }).framing),
+    );
+    const stand = canvas
+      .getObjects()
+      .find((o) => (o as Tagged & { framing?: boolean }).framing)!;
+    expect((stand as Tagged).layerId).toBe(member.id);
+
+    // Where the wall draws it: the member's own x plus the group's shift.
+    const inside = findLayer(tileLayers(tile), member.id)!;
+    const cell = cellAt(visibleIds().indexOf(tile));
+    expect((stand.left ?? 0) - cell.x).toBeCloseTo((inside.x + 0.25) * TILE_W, 0);
+  });
+
   it("pulls a dragged layer onto its cell's centre", async () => {
     /* The wall snaps a tile layer against its own cell and its neighbours on
      * that tile — the same pull the layout editor had, with the cell where the

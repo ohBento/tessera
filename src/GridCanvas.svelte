@@ -27,6 +27,7 @@
   import {
     buildGrid,
     cellAt,
+    drawnLayers,
     freeScale,
     ghostImage,
     gridSize,
@@ -42,7 +43,7 @@
     type Tagged,
     type WallPrint,
   } from "./lib/scene";
-  import { findLayer, layerText, stencilIds, type Layer } from "./lib/model";
+  import { findLayer, layerText, stencilIds, walkLayers, type Layer } from "./lib/model";
 
 
   let host: HTMLDivElement;
@@ -103,10 +104,24 @@
   let twoAxes = false;
 
   /** The layers on a tile the stand-in can be put on: the ones that draw. */
-  const placeableOn = (tileId: string) =>
-    (app.manifest.tiles[tileId]?.layers ?? []).filter(
+  const placeableOn = (tileId: string) => {
+    /* What the wall draws, plus the groups themselves.
+     *
+     * The drawn list has the groups folded away and their displacement carried
+     * by the members, which is what the frame wants — reading the tile's own
+     * stack instead meant a layer inside a group was not in the array at all,
+     * so picking one showed neither frame nor ghost.
+     *
+     * The groups are added back because each is a row that can be picked, and
+     * picking one has to put a frame on it. Their own coordinates are already
+     * the ones a frame wants; a group inside a group would want its parent's
+     * displacement folded in too, and nothing here makes one of those yet. */
+    const real = app.manifest.tiles[tileId]?.layers ?? [];
+    const groups = [...walkLayers(real)].filter((l) => l.kind === "group");
+    return [...drawnLayers(app.manifest, tileId), ...groups].filter(
       (l) => !l.hidden && !(l.kind === "image" && !l.asset),
     );
+  };
 
   function dropFrameTools() {
     if (stand) canvas?.remove(stand);
