@@ -1405,6 +1405,48 @@ describe("carrying one layer's properties to another", () => {
     expect(app.error).toContain("skipped");
   });
 
+  it("says nothing when the tiles already carry that very group", async () => {
+    /* The other half of the guard above, and the one that must stay quiet. A
+     * tile holding the same group is not a collision — it is the same layer,
+     * and writing over it is the whole point of pasting onto tiles that have
+     * it. The ids inside it are its own, so nothing is being duplicated.
+     *
+     * Pinned because the two cases look alike from outside and only one of
+     * them should warn: a warning on this one would train the eye to ignore
+     * the other. */
+    await enterInbox();
+    const [a, b, c] = app.folderIds;
+    app.selectedTiles = [a];
+    await addTileShape("rect");
+    const one = tileLayers(a).at(-1)!;
+    await addTileShape("ellipse");
+    const two = tileLayers(a).at(-1)!;
+    selectLayer(one.id, a);
+    alsoSelect(two.id, a);
+    await groupPicked();
+    const group = tileLayers(a).find((l) => l.kind === "group")!;
+
+    // Both tiles get the group first.
+    copyLayerProps(group.id, a);
+    app.selectedTiles = [b, c];
+    await pasteLayerOntoTiles();
+    expect(app.error).toBe("");
+    for (const t of [b, c]) expect(findLayer(tileLayers(t), group.id)).toBeTruthy();
+
+    // Change it on the source, then paste again onto the same two.
+    await setTileLayerField([a], one.id, "fill", "#123456");
+    copyLayerProps(group.id, a);
+    app.selectedTiles = [b, c];
+    await pasteLayerOntoTiles();
+
+    expect(app.error).toBe("");
+    for (const t of [b, c]) {
+      // Once, not twice, and the member took the change.
+      expect([...walkLayers(tileLayers(t))].filter((l) => l.id === group.id)).toHaveLength(1);
+      expect((findLayer(tileLayers(t), one.id) as ShapeLayer).fill).toBe("#123456");
+    }
+  });
+
   it("opens the menu on the row and pastes through it", async () => {
     const [from, to] = await twoShapes();
     from.layer.x = 0.15;
