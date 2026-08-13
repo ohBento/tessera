@@ -914,14 +914,15 @@ describe("the placing tool", () => {
     await enterInbox();
     const tile = app.folderIds[0];
     app.selectedTiles = [tile];
+    /* A shape that something is cutting, which is one of the two kinds the
+     * frame appears on. There is no mode to switch on any more: picking the
+     * layer is the whole of it. */
     await addTileShape("rect");
     const layer = tileLayers(tile).at(-1)!;
+    await addTileShape("ellipse");
+    const cutter = tileLayers(tile).at(-1)!;
+    await setTileLayerField([tile], layer.id, "maskId", cutter.id);
     selectLayer(layer.id, tile);
-
-    const mode = [...document.querySelectorAll("button")].find((b) =>
-      (b.title ?? "").startsWith("Place a tile's own layers"),
-    ) as HTMLButtonElement;
-    mode.click();
 
     const canvas = (window as { tesseraWall?: fabric.Canvas }).tesseraWall!;
     const current = () =>
@@ -1755,9 +1756,17 @@ describe("two guards the wall was given and nothing checked", () => {
      * asserted here — the layer moves by exactly that, and it does not land at
      * the corner, which is what the refusal was protecting. */
     const { canvas, tile, layer } = await wallWith(() => addTileShape("icon", "Ranger"));
-    const obj = canvas
-      .getObjects()
-      .find((o) => (o as Tagged).layerId === layer.id) as fabric.Object & { flattened?: boolean };
+    /* Not the frame, and waited for rather than taken. The frame now appears by
+     * itself on exactly these layers and carries the same layerId, so the wall
+     * briefly holds one object for this layer that the renderer did not build —
+     * `flattened` is the mark of one that it did. */
+    type Baked = fabric.Object & { flattened?: boolean };
+    const bake = () =>
+      canvas
+        .getObjects()
+        .find((o) => (o as Tagged).layerId === layer.id && "flattened" in o) as Baked | undefined;
+    await until(() => !!bake());
+    const obj = bake()!;
     expect(obj.flattened).toBe(true);
     // No handles on a bake: a factor read off a tile-sized picture says nothing
     // about the layer inside it.

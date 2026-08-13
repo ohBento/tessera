@@ -58,13 +58,11 @@
   let {
     id,
     inGroup,
-    framing = $bindable(),
     openIcons,
     layerMenu,
   }: {
     id: string;
     inGroup: string;
-    framing: boolean;
     /** Asks App to open the class grid for this tile's badge. The sheet is
      *  App's — one of them serves the whole window — so the row asks rather
      *  than owns. */
@@ -128,35 +126,9 @@
   }
 </script>
 
-<!-- Where a tile says "this one, here". The tool needs a tile and one of its
-     layers; both are on this row already, so the button hands it the pair and
-     switches the mode on rather than asking for three clicks in two places.
-     There is no way back beside it any more: the drag writes the layer, so
-     undo is the way back, the same as every other edit on the wall. -->
-{#snippet placeRow(tileId: string, layer: Layer)}
-  {@const layerId = layer.id}
-  {@const on =
-    framing && app.selected === layerId && app.selectedTiles.length === 1 && app.selectedTiles[0] === tileId}
-  {@const shows = !layer.hidden}
-  <button
-    class="swatch"
-    class:on
-    disabled={!shows}
-    title={shows
-      ? on
-        ? "Placing this on the wall — drag its frame"
-        : "Place this on this tile"
-      : "Switched off on this tile — nothing to place"}
-    onclick={() => {
-      app.selectedTiles = [tileId];
-      selectLayer(layerId, tileId);
-      framing = true;
-    }}
-  >
-    <RowIcon name="place" size={13} />
-  </button>
-{/snippet}
-
+<!-- The "place this" button stood here. It handed the wall a tile and a layer
+     and switched the mode on; with the mode gone, picking the layer is the
+     whole of what it did, and the name beside it already does that. -->
 
 
 <!-- The stamps on one holder — a group's stack or a single tile's own. Same
@@ -355,7 +327,6 @@
               void setTileLayerField([id], caption.id, "text", e.currentTarget.value)}
             onkeydown={(e) => e.key === "Enter" && void stepName(e, id, inGroup)}
           />
-          {@render placeRow(id, caption)}
         </label>
       {/each}
 
@@ -417,7 +388,6 @@
                numbers beside them: the frame on the wall is where placing is
                done, and a row of fields here would ask why moving has them and
                everything else does not. -->
-          {@render placeRow(id, pic)}
         </div>
       {/each}
 
@@ -464,7 +434,6 @@
               <line x1="4" y1="14" x2="14" y2="4" stroke="currentColor" stroke-width="1.6" />
             </svg>
           </button>
-          {@render placeRow(id, badge)}
         </div>
       {/each}
 
@@ -497,7 +466,6 @@
                 void setTileLayerField([id], shape.id, "fill", e.currentTarget.value)}
             />
           </label>
-          {@render placeRow(id, shape)}
         </div>
       {/each}
     {/if}

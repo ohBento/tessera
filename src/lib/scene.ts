@@ -424,6 +424,28 @@ export function textWidth(l: TextLayer): number {
  *  (see textObject), so a line of it has to be carried across the aspect ratio
  *  or the frame comes out 804/624 — 29% — too tall. `l.h` needs no such thing;
  *  it is a height fraction already. */
+/** The layer cutting this one, if any is and it is showing.
+ *
+ *  A cutter that is hidden stops cutting: the eye has to mean the same thing
+ *  everywhere, and something that is not there cannot be why half a picture is
+ *  missing. */
+export const cutterOf = (l: Layer, siblings: Layer[]): Layer | undefined => {
+  const c = l.maskId ? siblings.find((x) => x.id === l.maskId) : undefined;
+  return c && cutApplies(l, c) && !c.hidden ? c : undefined;
+};
+
+/** Whether the wall draws this layer as a tile-sized picture rather than as
+ *  itself: a class icon, which wears its artwork as a clipPath and so cannot
+ *  also wear the cell, or anything a mask is cutting.
+ *
+ *  Read outside the renderer as well — the wall's frame appears exactly on
+ *  these, because their own object is a whole-tile bake whose handles would sit
+ *  at the corners of the cell rather than at the edges of the layer. One rule
+ *  in one place, so the frame and the bake can never disagree about which
+ *  layers need it. */
+export const isFlattened = (l: Layer, siblings: Layer[]) =>
+  !!cutterOf(l, siblings) || (l.kind === "shape" && l.shape === "icon");
+
 export const layerSize = (l: Layer): { w: number; h: number } =>
   l.kind === "image"
     ? { w: l.scale, h: l.scale }
@@ -1387,15 +1409,14 @@ async function tileLayerObjects(
        * A cutter that is hidden stops cutting: the eye has to mean the same
        * thing everywhere, and something that is not there cannot be why half a
        * picture is missing. */
-      const cutter = l.maskId ? own.find((x) => x.id === l.maskId) : undefined;
-      const cut = cutApplies(l, cutter) && !cutter!.hidden ? cutter : undefined;
+      const cut = cutterOf(l, own);
       /* A class icon is paint wearing the artwork as its clipPath, and every
        * tile layer is about to be given the cell as its clipPath — Fabric
        * allows one, so the cell would replace the artwork and the icon would
        * reach the wall as the bare rectangle behind it. Flattened to pixels
        * first, like a cut layer, it arrives as a picture that the cell can clip
        * like any other. */
-      const flat = !!cut || (l.kind === "shape" && l.shape === "icon");
+      const flat = isFlattened(l, own);
       const local = flat ? { ...box, x: 0, y: 0 } : box;
       /* Keyed on the whole resolved layer — and, for a cut one, on the cutter
        * and the tile's choice of picture for it too: everything that changes

@@ -30,6 +30,7 @@
     freeScale,
     ghostImage,
     gridSize,
+    isFlattened,
     layerSize,
     readBack,
     rebuildTile,
@@ -43,9 +44,6 @@
   } from "./lib/scene";
   import { findLayer, layerText, type Layer } from "./lib/model";
 
-  /* On while the placing tool is chosen in App's toolbar. The wall has no other
-     mode, and that is deliberate — see the note on frameAt below. */
-  let { framing = false }: { framing?: boolean } = $props();
 
   let host: HTMLDivElement;
   let el: HTMLCanvasElement;
@@ -296,16 +294,18 @@
      clause only puts it back when something else did, which is the case when
      the tile it stood on stops existing. */
   $effect(() => {
-    if (!framing) {
-      target = null;
-      dropFrameTools();
-      canvas?.requestRenderAll();
-      return;
-    }
     void app.version;
     const tile = app.selectedTiles.length === 1 ? app.selectedTiles[0] : "";
     const layerId = app.selected;
-    if (!tile || !layerId || !placeableOn(tile).some((l) => l.id === layerId)) {
+    /* No mode to switch on any more: the frame appears by itself, on exactly
+       the layers whose own object cannot serve as a handle. A class icon and a
+       masked layer are drawn as a whole-tile bake, so their handles would sit
+       at the corners of the cell rather than at the edges of the layer — every
+       other layer is its own handle and is dragged directly. isFlattened is the
+       renderer's own rule, read from here so the two cannot drift apart. */
+    const own = placeableOn(tile);
+    const picked = own.find((l) => l.id === layerId);
+    if (!tile || !layerId || !picked || !isFlattened(picked, own)) {
       if (target) {
         target = null;
         dropFrameTools();
@@ -881,26 +881,26 @@
     /* Clearing during a rebuild is Fabric dropping its active object, not the
      * user letting go of the layer — letting that through would silently
      * deselect on every structural edit. */
-    /* The frame belongs to the mode, not to the click. Fabric drops the
-       selection whenever a press lands on bare canvas, which in this mode is
-       most presses — so the violet box and its handles vanished under the hand
-       and had to be fetched back by clicking the tile again. It stays until the
-       mode is left. */
+    /* The frame belongs to the layer, not to the click. Fabric drops the
+       selection whenever a press lands on bare canvas, which here is most
+       presses — so the violet box and its handles vanished under the hand and
+       had to be fetched back by clicking the tile again. It stays as long as
+       the layer it belongs to is the chosen one. */
     canvas.on("selection:cleared", () => {
-      if (framing && stand && canvas!.getObjects().includes(stand)) {
+      if (stand && canvas!.getObjects().includes(stand)) {
         canvas!.setActiveObject(stand);
         canvas!.requestRenderAll();
       }
     });
 
     canvas.on("selection:cleared", () => {
-      /* Not while placing. There the chosen layer is what the tool acts on, and
-         a press on the wall is how the next tile is chosen — clearing it there
-         meant the frame died on the way to the tile it was being carried to,
+      /* Not while a frame is up. There the chosen layer is what the frame acts
+         on, and a press on the wall is how the next tile is chosen — clearing
+         it meant the frame died on the way to the tile it was being carried to,
          and forty-four portraits had to be picked out of the list one at a
-         time. Live copies keep the id of the layer they came from, so the same
-         choice lands on the next tile that carries the same Layout. */
-      if (!rebuilding && !framing) selectLayer("");
+         time. Layers dissolved across a wall keep one id, so the same choice
+         lands on the next tile carrying the same design. */
+      if (!rebuilding && !stand) selectLayer("");
     });
 
     /* Snapping a wall picture to the wall.

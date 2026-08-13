@@ -166,8 +166,11 @@
       e.preventDefault();
       return;
     }
-    if (key === "escape" && framing) {
-      framing = false;
+    /* Escape used to leave the placing mode. With the mode gone it drops the
+       layer instead, which takes the frame with it — the same key doing the
+       same thing it always did from where the user was standing. */
+    if (key === "escape" && app.selected) {
+      selectLayer("");
       e.preventDefault();
       return;
     }
@@ -239,10 +242,6 @@
   let keysOpen = $state(false);
   let iconsOpen = $state(false);
   let iconFilter = $state("");
-  /* The wall's one mode: while it is on, a drag frames a tile's picture inside
-     its mask instead of sweeping a selection. Pressed-looking on purpose — a
-     mode nobody can see is a trap. */
-  let framing = $state(false);
   const closeIconSheet = () => {
     iconsOpen = false;
     iconTarget = null;
@@ -941,24 +940,12 @@
         () => void redoEdit(),
         !redoable(),
       )}
-      <span class="gap"></span>
-      <!-- The wall's one mode, and the only button in this rail that stays
-           pressed. Its own group under the undo pair, away from the insert
-           tools: those add a layer to a Layout, this changes what a drag on the
-           wall means. A crop frame with a picture's diagonal inside it — the
-           mark every editor uses for "which part of this shows". -->
-      <button
-        class="mode"
-        class:on={framing}
-        aria-pressed={framing}
-        onclick={() => (framing = !framing)}
-        disabled={home || !!app.busy}
-        title={framing
-          ? "Placing: pick a tile, then one of its own layers in the list — drag it, corners zoom, the top handle turns. Escape leaves"
-          : "Place a tile's own layers — its picture, caption or class icon"}
-      >
-        <RowIcon name="place" size={17} />
-      </button>
+      <!-- The wall had one mode, and it is gone. The frame it switched on now
+           appears by itself on the layers that need one — a class icon and a
+           masked layer, whose own object is a whole-tile bake — and every other
+           layer is dragged directly. A button that has to be found before a
+           drag will work is a button that gets forgotten; nothing here is worth
+           a mode. -->
       <span class="gap"></span>
       <!-- Framed mountain and sun, the icon every editor uses for a picture —
            no Unicode glyph reads as one at this size. -->
@@ -1121,7 +1108,7 @@
           {/if}
         </div>
       {:else}
-        <GridCanvas bind:this={grid} {framing} />
+        <GridCanvas bind:this={grid} />
       {/if}
     </div>
 
@@ -1473,7 +1460,7 @@
             {#if isOpen(folder.id)}
               <div class="indent">
                 {#each folder.tiles as id (id)}
-                  <TileRow {id} inGroup={folder.id} bind:framing {openIcons} {layerMenu} />
+                  <TileRow {id} inGroup={folder.id} {openIcons} {layerMenu} />
                 {/each}
               </div>
             {/if}
@@ -1496,7 +1483,7 @@
           {#if isOpen("tiles")}
             <div class="indent">
               {#each looseIds() as id (id)}
-                <TileRow {id} inGroup="" bind:framing {openIcons} {layerMenu} />
+                <TileRow {id} inGroup="" {openIcons} {layerMenu} />
               {/each}
             </div>
           {/if}
@@ -1952,16 +1939,6 @@
   .tools .gap {
     grid-column: 1 / -1;
     height: 6px;
-  }
-
-  /* A mode reads as pressed, not as hovered: filled, outlined in the accent,
-     and it stays that way with the pointer somewhere else entirely. The tool
-     buttons beside it do something and are done; this one is a state. */
-  .tools button.mode.on {
-    background: #3a2f68;
-    border-color: #a685ff;
-    box-shadow: inset 0 0 0 1px #a685ff;
-    color: #efeaff;
   }
 
   /* A glyph, not a word: it sits inside the document group but is not a
