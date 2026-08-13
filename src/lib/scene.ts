@@ -1321,7 +1321,13 @@ export async function buildGrid(
      a layer and carries no layerId — but an untagged object is one no
      incremental pass can reason about. */
   for (const [index, obj] of backgrounds.entries())
-    Object.assign(obj, { tileId: ids[index], space: "base" });
+    Object.assign(obj, {
+      tileId: ids[index],
+      space: "base",
+      // What this background stands for, so a single-tile rebuild can tell
+      // whether it still stands for it. See rebuildTile.
+      baseKey: JSON.stringify(m.tiles[ids[index]]?.base ?? null),
+    });
 
   /* The picture spread across this wall. Once, not per tile — drawing it per
    * cell would paint the same pixels COLS*rows times over.
@@ -1718,10 +1724,25 @@ export async function rebuildTile(
   const index = wall.ids.indexOf(id);
   if (index < 0) return;
 
-  const fresh = await background(m.tiles[id]?.base ?? null, id, deps, cellAt(index));
-  Object.assign(fresh, { tileId: id, space: "base" });
+  /* The portrait underneath is the one part of a tile that a layer edit cannot
+     change: it comes from the game's own file and from `base`, and neither
+     moves when a slider does. Rebuilding it anyway meant decoding into a fresh
+     624x804 canvas on every pointer event of every drag — measured at about
+     half of what a single-tile rebuild costs. Kept when it still stands for
+     the same thing, which is what the key says. */
+  const baseKey = JSON.stringify(m.tiles[id]?.base ?? null);
+  const standing = canvas
+    .getObjects()
+    .find(
+      (o) =>
+        (o as Tagged).tileId === id &&
+        (o as { space?: string }).space === "base" &&
+        (o as { baseKey?: string }).baseKey === baseKey,
+    );
+  const fresh = standing ?? (await background(m.tiles[id]?.base ?? null, id, deps, cellAt(index)));
+  Object.assign(fresh, { tileId: id, space: "base", baseKey });
   const objects = [
-    fresh,
+    ...(standing ? [] : [fresh]),
     ...(await tileLayerObjects(id, index, m, deps, interactive, new Map())),
   ];
 
@@ -1731,7 +1752,12 @@ export async function rebuildTile(
      redrawn. */
   const mine = canvas
     .getObjects()
-    .filter((o) => !(o as { keep?: boolean }).keep && (o as { tileId?: string }).tileId === id);
+    .filter(
+      (o) =>
+        o !== standing &&
+        !(o as { keep?: boolean }).keep &&
+        (o as { tileId?: string }).tileId === id,
+    );
   canvas.remove(...mine);
 
   const key = stackKey(new Map(wall.ids.map((tile, i) => [tile, i])));

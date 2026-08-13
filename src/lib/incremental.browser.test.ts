@@ -96,6 +96,44 @@ describe("deciding whether one tile is enough", () => {
     expect(soleTileChange(print(m), print(m))).toBe("");
   });
 
+  it("keeps the portrait underneath when only a layer changed", async () => {
+    /* The one part of a tile a layer edit cannot reach: it comes from the
+     * game's own file and from `base`. Rebuilding it anyway decoded into a
+     * fresh 624x804 canvas on every pointer event of every slider drag.
+     * Identity is the assertion — a new object that draws the same thing is
+     * exactly what this stops. */
+    const m = dressed(9);
+    const [target] = order(m);
+    const canvas = wallCanvas(9);
+    try {
+      await buildGrid(canvas, view(m), m, testDeps, true);
+      const base = () =>
+        canvas.getObjects().find((o) => {
+          const t = o as { tileId?: string; space?: string };
+          return t.tileId === target && t.space === "base";
+        });
+      const bases = () =>
+        canvas.getObjects().filter((o) => {
+          const t = o as { tileId?: string; space?: string };
+          return t.tileId === target && t.space === "base";
+        });
+      const was = base();
+      expect(bases()).toHaveLength(1);
+
+      (m.tiles[target].layers[1] as { text: string }).text = "changed";
+      await rebuildTile(canvas, target, view(m), m, testDeps, true);
+      expect(base()).toBe(was);
+      expect(bases()).toHaveLength(1);
+
+      // And it is replaced when it really is a different picture.
+      m.tiles[target].base = { asset: "block:#654321", crop: { x: 0, y: 0, w: 624, h: 804 } };
+      await rebuildTile(canvas, target, view(m), m, testDeps, true);
+      expect(base()).not.toBe(was);
+    } finally {
+      canvas.dispose();
+    }
+  });
+
   it("draws the rest of the wall when one portrait will not decode", async () => {
     /* Every background is fetched in one Promise.all, so one rejection
      * rejected the lot and the build threw: an empty wall — this wall and any
