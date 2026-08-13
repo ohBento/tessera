@@ -393,11 +393,36 @@ describe("a folder that will not open is not the same as an empty one", () => {
       { name: "40000000011311807.bmp", isFile: true },
     ] as never);
 
-    await pruneVault("/docs/FaceTexture", []);
+    expect(await pruneVault("/docs/FaceTexture", [])).toBe(2);
     expect(remove).not.toHaveBeenCalled();
     /* The listing above is still queued, because nothing read it — which is
      * the result. Put back rather than left, or the next test gets a vault
      * listing where it queued a failure. */
+    readDir.mockReset();
+    readDir.mockResolvedValue([]);
+  });
+
+  it("keeps the vault when the folder came back missing most of it", async () => {
+    /* The case the empty-listing guard did not cover, and the likelier one: a
+     * sync client or an antivirus that has three of forty-four files, not
+     * none. Pruning on that listing deletes forty-one pristine originals. */
+    const platform = await import("./platform");
+    const readDir = vi.mocked(platform.readDir);
+    const remove = vi.mocked(platform.remove);
+    remove.mockClear();
+    exists.mockImplementation(async () => true);
+    const held = ["a", "b", "c", "d", "e", "f"];
+    readDir.mockResolvedValueOnce(held.map((id) => ({ name: `${id}.bmp`, isFile: true })) as never);
+
+    // Two of six still listed: four would go, which is more than half.
+    expect(await pruneVault("/docs/FaceTexture", ["a", "b"])).toBe(4);
+    expect(remove).not.toHaveBeenCalled();
+
+    // One missing out of six is an ordinary deletion, and is swept.
+    readDir.mockResolvedValueOnce(held.map((id) => ({ name: `${id}.bmp`, isFile: true })) as never);
+    expect(await pruneVault("/docs/FaceTexture", held.slice(1))).toBe(0);
+    expect(remove).toHaveBeenCalledTimes(1);
+
     readDir.mockReset();
     readDir.mockResolvedValue([]);
   });

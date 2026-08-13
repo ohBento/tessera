@@ -246,6 +246,19 @@ export const clearTiles = () => (app.selectedTiles = []);
 export function clearAll() {
   app.selectedTiles = [];
   app.selected = "";
+  /* The tile the layer was picked on goes with it. It is that layer's address
+     and nothing else reads it once there is no layer — but bulkTargets counts
+     it as a target whatever the wall selection says, so a tile left behind
+     here was still being written to after the wall it sits on had been left. */
+  /* The tile the layer was picked on goes with it. It is that layer's address
+     and nothing else reads it once there is no layer — but bulkTargets counts
+     it as a target whatever the wall selection says, so a tile left behind
+     here was still being written to after the wall it sits on had been left. */
+  /* The tile the layer was picked on goes with it. It is that layer's address
+     and nothing else reads it once there is no layer — but bulkTargets counts
+     it as a target whatever the wall selection says, so a tile left behind
+     here was still being written to after the wall it sits on had been left. */
+  app.selectedTile = "";
   // With the primary gone the extras have nothing to travel with, and a drag
   // that picked up layers nobody can see picked is the worst of both.
   app.alsoSelected = [];
@@ -1020,19 +1033,18 @@ export async function openFolder(dir?: string) {
      * the load finishing: the wall opened and snapped back to Unsorted. What is
      * true the instant a folder is asked for belongs where it is known, not at
      * the end of the queue. */
-    app.selected = "";
+    clearAll();
     app.openProjectId = "";
-    // Undo must not reach back into the folder that was open before.
-    history.past.length = 0;
-    history.future.length = 0;
-    /* Everything the view has to forget, before the slow part rather than after
-     * it. Opening a folder starts on the overview — with several accounts
-     * sharing one there is no single "the" wall to open, and a new character
-     * has to be visible somewhere the moment it appears. But hashing sixty
-     * portraits takes seconds, and a click landing in that window was undone by
-     * the load finishing: the wall opened and snapped back to Unsorted. What is
-     * true the instant a folder is asked for belongs where it is known, not at
-     * the end of the queue. */
+    /* Bumped with the wall it changes. Which tiles are on screen comes from
+       the open project, so clearing it silently swaps the wall's coordinate
+       system — and nothing redrew, because only a version bump asks for that.
+       For the seconds below, the canvas went on showing the project's cells
+       while every index was read off the inbox's list: a drag in that window
+       wrote a position whole cell-widths out, and a tile the inbox does not
+       list resolved to index -1, which is a cell above and left of the wall.
+       openProjectView has bumped it for the same reason since the day it was
+       written; this was the one place that changed the wall without saying so. */
+    app.version++;
     /* Re-opening is the one moment the files behind the ids may all have been
      * replaced from outside — a restore, a folder copied in by hand, the game
      * regenerating a portrait. loadOriginal caches on the opposite promise, so
@@ -1042,7 +1054,7 @@ export async function openFolder(dir?: string) {
     // Before anything reads an original: a vault copy for an id the folder no
     // longer has is either dead weight or, if BDO reuses the number, the wrong
     // picture served as that tile's pristine state.
-    await pruneVault(app.dir, ids);
+    const heldBack = await pruneVault(app.dir, ids);
     app.vaulted = await vaultedIds(app.dir);
     /* A character deleted in the game takes its tile out of the document with
      * it — layers, wording and per-tile pictures included — and the undo
@@ -1052,6 +1064,23 @@ export async function openFolder(dir?: string) {
      * disappearing without a word. */
     const { manifest, lost, snapshot, broken, migrated } = await loadManifest(app.dir, ids);
     app.manifest = manifest;
+    /* Emptied with the document it belongs to, not before it. Cleared up
+       front, an edit made during those seconds pushed a checkpoint holding the
+       *previous* folder's document — and one Ctrl+Z after the load then put
+       that whole document back over the freshly read one, undoing the prune,
+       the migration and every character the game had deleted, and saving it. */
+    /* Emptied with the document it belongs to, not before it. Cleared up front,
+       an edit made during the seconds this load takes pushed a checkpoint
+       holding the *previous* folder's document — and one Ctrl+Z afterwards put
+       the whole of it back over the freshly read one and saved it: the prune
+       undone, the migration undone, tiles restored for characters the game has
+       deleted. A step pushed after this line describes the document that is
+       actually open, which is the one thing undo is allowed to reach.
+       ponytail: not pinned by a test — the browser suite's filesystem answers
+       within one macrotask, so the window this closes cannot be opened there. */
+    history.past.length = 0;
+    history.future.length = 0;
+    history.runKey = undefined;
     /* Layers naming a layout the library no longer has: manifests from before
      * the delete cascaded, or a snapshot that brought stamps back after their
      * layout was deleted. Swept on open, same philosophy as pruneVault — the
@@ -1081,7 +1110,15 @@ export async function openFolder(dir?: string) {
      * "original", and the question the game's own overwrite is meant to raise
      * can never be asked again. */
     const inFolder = new Set(ids);
-    for (const id of Object.keys(prints)) if (!inFolder.has(id)) delete prints[id];
+    const strays = Object.keys(prints).filter((id) => !inFolder.has(id));
+    /* Held to the same rule as the vault four lines up, and for the same
+       reason: this file is the app's memory of what the game did, everything
+       downstream of it is destructive, and a listing that came back short
+       would otherwise erase most of it in one open. The two used to disagree —
+       one refused an empty listing and the other pruned against it regardless,
+       in the same function. */
+    if (strays.length <= Object.keys(prints).length / 2)
+      for (const id of strays) delete prints[id];
     await saveFingerprints(app.dir, prints);
     app.newTiles = fresh;
     app.changedTiles = changed;
@@ -1090,34 +1127,53 @@ export async function openFolder(dir?: string) {
 
     app.deps = tauriDeps(app.dir);
     app.version++;
-    // Last, so nothing after it clears the line.
+    /* Last, so nothing after it clears the line — and all of them, not the
+       first that happens to be true. They come from different files and any
+       two can be true at once: a bad shutdown damages the manifest and the
+       fingerprints together, and the chain of `else if` this used to be then
+       reported the change-detection reset and said nothing at all about the
+       document having been set aside and started empty. */
+    const said: string[] = [];
     if (lost.length)
-      app.error =
+      said.push(
         `${lost.length} tile(s) are no longer in the folder — their layers went with them. ` +
-        `Put the portraits back and reopen, then restore "${snapshot}".`;
+          `Put the portraits back and reopen, then restore "${snapshot}".`,
+      );
+    /* The folder came back missing most of what the vault holds, which is far
+       more likely to be a folder that has not finished appearing than forty
+       characters deleted at once. Nothing was thrown away; said out loud
+       because a vault that stops matching the wall is otherwise noticed only
+       when someone reaches for "Reset in game" and it is not there. */
+    if (heldBack)
+      said.push(
+        `${heldBack} original(s) in the vault have no portrait in the folder. ` +
+          `They were kept — check the folder is complete before writing to the game.`,
+      );
     /* Worth saying even though nothing is broken on screen: the answer to "did
      * the game put a different character behind this slot" has just been reset
      * to "everything is new", and the next write to the game vaults nothing for
      * a slot that changed hands. The user is the only one who can notice. */
-    else if (lostPrints)
-      app.error =
+    if (lostPrints)
+      said.push(
         `Change detection was reset — ${lostPrints} could not be read and was set aside. ` +
-        `Check any portrait the game may have replaced before writing to the game.`;
-    /* Never both: a manifest that could not be read leaves an empty document,
-     * and an empty document has no work for the folder to drop. */
-    else if (broken)
-      app.error =
+          `Check any portrait the game may have replaced before writing to the game.`,
+      );
+    if (broken)
+      said.push(
         `manifest.json could not be read and was set aside as "${broken}". ` +
-        `This folder starts empty — the old file is still in FaceTexture.tessera.`;
+          `This folder starts empty — the old file is still in FaceTexture.tessera.`,
+      );
     /* Said once, on the open that does it. A stamped design has just become
      * ordinary layers on every tile that wore it: the same picture, now
      * editable where it is shown, and layouts are gone. That is a change worth
      * hearing about before the first edit writes the new shape — together with
      * where the old file is, which is the only way back. */
-    else if (migrated)
-      app.error =
+    if (migrated)
+      said.push(
         `Layouts are gone: every stamp is now editable layers on the tile itself. ` +
-        `The version ${migrated.from} document was copied to "${migrated.backup}" first.`;
+          `The version ${migrated.from} document was copied to "${migrated.backup}" first.`,
+      );
+    if (said.length) app.error = said.join(" · ");
   });
 }
 

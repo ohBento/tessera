@@ -677,17 +677,23 @@ export async function vaultedIds(dir: string): Promise<string[]> {
  *  as that tile's "original" forever. Same for the reset route: delete the folder,
  *  let the game regenerate, and the regenerated files are the new originals.
  *  Running this on open keeps the vault honest for one readDir per session. */
-export async function pruneVault(dir: string, ids: string[]) {
-  /* An empty folder listing is not evidence that every character is gone. It
-     is what a fresh install looks like before anyone has logged in, what a
-     listing the OS refused looks like, and what a sync client that has not
-     brought the files down yet looks like — and acting on it deletes the only
-     copy of every portrait the game ever shipped, on open, with nothing asked
-     and nothing said. The vault stays; a stale copy is a wrong original for
-     one tile, and this was the whole vault. */
-  if (!ids.length) return;
+export async function pruneVault(dir: string, ids: string[]): Promise<number> {
   const keep = new Set(ids);
-  for (const id of await vaultedIds(dir)) {
-    if (!keep.has(id)) await remove(await vaultPath(dir, id));
-  }
+  const held = await vaultedIds(dir);
+  const gone = held.filter((id) => !keep.has(id));
+  /* A folder listing that lost most of the vault at once is not evidence that
+     most of the characters are gone. It is what a fresh install looks like
+     before anyone has logged in, what a half-synced Documents folder looks
+     like, and what an antivirus holding the directory looks like — and acting
+     on it deletes the only copy of what the game shipped, on open, unattended,
+     with no undo anywhere near it. A stale copy is one tile showing a wrong
+     original; this was forty of them, permanently.
+
+     ponytail: half is a threshold, not a proof. It costs one comparison and
+     catches both the empty listing and the "three files did not sync" case; if
+     it ever refuses a real cleanup, the answer is to ask rather than to widen
+     it — the count comes back so the caller can say so. */
+  if (gone.length > held.length / 2) return gone.length;
+  for (const id of gone) await remove(await vaultPath(dir, id));
+  return 0;
 }

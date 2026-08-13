@@ -23,6 +23,7 @@ import {
   addTileShape,
   addTileText,
   bulkTargets,
+  clearAll,
   selectLayer,
   alsoSelect,
   pickedLayers,
@@ -436,6 +437,34 @@ describe("the wall", () => {
     await setTileLayerField(bulkTargets("plate-01"), "plate-01", "fill", "#ff0000");
     const fill = (tile: string) => (findLayer(tileLayers(tile), "plate-01") as ShapeLayer).fill;
     for (const tile of [a, b, c]) expect(fill(tile)).toBe("#ff0000");
+  });
+
+  it("stops reaching the picked tile once the pick is dropped", async () => {
+    /* The other half of the rule above, and it was missing: the tile a layer
+     * was picked on always counts, so something has to stop counting it. Left
+     * standing, it kept an edit reaching a tile the user had left behind —
+     * possibly on another wall — because clearing the pick cleared the layer
+     * and not its address. */
+    await enterInbox();
+    const [a, b, c] = app.folderIds;
+    for (const tile of [a, b, c]) {
+      const l = newShapeLayer("rect");
+      l.id = "badge-77";
+      app.manifest.tiles[tile].layers.push(l);
+    }
+    app.version++;
+    await tick();
+
+    selectLayer("badge-77", a);
+    expect(bulkTargets("badge-77")).toEqual([a]);
+
+    clearAll();
+    /* What a row drop does: it names the layer without naming a tile
+     * (`dropInto` writes app.selected outright). So the address left over from
+     * the last pick is the one that answers — and it must be gone by now. */
+    app.selectedTiles = [b, c];
+    app.selected = "badge-77";
+    expect(bulkTargets("badge-77").sort()).toEqual([b, c].sort());
   });
 
   it("starts a new undo step when the picked tiles change mid-slider", async () => {
