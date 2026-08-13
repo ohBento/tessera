@@ -2002,10 +2002,25 @@ export type LayerField = keyof TextLayer | keyof ShapeLayer | keyof ImageLayer;
  *  measured from whichever tile happened to be first would drift all the
  *  others. */
 function writeField(layer: Layer, key: LayerField, value: unknown) {
+  /* A number field takes "1e999", which is a valid number and is Infinity.
+     Every clamp in the panel is `Math.min(Math.max(v, min), max ?? Infinity)`,
+     so for the boxes with no ceiling — a shape's width, a font size, an
+     outline, a border, a shadow — it came through whole. The layer then draws
+     as nothing, and JSON.stringify writes `null` on the way to disk, so after
+     a save it is a layer of no size at all with its row still in the list and
+     no way back. Refused where every field passes rather than in each box. */
+  if (typeof value === "number" && !Number.isFinite(value)) return;
   const anchored =
     layer.kind === "text" && WIDTH_FIELDS.has(key) && (layer.align ?? "center") !== "center";
   const was = anchored ? textWidth(layer) : 0;
   (layer as unknown as Record<string, unknown>)[key] = value;
+  /* A class icon is fitted to both its width and its height, and the panel
+     offers only the width for one — so past about a quarter more than it
+     started at, the height became the smaller of the two and the slider did
+     nothing for the rest of its travel. The corner handles keep the two in
+     step; this keeps the panel in step with them. */
+  if (key === "w" && layer.kind === "shape" && layer.shape === "icon" && typeof value === "number")
+    layer.h = value;
   if (!anchored) return;
   const grew = textWidth(layer as TextLayer) - was;
   layer.x += ((layer as TextLayer).align === "right" ? -grew : grew) / 2;

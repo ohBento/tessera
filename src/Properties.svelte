@@ -62,6 +62,9 @@
    * step. A layer spanning the whole wall has no tiles behind it and takes the
    * plain setter — bulkTargets answers with the empty list there, which is what
    * chooses between the two. */
+  /** How many tiles a change here lands on. */
+  const reach = $derived(bulkTargets(layer.id).length);
+
   const set = (key: LayerField, value: unknown) => {
     const tiles = bulkTargets(layer.id);
     void (tiles.length
@@ -108,12 +111,24 @@
 <!-- Named for the layer rather than for the panel. "Properties" over a list of
      fields says only what is already obvious from the fields; the one thing
      that is not obvious is which of forty-four tiles' layers is being edited. -->
-<h2 class="spaced">{layerLabel(layer)}</h2>
+<!-- How far this panel reaches, where it can be read before something is
+     changed rather than counted afterwards. Every control here writes to every
+     selected tile carrying this layer, and the tile row's own Text field
+     writes to one — nothing said which was which, so one keystroke here could
+     replace forty-four names typed by hand. -->
+<h2 class="spaced">
+  {layerLabel(layer)}{#if reach > 1}<span class="reach"> · {reach} tiles</span>{/if}
+</h2>
 
 {#if layer.kind === "text"}
   <!-- The placeholder is a real feature with nothing in the UI to announce it,
        so the field says so itself. -->
-  <label class="field" title="{'{{id}}'} becomes this portrait's id on the wall">
+  <label
+    class="field"
+    title={reach > 1
+      ? `Types onto all ${reach} selected tiles. The Text field in a tile's own row types onto that one tile.`
+      : `{{id}} becomes this portrait's id on the wall`}
+  >
     <span>Text</span>
     <textarea rows="2" value={layer.text} oninput={(e) => set("text", e.currentTarget.value)}
     ></textarea>
@@ -908,6 +923,11 @@
 {/snippet}
 
 <style>
+  .reach {
+    color: #cbb8ff;
+    text-transform: none;
+    letter-spacing: 0;
+  }
   h2 {
     margin: 18px 0 6px;
     font-size: 11px;

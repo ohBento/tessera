@@ -166,6 +166,31 @@ describe("picture frames", () => {
     expect(pixel(bordered, TILE_W / 2, TILE_H / 2)).toEqual(pixel(plain, TILE_W / 2, TILE_H / 2));
   });
 
+  it("grades a framed picture once, not twice", async () => {
+    /* Framing bakes the picture into a canvas of its own and hands that to
+     * Fabric — and `setElement` re-runs the filter chain whenever the object
+     * still has one. The grading was already in the pixels being handed over,
+     * so it landed a second time: +20% brightness rendered as +40%, a 30° hue
+     * turn as 60°, and the border drawn just before was graded along with the
+     * picture, so a green frame on a hue-turned photograph came out some other
+     * colour. Both canvases agreed about it, which is why it never looked like
+     * a bug — it was simply twice what was asked for, on screen and in the
+     * file written to the game.
+     *
+     * Measured in the middle of the picture, where the frame is not. */
+    const middle = (bytes: Uint8Array) => pixel(bytes, TILE_W / 2, TILE_H / 2);
+    const plainly = middle(await framed({ brightness: 0.2 }));
+    const bordered = middle(await framed({ brightness: 0.2, borderWidth: 0.02 }));
+
+    // Same picture, same dial: the frame is not a second helping of it.
+    for (let i = 0; i < 3; i++) expect(bordered[i]).toBeCloseTo(plainly[i], -0.5);
+    /* And the dial did something, or the two would agree for the wrong reason.
+     * Read on green: the block is magenta, so red and blue are already at the
+     * ceiling and brightness has nowhere to move them. */
+    const ungraded = middle(await framed({}));
+    expect(plainly[1]).toBeGreaterThan(ungraded[1] + 20);
+  });
+
   it("exports what is behind a transparent picture, not black", async () => {
     /* The BMP the game reads has no alpha — encodeBmp32 forces every pixel
      * opaque — so whatever a transparent pixel says its colour is, is what
@@ -682,6 +707,51 @@ describe("a caption's own width", () => {
     expect(edges.every((x) => x >= 0)).toBe(true);
     // Same column every time, whatever the words do inside the box.
     expect(Math.max(...edges) - Math.min(...edges)).toBeLessThanOrEqual(1);
+  });
+
+  it("runs a gradient across the caption, not across the tile", async () => {
+    /* Fabric anchors a pixel gradient at the object's own top-left and spans
+     * its width. The ramp was built 624 wide — the tile — so a caption a
+     * hundred pixels across showed only its first sixth: a red-to-blue fade
+     * read as flat red, and Angle, Balance and Reach barely moved anything.
+     *
+     * Measured as the difference between the two ends of the word, which is
+     * the whole claim: a gradient that arrives has two different colours in
+     * it. */
+    const m = manifest(2);
+    const id = order(m)[0];
+    /* On a flat black tile: the mock portrait underneath is a painted test
+       picture and would otherwise answer for the letters. */
+    m.tiles[id].base = { asset: "block:#000000", crop: { x: 0, y: 0, w: 200, h: 200 } };
+    m.tiles[id].layers.push({
+      ...caption({ w: 0.5, align: "center" }),
+      text: "IIIIIIII",
+      color: { from: "#ff0000", to: "#0000ff", angle: 0 },
+    });
+    const [bmp] = [...(await renderTiles(view(m), m, testDeps)).values()];
+
+    /* The leftmost and rightmost columns carrying ink, and what colour they
+     * carry. Anything that is not the tile's own portrait counts as ink here,
+     * which the strong primaries make safe. */
+    const ink: { x: number; px: number[] }[] = [];
+    for (let x = 0; x < TILE_W; x++) {
+      for (let y = 0; y < TILE_H; y += 2) {
+        const px = pixel(bmp, x, y);
+        // The letters are the only strongly red or strongly blue thing here.
+        if (px[0] > 120 && px[1] < 90) ink.push({ x, px });
+        else if (px[2] > 120 && px[1] < 90) ink.push({ x, px });
+      }
+    }
+    expect(ink.length).toBeGreaterThan(0);
+    const first = ink.reduce((a, b) => (a.x <= b.x ? a : b));
+    const last = ink.reduce((a, b) => (a.x >= b.x ? a : b));
+    /* Red at one end and blue at the other, not red fading to purple: a ramp
+     * built for the tile only ever showed the caption its first stretch. */
+    /* How far the ramp travels between the first and last inked column. Built
+       for the caption it swings 176 of a possible 255; built for the tile, the
+       letters only ever saw a slice of it and the same measurement gives 70. */
+    const swing = first.px[0] - first.px[2] - (last.px[0] - last.px[2]);
+    expect(swing).toBeGreaterThan(130);
   });
 
   it("wraps at the width it was given, not at the tile's edge", async () => {

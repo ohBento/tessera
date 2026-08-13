@@ -326,6 +326,15 @@ function frameImage(
     ctx.stroke();
   }
 
+  /* Emptied before the swap. `setElement` re-runs the filter chain whenever
+     the object still has one — and by this point the grading is already in the
+     pixels being handed over, so it landed a second time: Brightness +20%
+     rendered as +40%, a 30° hue turn as 60°, and the frame drawn just above
+     was graded along with the picture, so a green border on a hue-turned
+     photograph was not green. Both canvases agreed, which is why it never
+     looked like a bug — it was simply twice what was asked for, in the editor
+     and in the file written to the game. */
+  img.filters = [];
   img.setElement(out);
   img.cropX = 0;
   img.cropY = 0;
@@ -566,15 +575,24 @@ function textObject(l: TextLayer, box: { w: number; h: number; x: number; y: num
     else if (align === "right") anchored.left -= (here - own) / 2;
   }
 
+  /* A set width wins over measuring: that is the whole point of it. What the
+     words do inside is wrap, which is what a Textbox is for. */
+  const width = l.w ? l.w * box.w : boxWidth(words, style, size, box.w);
+  /* Measured on the caption, not on the tile. Fabric anchors a pixel gradient
+     at the object's own top-left and spans its width, so a ramp built 624 wide
+     put its first sixth on a caption a hundred pixels across: a red-to-blue
+     fade read as flat red, the Angle slider behaved as a two-position switch,
+     and Balance and Reach barely moved anything. The height is the line box
+     for the same reason. */
+  const tall = size * LINE_HEIGHT * (words.split("\n").length || 1);
+
   const obj = new fabric.Textbox(words, {
     ...anchored,
-    /* A set width wins over measuring: that is the whole point of it. What the
-       words do inside is wrap, which is what a Textbox is for. */
-    width: l.w ? l.w * box.w : boxWidth(words, style, size, box.w),
+    width,
     ...style,
     textAlign: l.align ?? "center",
     lineHeight: LINE_HEIGHT,
-    fill: paintOf(l.color, box.w, size),
+    fill: paintOf(l.color, width, tall),
     stroke: l.strokeWidth ? l.strokeColor : undefined,
     strokeWidth: l.strokeWidth * box.w,
     // Stroke centred on the glyph outline eats into the letter shapes; painted

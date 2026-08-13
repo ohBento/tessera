@@ -409,6 +409,62 @@ describe("the wall", () => {
     expect(fill(b)).toBe("#111111");
   });
 
+  it("says on the panel how many tiles it writes to", async () => {
+    /* The panel's Text field writes to every selected tile carrying the layer;
+     * the Text field in a tile's own row writes to that one tile. Nothing said
+     * which was which, and with forty-four picked one keystroke in the wrong
+     * field replaces forty-four names typed by hand. The count is on the
+     * heading, where it can be read before something is changed. */
+    await enterInbox();
+    const [a, b, c] = app.folderIds;
+    app.selectedTiles = [a, b, c];
+    await addTileText();
+    const caption = tileLayers(a).at(-1)!;
+    selectLayer(caption.id, a);
+    reveal("props");
+    await tick();
+    await until(() =>
+      [...document.querySelectorAll("h2")].some((h) => h.textContent!.includes("3 tiles")),
+    );
+
+    // One tile picked, no count: there is nothing to warn about.
+    app.selectedTiles = [a];
+    await tick();
+    await until(() =>
+      [...document.querySelectorAll("h2")].every((h) => !h.textContent!.includes("tiles")),
+    );
+  });
+
+  it("refuses a size no renderer can draw, and keeps an icon square-ish", async () => {
+    /* Two ways the panel could write a number the wall cannot use.
+     *
+     * "1e999" is a valid entry for a number field and is Infinity; the clamps
+     * in the panel all read `max ?? Infinity`, so for every box without a
+     * ceiling it came through. The layer draws as nothing, and the save turns
+     * it into `null`, which is a layer of no size with its row still in the
+     * list and no way back to a size.
+     *
+     * And a class icon is fitted to both its width and its height while the
+     * panel offers only the width, so the slider stopped doing anything about
+     * a quarter above wherever the icon started. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const rect = tileLayers(tile).at(-1)!;
+    const was = (rect as ShapeLayer).w;
+    await setTileLayerField([tile], rect.id, "w", Number("1e999"));
+    expect((findLayer(tileLayers(tile), rect.id) as ShapeLayer).w).toBe(was);
+
+    await addTileShape("icon", "Ranger");
+    const icon = tileLayers(tile).at(-1)!;
+    await setTileLayerField([tile], icon.id, "w", 0.9);
+    const now = findLayer(tileLayers(tile), icon.id) as ShapeLayer;
+    // The height follows, or the fit takes the smaller of the two and the
+    // slider's upper half does nothing.
+    expect(now.h).toBeCloseTo(0.9, 6);
+  });
+
   it("reaches the tile the panel is showing, whichever tiles are picked", async () => {
     /* Reported from the code rather than by hand, and worth pinning because
      * what it looks like is a dead control: pick two tiles on the wall, click a
