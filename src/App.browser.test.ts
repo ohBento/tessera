@@ -1738,4 +1738,67 @@ describe("two guards the wall was given and nothing checked", () => {
     const landed = findLayer(app.manifest.tiles[tile]!.layers, layer.id)!;
     expect(landed.x).toBeCloseTo(0.5, 3);
   });
+
+  it("keeps drawing the layer it is dragging when the tile is rebuilt under it", async () => {
+    /* Reported as: with one tile picked, dragging a layer moves only the frame
+     * — the layer stays where it was and catches up the moment anything in the
+     * panel is changed. With every tile picked it follows live.
+     *
+     * A rebuild takes the tile's objects off the canvas and puts new ones back.
+     * Fabric holds the one being dragged, so it goes on transforming an object
+     * that is no longer on the canvas: its controls are drawn from the active
+     * object and keep moving, while the lower canvas shows the fresh object
+     * standing at the old position. The drop still writes — object:modified
+     * carries the detached object and its transform is real — so the model is
+     * right and only the picture is wrong, until the next structural change
+     * rebuilds and finally draws it.
+     *
+     * Two things had to be true at once for the earlier attempt at this test to
+     * miss it. The bump has to change something on *this* tile, or
+     * tilesChanged returns an empty list and no object is replaced at all; and
+     * it has to land inside the gesture, which is what every other drag test
+     * here carefully waits out. */
+    const tile0 = () => app.folderIds[0];
+    const { canvas, tile, layer } = await wallWith(async () => {
+      await addTileText();
+      await addTileShape("rect");
+    });
+    const caption = tileLayers(tile0()).find((l) => l.kind === "text")!;
+
+    canvas.setDimensions({ width: 900, height: 700 });
+    canvas.setViewportTransform([0.5, 0, 0, 0.5, 0, 0]);
+    canvas.renderAll();
+    await tick();
+
+    const current = () => canvas.getObjects().find((o) => (o as Tagged).layerId === layer.id);
+    let held = current();
+    let steady = 0;
+    await until(() => {
+      const now = current();
+      steady = now && now === held ? steady + 1 : 0;
+      held = now;
+      return steady >= 8;
+    });
+    const obj = held!;
+
+    let bumped = false;
+    await dragObject(canvas, obj, 90, 0, () => {
+      if (bumped) return;
+      bumped = true;
+      // What changing a field in the panel does, on this tile, right now.
+      void setTileLayerField([tile], caption.id, "opacity", 0.5);
+    });
+    await until(() => !canvas.getObjects().includes(obj), 3000).catch(() => {});
+
+    /* The object the wall is drawing has to be the one the hand moved. Asked of
+     * the canvas rather than the model, because the model was never the part
+     * that was wrong. */
+    const drawn = current();
+    expect(drawn).toBeTruthy();
+    const cell = cellAt(visibleIds().indexOf(tile));
+    expect((drawn!.left ?? 0) - cell.x).toBeCloseTo(
+      findLayer(app.manifest.tiles[tile]!.layers, layer.id)!.x * TILE_W,
+      0,
+    );
+  });
 });
