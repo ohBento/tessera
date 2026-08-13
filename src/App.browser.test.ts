@@ -435,6 +435,43 @@ describe("the wall", () => {
     );
   });
 
+  it("puts the old number back when a box is typed full of nonsense", async () => {
+    /* Driven through the box itself, because the fault was in the box.
+     * "1e999" is a valid entry for a number field and is Infinity: the model
+     * refused it, but the panel had already written String(Math.round(Infinity))
+     * — "Infinity" — back into an input that cannot hold it, so the box went
+     * blank. The next entry then read that blank as 0 and stored the minimum,
+     * which is how typing a size too big left a caption at 30px. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileText();
+    const caption = tileLayers(tile).at(-1)!;
+    await setTileLayerField([tile], caption.id, "w", 0.5);
+    selectLayer(caption.id, tile);
+    reveal("props");
+    await tick();
+
+    const box = () => {
+      const row = [...document.querySelectorAll("label.field")].find(
+        (l) => l.querySelector("span")?.textContent?.trim() === "Width",
+      );
+      return row?.querySelector("input.num") as HTMLInputElement | undefined;
+    };
+    await until(() => !!box());
+    const before = box()!.value;
+    expect(Number(before)).toBeGreaterThan(100);
+
+    box()!.value = "1e999";
+    box()!.dispatchEvent(new Event("change", { bubbles: true }));
+    await tick();
+    await new Promise((r) => setTimeout(r, 100));
+
+    // The layer is the size it was, and the box says so.
+    expect((findLayer(tileLayers(tile), caption.id) as TextLayer).w).toBeCloseTo(0.5, 6);
+    expect(box()!.value).toBe(before);
+  });
+
   it("refuses a size no renderer can draw, and keeps an icon square-ish", async () => {
     /* Two ways the panel could write a number the wall cannot use.
      *

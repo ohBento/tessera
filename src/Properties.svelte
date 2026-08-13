@@ -726,6 +726,17 @@
     step="1"
     value={Math.round(shown)}
     onchange={(e) => {
+      /* "1e999" is a number a number field accepts, and it is Infinity. The
+         clamp below has no ceiling for most of these boxes, so it came through
+         whole; `String(Math.round(Infinity))` is "Infinity", which is not a
+         number this input can hold, so the box went blank — and the *next*
+         entry read that blank as 0 and stored the minimum. Typing a size too
+         big left the layer at the smallest one allowed. Put the old value back
+         and write nothing. */
+      if (!e.currentTarget.value.trim() || !Number.isFinite(num(e))) {
+        e.currentTarget.value = String(Math.round(shown));
+        return;
+      }
       const held = Math.min(Math.max(num(e), min), max ?? Infinity);
       /* Written straight back into the box, not left to the rebuild. Typing
          past a ceiling that the layer already sits at stores the same value it
