@@ -375,6 +375,17 @@
    * per event, each drawing a state already several changes stale. */
   let queued = false;
 
+  /** A build that was owed while the hand was still on an object. Cleared by
+   *  mouse:up, which asks for it again. */
+  let deferred = false;
+
+  /** Fabric's own marker for "a drag, scale or rotate is happening right now".
+   *  Read rather than tracked here: the canvas is the one that knows, and a
+   *  flag of ours would have to be kept in step with every way a gesture can
+   *  end, including the ones that never reach mouse:up. */
+  const midGesture = () =>
+    !!(canvas as unknown as { _currentTransform?: unknown } | undefined)?._currentTransform;
+
   /* --- Redrawing one tile instead of the wall.
    *
    * A full build costs about three milliseconds a tile and runs on every edit,
@@ -401,6 +412,25 @@
         queued = false;
         const version = app.version;
         if (!canvas || !deps) return;
+        /* Not under a live gesture. A rebuild takes every object off the canvas
+         * and puts new ones back, and Fabric is holding a reference to the one
+         * being dragged: it goes on moving an object that is no longer on the
+         * canvas, and the drop is written to nothing. The layer stays where it
+         * was, no undo step appears, and the wall keeps whatever it painted
+         * last — which is how "I moved it and it only took effect once I
+         * clicked something else" comes about, because the click was a rebuild
+         * that finally drew the truth.
+         *
+         * A plain drag is what makes this reachable: it does not bump the
+         * version, so nothing here notices the model moved under the build,
+         * and there is no second pass to correct it.
+         *
+         * `built` is deliberately left alone, so the effect still counts this
+         * version as owed; mouse:up asks again once the hand has let go. */
+        if (midGesture()) {
+          deferred = true;
+          return;
+        }
         // Fit *before* building, not after: the tile count comes from the
         // manifest, so the viewport can be right from the first frame instead of
         // showing the wall at 100% and then visibly snapping down to fit.
@@ -673,6 +703,12 @@
       canvas!.requestRenderAll();
     });
     canvas.on("mouse:up", (opt) => {
+      /* The build the gesture was holding off. object:modified has already run
+         by now and written the drop, so this pass sees the finished model. */
+      if (deferred) {
+        deferred = false;
+        if (app.deps) void rebuild(app.deps);
+      }
       panning = false;
       canvas!.selection = false;
       const from = dragFrom;
