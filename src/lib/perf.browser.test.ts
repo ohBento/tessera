@@ -293,10 +293,15 @@ describe("redrawing one tile", () => {
     try {
       await buildGrid(canvas, wall, m, testDeps, true);
 
-      // The paint alone, with nothing rebuilt: the floor under both numbers.
-      const paintStart = performance.now();
+      /* Not a frame. This canvas is the size of the whole wall — 4368x34572 at
+         301 tiles — and it is not in the document, so nothing composites it.
+         What it gives is the floor under the build numbers below: the same
+         constant in each, which is what makes subtracting it meaningful. The
+         frame a user waits on is measured in "what the wall costs in a
+         window", on a canvas the size of a window and attached to the page. */
+      const floorStart = performance.now();
       canvas.renderAll();
-      const paint = performance.now() - paintStart;
+      const floor = performance.now() - floorStart;
 
       const fullStart = performance.now();
       await buildGrid(canvas, wall, m, testDeps, true);
@@ -309,8 +314,8 @@ describe("redrawing one tile", () => {
 
       console.log(
         `${count} tiles: full ${full.toFixed(0)}ms, one tile ${one.toFixed(0)}ms, ` +
-          `paint alone ${paint.toFixed(0)}ms → building one tile costs ` +
-          `${(one - paint).toFixed(0)}ms against ${(full - paint).toFixed(0)}ms for the wall`,
+          `floor ${floor.toFixed(0)}ms → building one tile costs ` +
+          `${(one - floor).toFixed(0)}ms against ${(full - floor).toFixed(0)}ms for the wall`,
       );
       /* Asserted against the full build from this same run, which is what
          makes it survive a loaded machine: both numbers move together, so the
@@ -336,9 +341,11 @@ describe("what a wall costs once stamps are dissolved", () => {
     try {
       await buildGrid(canvas, wall, m, testDeps, true);
 
-      const paintStart = performance.now();
+      // The same floor as above: a whole-wall canvas nobody composites, held
+      // constant across both shapes so the build numbers can be compared.
+      const floorStart = performance.now();
       canvas.renderAll();
-      const paint = performance.now() - paintStart;
+      const floor = performance.now() - floorStart;
 
       const fullStart = performance.now();
       await buildGrid(canvas, wall, m, testDeps, true);
@@ -363,7 +370,7 @@ describe("what a wall costs once stamps are dissolved", () => {
       canvas.renderAll();
       const bulk = performance.now() - bulkStart;
 
-      return { paint, full, one, bulk, objects: canvas.getObjects().length };
+      return { floor, full, one, bulk, objects: canvas.getObjects().length };
     } finally {
       await canvas.dispose();
     }
@@ -371,6 +378,8 @@ describe("what a wall costs once stamps are dissolved", () => {
 
   it("prices a dissolved wall against a stamped one at 301 tiles", async () => {
     const count = 301;
+    const small7 = await measure(dressed(44), 44);
+    const small8 = await measure(dressedV8(44), 44);
     const v7 = await measure(dressed(count), count);
     /* Masked. Before the cut bake was shared across tiles this took the browser
      * down here — cutToShape builds two tile-sized canvases per masked layer
@@ -380,19 +389,22 @@ describe("what a wall costs once stamps are dissolved", () => {
 
     const line = (tag: string, r: Awaited<ReturnType<typeof measure>>) =>
       `${tag}: ${r.objects} objects, full ${r.full.toFixed(0)}ms, one tile ${r.one.toFixed(0)}ms, ` +
-      `bulk of 8 ${r.bulk.toFixed(0)}ms, paint alone ${r.paint.toFixed(0)}ms`;
+      `bulk of 8 ${r.bulk.toFixed(0)}ms, floor ${r.floor.toFixed(0)}ms`;
+    console.log(`44 tiles
+  ${line("stamped (v7)", small7)}
+  ${line("dissolved (v8)", small8)}`);
     console.log(`${count} tiles\n  ${line("stamped (v7)", v7)}\n  ${line("dissolved (v8)", v8)}`);
     console.log(
       `  dissolved costs ${(v8.full / v7.full).toFixed(1)}x the build, ` +
-        `${(v8.paint / v7.paint).toFixed(1)}x the paint, ` +
         `${(v8.objects / v7.objects).toFixed(1)}x the objects`,
     );
 
-    /* What today's wall must keep doing. The v8 shape is measured, printed and
-     * deliberately *not* asserted: it describes a document nothing can save
-     * yet, so a ceiling on it would be a test failing for a future rather than
-     * for a regression. The decision it feeds is a human one — see the numbers
-     * above and the gate in the v8 plan. */
+    /* The gate sits on v8 at 44 tiles: that is the shape the app saves and the
+     * size it is used at, so it is the one a regression would actually reach.
+     * v8 at 301 is over the ceiling — 5.5 seconds to rebuild a wall of that
+     * size — and that is stated rather than gated, because it is a known limit
+     * of the dissolved shape rather than a regression waiting to happen. */
+    expect(small8.full).toBeLessThan(FREEZE);
     expect(v7.full).toBeLessThan(FREEZE);
 
     /* Both directions of the small-set redraw, which is the part of this that
