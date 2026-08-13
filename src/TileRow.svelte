@@ -210,6 +210,14 @@
         {/if}
         <button title="Delete" onclick={() => deleteLayer(layer.id, id)}>×</button>
       </li>
+      <!-- A group's members, indented under it. The same snippet again, so a
+           child row has everything a loose one has — its own eye, its own lock,
+           its own name to rename. `drop` is the parent's: reordering inside a
+           group writes the tile's stack, and relocateLayer is what works out
+           which list the row actually landed in. -->
+      {#if layer.kind === "group" && layer.children.length}
+        {@render stampRows(stampsOf(layer.children), drop)}
+      {/if}
     {/each}
   </ul>
 {/snippet}

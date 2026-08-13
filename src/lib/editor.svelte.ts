@@ -839,6 +839,53 @@ export function alsoSelect(id: string, tileId: string) {
 /** Every layer the pick covers on its tile, primary first. */
 export const pickedLayers = () => [app.selected, ...app.alsoSelected].filter(Boolean);
 
+/** Wraps the picked layers of one tile in a group.
+ *
+ *  The group is made at the centre of the tile, where `groupShift` is nought,
+ *  so the members keep the coordinates they already had and nothing moves on
+ *  the way in. Dragging the group afterwards is what displaces them, all by
+ *  the same amount — which is the whole of what a group is here: a
+ *  displacement, a shared fade and a shared lock.
+ *
+ *  Top level only. A layer already inside another group would have to be
+ *  hoisted out first, and "group these two" is not the gesture that should
+ *  quietly restructure a tree. */
+export async function groupPicked() {
+  const tile = app.selectedTile;
+  const list = app.manifest.tiles[tile]?.layers;
+  if (!list) return;
+  const at = pickedLayers()
+    .map((id) => list.findIndex((l) => l.id === id))
+    .filter((i) => i >= 0)
+    .sort((a, b) => a - b);
+  if (at.length < 2) return;
+  await mutate("Group layers", () => {
+    // Taken from the top down, so the indices below each removal still hold;
+    // put back in stack order, so the group draws what the tile drew.
+    const taken = [...at].reverse().map((i) => list.splice(i, 1)[0]).reverse();
+    const group = newGroupLayer(taken);
+    nameInStack(group, list);
+    list.splice(at[0], 0, group);
+    app.alsoSelected = [];
+    app.selected = group.id;
+  });
+}
+
+/** Dissolves a group, leaving its members where they were drawn.
+ *
+ *  `removeLayerFrom` is the whole of it: a group hands its members back to the
+ *  list at its own index with the displacement folded into them, because
+ *  losing a stack of layers to one misplaced click was never a trade worth
+ *  offering. Deleting a group does the same thing — this one only says so. */
+export async function ungroupLayer(id: string, tileId = app.selectedTile) {
+  const list = app.manifest.tiles[tileId]?.layers;
+  if (!list || list.find((l) => l.id === id)?.kind !== "group") return;
+  await mutate("Ungroup layers", () => {
+    removeLayerFrom(list, id);
+    if (app.selected === id) app.selected = "";
+  });
+}
+
 /** Hides or shows a layer — and, for a stamp, the whole assignment.
  *
  *  The eye on a stamp's row switches off the flattened sheet and the captions

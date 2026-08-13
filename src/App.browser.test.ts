@@ -26,6 +26,8 @@ import {
   selectLayer,
   alsoSelect,
   pickedLayers,
+  groupPicked,
+  ungroupLayer,
   setTileLayerField,
   archived,
   archiveSelection,
@@ -1941,6 +1943,88 @@ describe("two guards the wall was given and nothing checked", () => {
     // Its own y is untouched: they travelled, they did not line up.
     expect(now.two.y).toBeCloseTo(was.two.y, 6);
     expect(historySteps().length).toBe(steps + 1);
+  });
+
+  it("groups the picked layers without moving them, and lets them go again", async () => {
+    /* A group is made at the centre of the tile, where its displacement is
+     * nought — so the members keep the coordinates they had and nothing shifts
+     * on the way in. Letting them go folds the displacement back, so they stay
+     * where they were drawn however far the group was moved in between. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const one = tileLayers(tile).at(-1)!;
+    await setTileLayerField([tile], one.id, "x", 0.25);
+    await addTileShape("ellipse");
+    const two = tileLayers(tile).at(-1)!;
+    await setTileLayerField([tile], two.id, "y", 0.75);
+    const was = { one: { ...findLayer(tileLayers(tile), one.id)! }, two: { ...findLayer(tileLayers(tile), two.id)! } };
+
+    selectLayer(one.id, tile);
+    alsoSelect(two.id, tile);
+    await groupPicked();
+
+    const group = tileLayers(tile).find((l) => l.kind === "group")!;
+    expect(group).toBeTruthy();
+    expect(tileLayers(tile)).toHaveLength(1);
+    expect(app.selected).toBe(group.id);
+    // Still exactly where they were: the members are found through the tree.
+    expect(findLayer(tileLayers(tile), one.id)!.x).toBeCloseTo(was.one.x, 6);
+    expect(findLayer(tileLayers(tile), two.id)!.y).toBeCloseTo(was.two.y, 6);
+
+    await ungroupLayer(group.id, tile);
+    expect(tileLayers(tile)).toHaveLength(2);
+    expect(findLayer(tileLayers(tile), one.id)!.x).toBeCloseTo(was.one.x, 6);
+    expect(findLayer(tileLayers(tile), two.id)!.y).toBeCloseTo(was.two.y, 6);
+  });
+
+  it("moves every member when the group is dragged", async () => {
+    /* The point of the thing. A group draws nothing of its own — it is
+     * dissolved into its members before anything is painted — so it gets the
+     * same frame a bake does, and what the drag writes is the group's own x/y.
+     * The members follow because that is what a group's position means. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const one = tileLayers(tile).at(-1)!;
+    await addTileShape("ellipse");
+    const two = tileLayers(tile).at(-1)!;
+    await setTileLayerField([tile], two.id, "x", 0.7);
+
+    selectLayer(one.id, tile);
+    alsoSelect(two.id, tile);
+    await groupPicked();
+    const group = tileLayers(tile).find((l) => l.kind === "group")!;
+    const was = {
+      group: { ...group },
+      one: { ...findLayer(tileLayers(tile), one.id)! },
+      two: { ...findLayer(tileLayers(tile), two.id)! },
+    };
+
+    const canvas = (window as { tesseraWall?: fabric.Canvas }).tesseraWall!;
+    await until(() =>
+      canvas.getObjects().some((o) => (o as Tagged & { framing?: boolean }).framing),
+    );
+    const stand = canvas
+      .getObjects()
+      .find((o) => (o as Tagged & { framing?: boolean }).framing)!;
+    expect((stand as Tagged).layerId).toBe(group.id);
+
+    stand.set({ left: (stand.left ?? 0) + 120 });
+    stand.setCoords();
+    canvas.fire("object:modified", { target: stand });
+    await until(() => findLayer(tileLayers(tile), group.id)!.x !== was.group.x);
+
+    /* The group moved and the members did not: their own coordinates are
+     * relative to it, and the displacement is what carries them. Read off the
+     * model rather than the canvas, because the canvas has no group on it at
+     * all — that is the whole reason this needed a frame. */
+    const now = findLayer(tileLayers(tile), group.id)!;
+    expect(now.x - was.group.x).toBeCloseTo(120 / TILE_W, 4);
+    expect(findLayer(tileLayers(tile), one.id)!.x).toBeCloseTo(was.one.x, 6);
+    expect(findLayer(tileLayers(tile), two.id)!.x).toBeCloseTo(was.two.x, 6);
   });
 
   it("pulls a dragged layer onto its cell's centre", async () => {

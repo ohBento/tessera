@@ -27,6 +27,7 @@ import {
   resolveLayers,
   stencilIds,
   type Base,
+  type GroupLayer,
   type Layer,
   type Manifest,
   type Corners,
@@ -453,7 +454,29 @@ export const layerSize = (l: Layer): { w: number; h: number } =>
       ? { w: l.w, h: l.h }
       : l.kind === "text"
         ? { w: textWidth(l), h: l.h ?? (l.size * LINE_HEIGHT * TILE_W) / TILE_H }
-        : { w: 1, h: 1 };
+        : l.kind === "group"
+          ? groupReach(l)
+          : { w: 1, h: 1 };
+
+/** How far a group's members reach from the group's own point, doubled — the
+ *  box a frame has to be to cover them while staying centred on what the drag
+ *  writes.
+ *
+ *  Centred rather than tight on purpose: the group's x/y is the thing being
+ *  moved, so a box measured around the members' own middle would slide out
+ *  from under the handles the moment it was dragged. A little larger than it
+ *  needs to be is the price, and an empty group falls back to the whole cell
+ *  so there is still something to grab. */
+function groupReach(g: GroupLayer): { w: number; h: number } {
+  let w = 0;
+  let h = 0;
+  for (const c of g.children) {
+    const size = layerSize(c);
+    w = Math.max(w, Math.abs(c.x - g.x) + size.w / 2);
+    h = Math.max(h, Math.abs(c.y - g.y) + size.h / 2);
+  }
+  return w && h ? { w: w * 2, h: h * 2 } : { w: 1, h: 1 };
+}
 
 /** The rectangle a caption with a fixed height is held to, in scene
  *  coordinates — or nothing when it has none and may grow with its lines.

@@ -311,7 +311,13 @@
        renderer's own rule, read from here so the two cannot drift apart. */
     const own = placeableOn(tile);
     const picked = own.find((l) => l.id === layerId);
-    if (!tile || !layerId || !picked || !isFlattened(picked, own)) {
+    /* A group is the other kind with no object of its own: it is a
+       displacement and nothing more, dissolved into its members before a
+       single thing is drawn. So it needs the same frame a bake does, and
+       dragging it writes the group's own x/y — which is exactly how its
+       members all move by the same amount. */
+    const needsFrame = !!picked && (isFlattened(picked, own) || picked.kind === "group");
+    if (!tile || !layerId || !needsFrame) {
       if (target) {
         target = null;
         dropFrameTools();

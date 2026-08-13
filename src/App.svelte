@@ -70,6 +70,9 @@
     copiedLayer,
     copyLayerProps,
     pasteLayerProps,
+    pickedLayers,
+    groupPicked,
+    ungroupLayer,
     pasteLayerOntoTiles,
     layersOnSelection,
     removeLayerFromSelection,
@@ -667,12 +670,32 @@
    *  decoration. */
   function layerMenu(e: MouseEvent, layerId: string, tileId: string) {
     e.preventDefault();
-    selectLayer(layerId, tileId);
+    /* Not when the row is already part of the pick. Right-clicking one of
+       several picked layers means "act on these", the same rule the wall's own
+       menu keeps for tiles — and re-picking would throw the pick away a moment
+       before "Group" was clicked. */
+    if (!(pickedLayers().includes(layerId) && app.selectedTile === tileId))
+      selectLayer(layerId, tileId);
     const held = copiedLayer();
+    const picked = pickedLayers();
+    const isGroup =
+      findLayer(app.manifest.tiles[tileId]?.layers ?? [], layerId)?.kind === "group";
     menu = {
       x: e.clientX,
       y: e.clientY,
       items: [
+        ...(picked.length > 1
+          ? [
+              {
+                label: `Group ${picked.length} layers`,
+                run: () => void groupPicked(),
+              } as Item,
+            ]
+          : []),
+        ...(isGroup
+          ? [{ label: "Ungroup", run: () => void ungroupLayer(layerId, tileId) } as Item]
+          : []),
+        ...(picked.length > 1 || isGroup ? [{ separator: true } as Item] : []),
         {
           label: "Copy properties",
           run: () => copyLayerProps(layerId, tileId),
