@@ -14,6 +14,7 @@
     bulkTargets,
     clearAll,
     clearTiles,
+    nudgeLayer,
     refreshCoverPreview,
     selectLayer,
     swapTilePlaces,
@@ -979,11 +980,29 @@
       }
       const obj = opt.target as Tagged | undefined;
       if (!obj?.layerId) return;
+      const ids = visibleIds();
       /* A baked layer sits at its cell's origin at scale 1 whatever the model
        * says, so reading its transform back would write 0,0 over a real
-       * placement. The stand-in is how these get moved; nothing else may. */
-      if (obj.flattened) return;
-      const ids = visibleIds();
+       * placement — measuring the bake instead of the layer.
+       *
+       * It used to be refused outright here, which left the gesture half done:
+       * Fabric moves the object during the drag whatever this handler decides,
+       * so a refused drop left a class icon lying where it was dropped, with
+       * the model still holding the old position, until some later action
+       * rebuilt the tile and it jumped back. Reported as "the tile only
+       * updates once I do something else" — and on this document that is most
+       * of the wall, since a class icon is baked and 39 of 67 layers are one.
+       *
+       * The distance is readable even though the position is not: the bake
+       * starts at the cell's origin, so what it has moved away from that is
+       * exactly what the hand dragged. Written as a nudge, which is also why
+       * these keep no scale handles — the bake is tile-sized, and a factor
+       * read off it would mean nothing. */
+      if (obj.flattened) {
+        const at = cellAt(ids.indexOf(obj.tileId));
+        void nudgeLayer(obj, ((obj.left ?? 0) - at.x) / TILE_W, ((obj.top ?? 0) - at.y) / TILE_H);
+        return;
+      }
       const patch = readBack(obj, ids.length, ids.indexOf(obj.tileId));
       /* With several tiles picked, one drag places the layer on all of them —
        * the wall's answer to what a Layout did by owning the design. A layer

@@ -1109,6 +1109,29 @@ export async function applyTransform(
   void refreshCoverPreview();
 }
 
+/** Moves a layer by a fraction of a tile — the write behind dragging a baked
+ *  layer, whose position cannot be read off the canvas but whose displacement
+ *  can. See the note in GridCanvas's object:modified for why the two differ.
+ *
+ *  Structural, unlike an ordinary drag: the object on screen is a picture of
+ *  the layer taken before the move, so unlike a plain drag there is nothing
+ *  correct left on the canvas to preserve. It has to be baked again.
+ *
+ *  Reaches the same tiles a drag would, by the same rule. */
+export async function nudgeLayer(obj: Tagged, dx: number, dy: number) {
+  if (!dx && !dy) return;
+  const picked = bulkTargets(obj.layerId);
+  const tiles = picked.length > 1 ? picked : [obj.tileId];
+  await mutate("Move layer", () => {
+    for (const t of tiles) {
+      const l = findLayer(app.manifest.tiles[t]?.layers ?? [], obj.layerId);
+      if (!l) continue;
+      l.x += dx;
+      l.y += dy;
+    }
+  });
+}
+
 /** Puts a layer exactly where another one ended up — placement and size, not
  *  identity: its picture, wording, colour and mask are its own.
  *

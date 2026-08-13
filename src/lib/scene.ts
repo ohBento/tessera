@@ -1491,6 +1491,15 @@ async function tileLayerObjects(
       const locked = !!l.locked || !!l.layoutId;
       if (interactive) makeInteractive(obj, locked ? { ...l, locked: true } : l);
       else obj.selectable = obj.evented = false;
+      /* A bake is tile-sized whatever the layer inside it measures, so a scale
+       * factor read off it says nothing about the layer — the handles were
+       * offering a gesture whose result could not be written down. Dragging
+       * one still works: the distance from the cell's origin is the distance
+       * the hand moved, which is what object:modified writes. */
+      if (flat && interactive) {
+        obj.hasControls = false;
+        obj.lockScalingX = obj.lockScalingY = obj.lockRotation = true;
+      }
       /* `flattened` says this object is a whole-tile picture of a layer rather
        * than the layer itself — a mask or a class icon, baked because the cell
        * clip has the one clipPath slot. It sits at the cell's origin at scale 1

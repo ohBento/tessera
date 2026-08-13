@@ -1594,27 +1594,43 @@ describe("two guards the wall was given and nothing checked", () => {
     return { canvas, tile, layer };
   }
 
-  it("refuses to read a flattened object back into the model", async () => {
+  it("moves a flattened layer by the distance dragged, never to its bake's corner", async () => {
     /* A cut layer and a class icon are composited to pixels and placed at the
      * cell's origin, so the object on the canvas sits at 0,0 at scale 1 whatever
-     * the model says. Reading its transform back would write that over a real
-     * placement — the layer would jump to the corner of its tile. The stand-in
-     * is how these get moved; nothing else may. */
+     * the model says. Reading its transform back as a position would write that
+     * over a real placement and the layer would jump to the corner of its tile.
+     *
+     * That used to be avoided by refusing the drop, which left the gesture half
+     * done: Fabric moves the object during the drag whatever the handler
+     * decides, so the icon lay where it was dropped with the model still
+     * holding the old position, until some later action rebuilt the tile and it
+     * jumped back. Reported as "the tile only updates once I do something
+     * else".
+     *
+     * What is readable is the distance: the bake starts at the cell's origin,
+     * so how far it has left that is how far the hand moved. Both halves are
+     * asserted here — the layer moves by exactly that, and it does not land at
+     * the corner, which is what the refusal was protecting. */
     const { canvas, tile, layer } = await wallWith(() => addTileShape("icon", "Ranger"));
     const obj = canvas
       .getObjects()
       .find((o) => (o as Tagged).layerId === layer.id) as fabric.Object & { flattened?: boolean };
     expect(obj.flattened).toBe(true);
+    // No handles on a bake: a factor read off a tile-sized picture says nothing
+    // about the layer inside it.
+    expect(obj.hasControls).toBe(false);
 
     const before = { ...findLayer(app.manifest.tiles[tile]!.layers, layer.id)! };
     obj.set({ left: (obj.left ?? 0) + 120, top: (obj.top ?? 0) + 90 });
     obj.setCoords();
     canvas.fire("object:modified", { target: obj });
-    await tick();
+    await until(() => findLayer(app.manifest.tiles[tile]!.layers, layer.id)!.x !== before.x);
 
     const after = findLayer(app.manifest.tiles[tile]!.layers, layer.id)!;
-    expect(after.x).toBe(before.x);
-    expect(after.y).toBe(before.y);
+    expect(after.x).toBeCloseTo(before.x + 120 / TILE_W, 6);
+    expect(after.y).toBeCloseTo(before.y + 90 / TILE_H, 6);
+    // The failure the refusal existed for: the bake's own origin, written in.
+    expect(after.x).toBeGreaterThan(0.1);
   });
 
   it("pulls a dragged layer onto its cell's centre", async () => {
