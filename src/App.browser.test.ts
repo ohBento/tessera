@@ -1130,3 +1130,143 @@ describe("the wall follows the wheel", () => {
     expect(asked).toBeGreaterThan(0);
   });
 });
+
+describe("three the demolition took and nobody missed", () => {
+  /* The last of the list in removed-tests.txt. None of them describes anything
+   * that changed with the layouts — they went because the file they lived in
+   * was cut, which is a worse reason than the other twenty-three had. */
+
+  const press = (key: string, init: KeyboardEventInit = {}) =>
+    window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, ...init }));
+
+  const sheetOpen = (heading: string) =>
+    [...document.querySelectorAll("h2")].some((h) => h.textContent!.trim() === heading);
+
+  it("does not open the keyboard sheet under the icon grid", async () => {
+    /* Both sheets sit at the same z-index and the grid is later in the markup,
+     * so it wins. Without the guard `?` opened the keyboard sheet out of sight
+     * and the key looked broken. */
+    await enterInbox();
+    const [id] = app.folderIds;
+    app.selectedTiles = [id];
+    await addTileShape("icon", "Ranger");
+    await tick();
+
+    const badge = [...document.querySelectorAll("button.swatch.art")].at(-1) as HTMLButtonElement;
+    badge.click();
+    await tick();
+    expect(sheetOpen("Keyboard and mouse")).toBe(false);
+
+    press("?");
+    await tick();
+    expect(sheetOpen("Keyboard and mouse")).toBe(false);
+
+    // Escape closes the grid, and then the key works.
+    press("Escape");
+    await tick();
+    press("?");
+    await tick();
+    expect(sheetOpen("Keyboard and mouse")).toBe(true);
+  });
+
+  it("puts the game's portraits back without touching the document", async () => {
+    /* The vault holds what BDO shipped, and putting it back is the way out of a
+     * wall that went wrong. It writes files and nothing else: the layers stay,
+     * so the wall on screen is unchanged and one more click undoes nothing. */
+    await enterInbox();
+    const [a] = app.folderIds;
+    app.selectedTiles = [a];
+    await addTileShape("rect");
+    await newProjectFrom("Konto");
+    openProjectView(projects()[0].id);
+    const before = JSON.stringify(app.manifest);
+
+    await saveToGame();
+    await until(() => !app.busy);
+    await restoreProject();
+    await until(() => !app.busy);
+
+    expect(app.error).toContain("put back in the game");
+    expect(JSON.stringify(app.manifest)).toBe(before);
+  });
+
+  it("opens the wall's menu on the tile under the cursor", async () => {
+    /* The tile under the cursor is the one meant, unless it is already part of
+     * the selection — then the selection is what was meant, which is the rule
+     * every file manager uses. It used to re-target only when nothing at all
+     * was picked, so right-clicking tile A while B and C were selected quietly
+     * acted on B and C. */
+    await enterInbox();
+    const canvas = (window as { tesseraWall?: fabric.Canvas }).tesseraWall!;
+    await until(() => canvas.getObjects().length > 0);
+
+    /* Sized and placed by hand, for the reason the guide-grid test above gives:
+       mounted in a bare document the stage collapses to a pixel wide and the
+       wall is drawn at 0.02% zoom, where every cell centre rounds to the same
+       point and tileAtEvent cannot tell them apart. */
+    canvas.setDimensions({ width: 900, height: 700 });
+    canvas.setViewportTransform([0.1, 0, 0, 0.1, 0, 0]);
+    canvas.renderAll();
+    await tick();
+
+    const stage = document.querySelector(".stage") as HTMLElement;
+    const rightClickAt = (x: number, y: number) => {
+      stage.dispatchEvent(
+        new MouseEvent("contextmenu", { clientX: x, clientY: y, bubbles: true }),
+      );
+    };
+
+    /* Which cell a point lands on is GridCanvas's own arithmetic, and guessing
+       at it from here only tests the guess — an earlier version of this put the
+       second click a row off and failed on the coordinates rather than on the
+       rule. So the point is asked once what it means, and the answer is reused. */
+    /* Recomputed before every click, never cached. Setting the selection runs
+       the effects that own the viewport, so a point worked out once points
+       somewhere else by the next click — an earlier version of this asked the
+       same coordinates twice and got two different tiles. */
+    const firstCell = () => {
+      const r = canvas.upperCanvasEl.getBoundingClientRect();
+      const vt = canvas.viewportTransform!;
+      const at = cellAt(0);
+      return {
+        x: r.left + (at.x + TILE_W / 2) * vt[0] + vt[4],
+        y: r.top + (at.y + TILE_H / 2) * vt[3] + vt[5],
+      };
+    };
+
+    // A tile nobody picked becomes the selection.
+    app.selectedTiles = [];
+    await tick();
+    let p = firstCell();
+    rightClickAt(p.x, p.y);
+    await tick();
+    const under = app.selectedTiles[0];
+    expect(under).toBeTruthy();
+
+    /* And the same click inside an existing selection leaves it whole. It used
+       to re-target whenever anything at all was picked, so right-clicking one
+       of three selected tiles quietly acted on one. */
+    const other = visibleIds().find((id) => id !== under)!;
+
+    /* The case that separates the two rules, and the reason this test exists.
+       Both the old rule and the new one leave an existing selection alone when
+       the click lands inside it, and both take a tile when nothing is picked —
+       so neither of those can tell them apart. This one can: a click on a tile
+       the selection does not contain has to re-target, and the rule it replaced
+       only re-targeted when nothing at all was picked. */
+    app.selectedTiles = [other];
+    await tick();
+    p = firstCell();
+    rightClickAt(p.x, p.y);
+    await tick();
+    expect(app.selectedTiles).toEqual([under]);
+
+    // And a click inside the selection leaves it whole.
+    app.selectedTiles = [under, other];
+    await tick();
+    p = firstCell();
+    rightClickAt(p.x, p.y);
+    await tick();
+    expect(app.selectedTiles).toEqual([under, other]);
+  });
+});
