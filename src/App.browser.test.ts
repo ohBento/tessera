@@ -1415,6 +1415,49 @@ describe("the layer panel", () => {
     expect((cutObj as Tagged & { flattened?: boolean }).flattened).toBe(true);
   });
 
+  it("re-cuts the picture when the mask under it is moved", async () => {
+    /* Seen in a clip: the mask's frame moved to the other end of the tile and
+     * the cut-out picture stayed exactly where it was, until anything else
+     * happened to redraw the tile.
+     *
+     * A plain move skips the rebuild because the object the hand moved is the
+     * layer and the canvas already shows the result. A cutter breaks that
+     * premise: what changes on screen is the *other* layer's pixels, and those
+     * are baked. Asked of the canvas — the bake has to be a new object —
+     * because the model was never the part that was wrong. */
+    const { tile } = await pickedShape();
+    const cutter = tileLayers(tile).at(-1)!;
+    app.selectedTiles = [tile];
+    await addTileShape("ellipse");
+    const cutLayer = tileLayers(tile).at(-1)!;
+    await setTileLayerField([tile], cutLayer.id, "maskId", cutter.id);
+    await tick();
+
+    const canvas = (window as { tesseraWall?: fabric.Canvas }).tesseraWall!;
+    const bake = () => canvas.getObjects().find((o) => (o as Tagged).layerId === cutLayer.id);
+    await until(() => !!bake());
+    let held = bake();
+    let steady = 0;
+    await until(() => {
+      const now = bake();
+      steady = now && now === held ? steady + 1 : 0;
+      held = now;
+      return steady >= 8;
+    });
+    const was = held!;
+
+    const stencil = canvas.getObjects().find((o) => (o as Tagged).layerId === cutter.id)!;
+    stencil.set({ left: (stencil.left ?? 0) + 90 });
+    stencil.setCoords();
+    canvas.fire("object:modified", { target: stencil });
+
+    // A new object for the cut layer: the bake was made again, with the mask
+    // where it now is.
+    await until(() => !!bake() && bake() !== was, 3000);
+    expect(bake()).toBeTruthy();
+    expect(bake()).not.toBe(was);
+  });
+
   it("writes a field onto every picked tile in one step", async () => {
     const { tile, layer } = await pickedShape();
     const second = app.folderIds[1];

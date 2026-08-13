@@ -42,7 +42,7 @@
     type Tagged,
     type WallPrint,
   } from "./lib/scene";
-  import { findLayer, layerText, type Layer } from "./lib/model";
+  import { findLayer, layerText, stencilIds, type Layer } from "./lib/model";
 
 
   let host: HTMLDivElement;
@@ -1062,9 +1062,16 @@
        * the wall's answer to what a Layout did by owning the design. A layer
        * spanning the whole wall has no tile and no siblings to match. */
       const targets = obj.tileId ? bulkTargets(obj.layerId) : [];
+      /* A plain move normally skips the rebuild, because the object the hand
+         moved is the layer and the canvas already shows the result. A cutter
+         breaks that: what changes on screen is the *other* layer's pixels, and
+         those are baked. Moving a mask left the frame in the new place with the
+         cut-out picture still in the old one, until anything else redrew the
+         tile — the same shape as the stand-in's fault, one object further on. */
+      const cuts = stencilIds(app.manifest.tiles[obj.tileId]?.layers ?? []).has(obj.layerId);
       void (targets.length > 1
         ? applyTransformBulk(obj, patch, targets)
-        : applyTransform(obj, patch));
+        : applyTransform(obj, patch, cuts || undefined));
     });
 
     const key = (e: KeyboardEvent, down: boolean) => {
