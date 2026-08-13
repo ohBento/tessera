@@ -1228,6 +1228,28 @@ describe("the placing tool", () => {
     });
   });
 
+  it("leaves the cell clickable while the frame is the handle", async () => {
+    /* A baked layer is a tile-sized picture at the cell's origin, and it
+     * answered the mouse across all of it: pressing anywhere in that cell
+     * grabbed the bake rather than picking the tile, so tile selection and the
+     * rubber band were dead in every cell carrying a mask or a class icon.
+     * Its snap box is the cell too, so both axes had every stop at nought and
+     * a nudge shorter than the snap distance came back to no movement at all.
+     * The frame is the handle for these; the bake is not a second one. */
+    const { canvas, layerId } = await placing();
+    const bake = canvas
+      .getObjects()
+      .find((o) => (o as Tagged).layerId === layerId && "flattened" in o) as fabric.Object;
+    expect(bake).toBeTruthy();
+    await until(() => !bake.evented);
+    expect(bake.selectable).toBe(false);
+
+    // The frame is still there to grab.
+    expect(
+      canvas.getObjects().some((o) => (o as Tagged & { framing?: boolean }).framing),
+    ).toBe(true);
+  });
+
   it("takes the frame down when the layer is locked", async () => {
     /* The padlock's whole job is to put a layer out of reach, and the frame is
      * the one way to reach a baked one. It is built here and carries none of

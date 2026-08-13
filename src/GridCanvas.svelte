@@ -642,7 +642,16 @@
       const held = pickIsLocked();
       for (const o of canvas.getObjects()) {
         const mine = (o as Tagged).layerId;
-        if (mine) o.evented = o.selectable = isPick(o) && !held;
+        /* A baked layer has two things standing for it: the frame, and the
+           bake itself — which is tile-sized whatever the layer measures, so it
+           answered the mouse across the whole cell. Pressing anywhere in that
+           cell grabbed it instead of picking the tile, which killed tile
+           selection and the rubber band there; and its snap box *is* the cell,
+           so every stop on both axes sat at nought and any nudge shorter than
+           the snap distance was pulled back to no movement at all. The frame
+           is the handle for these, so the bake stops being one. */
+        const doubled = !!target && (o as { flattened?: boolean }).flattened;
+        if (mine) o.evented = o.selectable = isPick(o) && !held && !doubled;
       }
       // A rubber band would only ever catch the one grabbable object.
       canvas.selection = false;
