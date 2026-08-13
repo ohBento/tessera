@@ -34,6 +34,7 @@
     folders,
     looseIds,
     pickTileImage,
+    alsoSelect,
     deleteLayer,
     renameLayer,
     selectLayer,
@@ -138,8 +139,12 @@
   <ul class="indent">
     {#each rows as layer (layer.id)}
       <li
-        class:selected={app.selected === layer.id && app.selectedTile === id}
-        aria-current={app.selected === layer.id && app.selectedTile === id ? "true" : undefined}
+        class:selected={app.selectedTile === id &&
+          (app.selected === layer.id || app.alsoSelected.includes(layer.id))}
+        aria-current={app.selectedTile === id &&
+        (app.selected === layer.id || app.alsoSelected.includes(layer.id))
+          ? "true"
+          : undefined}
         class:drop-before={drag.on?.id === layer.id && drag.on.where === "before"}
         class:drop-after={drag.on?.id === layer.id && drag.on.where === "after"}
         draggable="true"
@@ -195,9 +200,10 @@
           <button
             class="name"
             class:dimmed={layer.hidden}
-            onclick={() => selectLayer(layer.id, id)}
+            onclick={(e) =>
+              e.ctrlKey || e.metaKey ? alsoSelect(layer.id, id) : selectLayer(layer.id, id)}
             ondblclick={() => (renaming = layer.id)}
-            title="Select this layer — double-click to rename"
+            title="Select this layer · Ctrl adds one · double-click to rename"
           >
             {layerLabel(layer)}
           </button>

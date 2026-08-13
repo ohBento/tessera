@@ -24,6 +24,8 @@ import {
   addTileText,
   bulkTargets,
   selectLayer,
+  alsoSelect,
+  pickedLayers,
   setTileLayerField,
   archived,
   archiveSelection,
@@ -1885,6 +1887,60 @@ describe("two guards the wall was given and nothing checked", () => {
 
     const after = findLayer(app.manifest.tiles[tile]!.layers, layer.id)!;
     expect(after.x).toBeCloseTo(from.x + 200 / TILE_W, 4);
+  });
+
+  it("takes the layers picked alongside it the same distance", async () => {
+    /* Two layers on one tile, neither in a group: Ctrl-click adds the second to
+     * the pick and a drag on the first carries both.
+     *
+     * The same distance, not to the same place — they keep the gap between
+     * them, which is the whole reason for moving two at once. One undo step for
+     * the pair, because it was one gesture. */
+    const { canvas, tile, layer } = await wallWith(async () => {
+      await addTileShape("rect");
+      const first = tileLayers(app.folderIds[0]).at(-1)!;
+      await setTileLayerField([app.folderIds[0]], first.id, "x", 0.3);
+    });
+    app.selectedTiles = [tile];
+    await addTileShape("ellipse");
+    const mate = tileLayers(tile).at(-1)!;
+    await setTileLayerField([tile], mate.id, "y", 0.8);
+
+    selectLayer(layer.id, tile);
+    alsoSelect(mate.id, tile);
+    expect(pickedLayers()).toEqual([layer.id, mate.id]);
+
+    canvas.setDimensions({ width: 900, height: 700 });
+    canvas.setViewportTransform([0.5, 0, 0, 0.5, 0, 0]);
+    canvas.renderAll();
+    await tick();
+    const current = () => canvas.getObjects().find((o) => (o as Tagged).layerId === layer.id);
+    let held = current();
+    let steady = 0;
+    await until(() => {
+      const now = current();
+      steady = now && now === held ? steady + 1 : 0;
+      held = now;
+      return steady >= 8;
+    });
+
+    const was = {
+      one: { ...findLayer(tileLayers(tile), layer.id)! },
+      two: { ...findLayer(tileLayers(tile), mate.id)! },
+    };
+    const steps = historySteps().length;
+    await dragObject(canvas, held!, 60, 0);
+    await until(() => findLayer(tileLayers(tile), layer.id)!.x !== was.one.x);
+
+    const now = {
+      one: findLayer(tileLayers(tile), layer.id)!,
+      two: findLayer(tileLayers(tile), mate.id)!,
+    };
+    expect(now.one.x - was.one.x).toBeGreaterThan(0.05);
+    expect(now.two.x - was.two.x).toBeCloseTo(now.one.x - was.one.x, 6);
+    // Its own y is untouched: they travelled, they did not line up.
+    expect(now.two.y).toBeCloseTo(was.two.y, 6);
+    expect(historySteps().length).toBe(steps + 1);
   });
 
   it("pulls a dragged layer onto its cell's centre", async () => {

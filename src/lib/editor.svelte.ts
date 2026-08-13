@@ -121,6 +121,14 @@ export const app = $state({
    *  selected layer" is a pair, and the id alone is a question with several
    *  right answers: whichever tile happened to be scanned first got the edit. */
   selectedTile: "",
+  /** Layers picked *alongside* the one above, on the same tile — the extras of
+   *  a multi-layer pick.
+   *
+   *  Kept beside `selected` rather than turning it into a list, which is what
+   *  makes this a small thing: the panel, the bulk targets, the frame and the
+   *  read-back all go on asking one question and getting one answer. Only a
+   *  drag consults these, and only to hand them the same distance. */
+  alsoSelected: [] as string[],
   /** Tiles picked on the canvas. What a new project gets built from. */
   selectedTiles: [] as string[],
   /** Where a Shift-range measures from: the last tile picked without Shift. */
@@ -223,6 +231,9 @@ export const clearTiles = () => (app.selectedTiles = []);
 export function clearAll() {
   app.selectedTiles = [];
   app.selected = "";
+  // With the primary gone the extras have nothing to travel with, and a drag
+  // that picked up layers nobody can see picked is the worst of both.
+  app.alsoSelected = [];
   app.hoverFolder = "";
 }
 
@@ -791,9 +802,42 @@ const listOf = (id: string, tileId = app.selectedTile): Layer[] | undefined => {
  *  Both together, always: leaving the tile behind from a previous pick is how
  *  an edit lands on the layer of that name on the wrong portrait. */
 export function selectLayer(id: string, tileId = "") {
-  if (app.selected !== id) app.selected = id;
-  if (app.selectedTile !== tileId) app.selectedTile = tileId;
+  /* Only when the pair actually changes. A plain pick is a fresh start and
+     drops the extras of the last one — but the canvas writes the current pick
+     back on every selection event, including the one Fabric fires as a drag
+     begins, and that was clearing the extras a moment before they were due to
+     travel. */
+  if (app.selected === id && app.selectedTile === tileId) return;
+  app.selected = id;
+  app.selectedTile = tileId;
+  if (app.alsoSelected.length) app.alsoSelected = [];
 }
+
+/** Adds a layer to the pick, or takes it out again — Ctrl-click on its row.
+ *
+ *  Only within one tile, and only beside a layer that is already picked: the
+ *  extras are moved by handing them the distance the picked one travelled, and
+ *  a distance measured on one tile means nothing on another.
+ *
+ *  Picking the primary itself is how the pick shrinks back to one layer: the
+ *  first extra takes its place, so Ctrl-clicking down a list and then back up
+ *  it leaves what you started with. */
+export function alsoSelect(id: string, tileId: string) {
+  if (!app.selected || tileId !== app.selectedTile) return selectLayer(id, tileId);
+  if (id === app.selected) {
+    const [next, ...rest] = app.alsoSelected;
+    if (!next) return;
+    app.selected = next;
+    app.alsoSelected = rest;
+    return;
+  }
+  app.alsoSelected = app.alsoSelected.includes(id)
+    ? app.alsoSelected.filter((x) => x !== id)
+    : [...app.alsoSelected, id];
+}
+
+/** Every layer the pick covers on its tile, primary first. */
+export const pickedLayers = () => [app.selected, ...app.alsoSelected].filter(Boolean);
 
 /** Hides or shows a layer — and, for a stamp, the whole assignment.
  *
@@ -1092,6 +1136,19 @@ function resize(layer: Layer, patch: Transform) {
     layer.h = Math.max(patch.absolute ? patch.scaleH : layer.h * (patch.fy || 1), MIN_SPAN);
   }
 }
+/** The extras of a multi-layer pick, as live layers — the ones a drag on the
+ *  picked layer has to take along.
+ *
+ *  Only when the object being dragged *is* the picked layer, and only on its
+ *  own tile. A drag on something else is not the pick moving, and a distance
+ *  measured on one tile means nothing on another. */
+const travellers = (obj: Tagged): Layer[] => {
+  if (!app.alsoSelected.length || obj.layerId !== app.selected || obj.tileId !== app.selectedTile)
+    return [];
+  const list = app.manifest.tiles[obj.tileId]?.layers ?? [];
+  return app.alsoSelected.map((id) => findLayer(list, id)).filter((l): l is Layer => !!l);
+};
+
 /** Writes a finished drag/scale/rotate back into the model.
  *
  *  A plain move skips the rebuild: Fabric has already moved the very object
@@ -1126,11 +1183,22 @@ export async function applyTransform(
    * in — subtract it again, exactly as the Layout path does, or the layer jumps
    * by the group's offset on the first drag. Groups reach tiles now. */
   const shift = nestingShift(list, obj.layerId) ?? { dx: 0, dy: 0 };
+  /* The extras of a multi-layer pick travel the same distance, not to the same
+     place — measured before the write, because after it the layer no longer
+     remembers where it started. Only a move is handed on: a scale would have to
+     be about a shared centre, which is a different sum and a different feature.
+     Inside the one mutate, so the whole thing is one undo step. */
+  const along = travellers(obj);
+  const step = { dx: patch.x - shift.dx - layer.x, dy: patch.y - shift.dy - layer.y };
   await mutate("Move layer", () => {
     layer.x = patch.x - shift.dx;
     layer.y = patch.y - shift.dy;
     layer.rotation = patch.rotation;
     resize(layer, patch);
+    for (const l of along) {
+      l.x += step.dx;
+      l.y += step.dy;
+    }
   }, structural ?? scaled(patch));
   /* After the write, not before: the outline answers "where would this land"
    * and a plain drag does not bump `version`, so nothing else would recompute
@@ -1151,10 +1219,16 @@ export async function nudgeLayer(obj: Tagged, dx: number, dy: number) {
   if (!dx && !dy) return;
   const picked = bulkTargets(obj.layerId);
   const tiles = picked.length > 1 ? picked : [obj.tileId];
+  // The extras of a multi-layer pick, exactly as on the ordinary drag path.
+  const along = travellers(obj);
   await mutate("Move layer", () => {
     for (const t of tiles) {
       const l = findLayer(app.manifest.tiles[t]?.layers ?? [], obj.layerId);
       if (!l) continue;
+      l.x += dx;
+      l.y += dy;
+    }
+    for (const l of along) {
       l.x += dx;
       l.y += dy;
     }
