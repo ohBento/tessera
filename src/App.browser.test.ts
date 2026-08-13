@@ -78,6 +78,7 @@ import {
   layerLabel,
   newImageLayer,
   newShapeLayer,
+  walkLayers,
   type ImageLayer,
   type ShapeLayer,
   type TextLayer,
@@ -1364,6 +1365,44 @@ describe("carrying one layer's properties to another", () => {
     // One layer across two tiles now: a drag on the group reaches both.
     app.selectedTiles = [a, b];
     expect(bulkTargets(group.id).sort()).toEqual([a, b].sort());
+  });
+
+  it("refuses to put two layers of one name on the same tile", async () => {
+    /* Found by hand: a row of tiles was given an ellipse, then a group holding
+     * a copy of that same ellipse was pasted onto one of them. The tile ended
+     * up with the id twice — once inside the group, once beside it — and every
+     * lookup in this app finds a layer by id and takes the first hit. So the
+     * eye and the lock clicked on the row inside the group went to the layer
+     * outside it.
+     *
+     * The invariant is "an id is unique within a tile", and the paste is the
+     * one thing that could break it. It skips such a tile and says so. */
+    await enterInbox();
+    const [a, b] = app.folderIds;
+    app.selectedTiles = [a];
+    await addTileShape("ellipse");
+    const shared = tileLayers(a).at(-1)!;
+    await addTileShape("rect");
+    const other = tileLayers(a).at(-1)!;
+    selectLayer(shared.id, a);
+    alsoSelect(other.id, a);
+    await groupPicked();
+    const group = tileLayers(a).find((l) => l.kind === "group")!;
+
+    // The second tile already carries the same ellipse, loose.
+    app.selectedTiles = [b];
+    copyLayerProps(shared.id, a);
+    await pasteLayerOntoTiles();
+    expect(findLayer(tileLayers(b), shared.id)).toBeTruthy();
+
+    // Now the group, whose member would be that id a second time.
+    copyLayerProps(group.id, a);
+    app.selectedTiles = [b];
+    await pasteLayerOntoTiles();
+
+    expect(tileLayers(b).some((l) => l.kind === "group")).toBe(false);
+    expect([...walkLayers(tileLayers(b))].filter((l) => l.id === shared.id)).toHaveLength(1);
+    expect(app.error).toContain("skipped");
   });
 
   it("opens the menu on the row and pastes through it", async () => {

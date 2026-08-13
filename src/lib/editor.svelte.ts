@@ -2074,14 +2074,40 @@ export async function pasteLayerOntoTiles() {
   const from = copied?.layer;
   const tiles = app.selectedTiles.filter((t) => app.manifest.tiles[t]);
   if (!from || !tiles.length) return;
+  /* Everything the paste brings, a group's members included. An id has to stay
+     unique within a tile: every lookup in this app finds a layer by id and
+     takes the first hit, so a second layer of that name somewhere else on the
+     same tile makes the eye, the lock, the delete and the drag land wherever
+     the walk happens to reach first. Pasting a group onto a tile that already
+     carried one of its members did exactly that — the row inside the group was
+     clicked and the layer outside it went dark. */
+  const bringing = new Set([...walkLayers([from])].map((l) => l.id));
+  const done: string[] = [];
+  const clashed: string[] = [];
   await mutate(`Paste layer onto ${tiles.length} tile(s)`, () => {
     for (const t of tiles) {
       const own = app.manifest.tiles[t].layers;
       const to = findLayer(own, from.id);
+      /* The layer being written over is allowed to hold these ids — it is the
+         same layer. Anywhere else on the tile is a collision, and the tile is
+         left alone: refusing is recoverable, a tile with two layers of one name
+         is a puzzle nobody can see. */
+      const mine = to ? new Set([...walkLayers([to])].map((l) => l.id)) : new Set<string>();
+      if ([...walkLayers(own)].some((l) => bringing.has(l.id) && !mine.has(l.id))) {
+        clashed.push(t);
+        continue;
+      }
       if (to) writeProps(to, from);
       else own.push(clone(from));
+      done.push(t);
     }
-    selectLayer(from.id, tiles[0]);
+    if (done.length) selectLayer(from.id, done[0]);
+    // Said out loud: a paste that quietly reached six tiles of eight is the
+    // kind of thing found a week later.
+    if (clashed.length)
+      app.error =
+        `Pasted onto ${done.length} tile(s); ${clashed.length} skipped — ` +
+        `already carrying a layer of that name`;
   });
 }
 
