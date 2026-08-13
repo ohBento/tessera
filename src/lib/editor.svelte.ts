@@ -807,8 +807,8 @@ export function selectLayer(id: string, tileId = "") {
  *  `syncLiveLayers` rebuilds a copy from the Layout on every "Update stamps":
  *  the flag was overwritten and a hidden design came back, in the wall and in
  *  the file written to the game, with this row still saying "hidden". */
-export async function toggleLayerHidden(id: string) {
-  const list = listOf(id);
+export async function toggleLayerHidden(id: string, tileId = app.selectedTile) {
+  const list = listOf(id, tileId);
   const self = list?.find((l) => l.id === id);
   if (!self) return;
   const next = !self.hidden;
@@ -823,8 +823,8 @@ export async function toggleLayerHidden(id: string) {
  *
  *  A group dissolves and hands its members back rather than taking them with
  *  it — see removeLayerFrom, which is where that rule lives. */
-export async function deleteLayer(id: string) {
-  const list = listOf(id);
+export async function deleteLayer(id: string, tileId = app.selectedTile) {
+  const list = listOf(id, tileId);
   const layer = list && findLayer(list, id);
   if (!list || !layer) return;
   await mutate("Delete layer", () => {
@@ -1700,8 +1700,8 @@ export async function setTileLayerField(
 /** The layer behind an id: a tile's, where the selection names one, otherwise
  *  the open wall's own. Two places, because those are the only two a layer can
  *  live in now. */
-const anyLayer = (id: string): Layer | undefined =>
-  findLayer(app.manifest.tiles[app.selectedTile]?.layers ?? [], id) ??
+const anyLayer = (id: string, tileId = app.selectedTile): Layer | undefined =>
+  findLayer(app.manifest.tiles[tileId]?.layers ?? [], id) ??
   findLayer(openProject()?.gridLayers ?? [], id);
 
 /** The layer the panel is showing: whatever is picked, on its own tile or
@@ -1764,8 +1764,8 @@ export const tileProject = (tileId: string) => projectOf(app.manifest, tileId);
 
 /** Locking takes a layer out of Fabric's hit testing (makeInteractive in
  *  scene.ts), so it stops being draggable while staying visible. */
-export async function toggleLayerLocked(id: string) {
-  const layer = anyLayer(id);
+export async function toggleLayerLocked(id: string, tileId = app.selectedTile) {
+  const layer = anyLayer(id, tileId);
   if (!layer) return;
   await mutate("Lock or unlock layer", () => (layer.locked = !layer.locked));
 }

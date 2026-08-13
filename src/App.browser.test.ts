@@ -15,7 +15,7 @@ import { mount, tick, unmount } from "svelte";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import App from "./App.svelte";
-import { resetRows } from "./lib/rows.svelte";
+import { resetRows, reveal } from "./lib/rows.svelte";
 import {
   app,
   applyTransform,
@@ -54,6 +54,7 @@ import {
   renameLayer,
   tileCaptions,
   toggleLayerHidden,
+  toggleLayerLocked,
   toggleTile,
 } from "./lib/editor.svelte";
 import {
@@ -248,6 +249,84 @@ describe("the wall", () => {
     // The other portrait was never asked about.
     expect(on(a).x).toBeCloseTo(0.5, 5);
     expect(on(a).y).toBeCloseTo(0.5, 5);
+  });
+
+  /* The row buttons are the third caller of that pair, and they never carried
+   * the tile. A row knows perfectly well which portrait it belongs to — the
+   * name button beside the eye passes it — so the eye hid, the lock locked and
+   * × deleted on whichever tile the id turned up on first, unless that tile
+   * happened to be the selected one. On the real document three ids sit on 14,
+   * 14 and 39 of the 44 tiles, so most clicks landed elsewhere. */
+  const twinned = async (id: string) => {
+    await enterInbox();
+    const [a, b] = app.folderIds;
+    /* A shape, not a picture: the row draws what it lists, and a made-up asset
+     * name has nothing behind it to draw. */
+    const twin = () => {
+      const l = newShapeLayer("rect");
+      l.id = id;
+      return l;
+    };
+    app.manifest.tiles[a].layers.push(twin());
+    app.manifest.tiles[b].layers.push(twin());
+    app.version++;
+    await tick();
+    // Nothing picked: what a row click does before anything else is touched.
+    selectLayer("", "");
+    return [a, b] as const;
+  };
+
+  it("hides the layer on the row's own tile, not the first tile holding that id", async () => {
+    const [a, b] = await twinned("shared-eye");
+    await toggleLayerHidden("shared-eye", b);
+
+    expect(findLayer(tileLayers(b), "shared-eye")!.hidden).toBe(true);
+    expect(findLayer(tileLayers(a), "shared-eye")!.hidden).toBeFalsy();
+  });
+
+  it("locks from a row whose tile is not the selected one", async () => {
+    /* The other resolver, and the other symptom: this one does not scan, so an
+     * unselected tile answered `undefined` and the click did nothing at all. */
+    const [a, b] = await twinned("shared-lock");
+    await toggleLayerLocked("shared-lock", b);
+
+    expect(findLayer(tileLayers(b), "shared-lock")!.locked).toBe(true);
+    expect(findLayer(tileLayers(a), "shared-lock")!.locked).toBeFalsy();
+  });
+
+  it("deletes from the row's own tile", async () => {
+    const [a, b] = await twinned("shared-x");
+    await deleteLayer("shared-x", b);
+
+    expect(findLayer(tileLayers(b), "shared-x")).toBeUndefined();
+    expect(findLayer(tileLayers(a), "shared-x")).toBeTruthy();
+  });
+
+  it("hides from the row that was actually clicked", async () => {
+    /* The three above prove the functions honour a tile. This one proves the
+     * rows hand one over, which is where the bug was: the resolvers were doing
+     * what they were asked, with nobody asking for a tile at all. Clicked
+     * through the DOM for that reason — calling the function with the right
+     * argument cannot fail the way the button did. */
+    const [a, b] = await twinned("shared-dom");
+
+    // The rows are behind the Tiles twisty, and a shut section renders none.
+    reveal("tiles");
+    await tick();
+
+    const row = document.querySelector(`[data-tile="${b}"]`) as HTMLElement;
+    expect(row).toBeTruthy();
+    (row.querySelector("button.twisty") as HTMLButtonElement).click();
+    await tick();
+
+    const eye = [...row.querySelectorAll("button.eye")].find(
+      (e) => e.getAttribute("title") === "Hide",
+    ) as HTMLButtonElement;
+    expect(eye).toBeTruthy();
+    eye.click();
+
+    await until(() => !!findLayer(tileLayers(b), "shared-dom")!.hidden);
+    expect(findLayer(tileLayers(a), "shared-dom")!.hidden).toBeFalsy();
   });
 
   it("hands the canvas handles to the picked tile's copy alone", async () => {

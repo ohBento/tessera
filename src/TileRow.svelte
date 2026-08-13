@@ -169,7 +169,7 @@
         <button
           class="eye"
           title={layer.hidden ? "Show" : "Hide"}
-          onclick={() => toggleLayerHidden(layer.id)}
+          onclick={() => toggleLayerHidden(layer.id, id)}
         >
           <RowIcon name="eye" on={!!layer.hidden} />
         </button>
@@ -177,7 +177,7 @@
           class="eye"
           class:on={layer.locked}
           title={layer.locked ? "Unlock" : "Lock"}
-          onclick={() => toggleLayerLocked(layer.id)}
+          onclick={() => toggleLayerLocked(layer.id, id)}
         >
           <RowIcon name="lock" on={!!layer.locked} />
         </button>
@@ -189,7 +189,7 @@
         >
           {layerLabel(layer)}
         </button>
-        <button title="Delete" onclick={() => deleteLayer(layer.id)}>×</button>
+        <button title="Delete" onclick={() => deleteLayer(layer.id, id)}>×</button>
       </li>
     {/each}
   </ul>
