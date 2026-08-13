@@ -787,12 +787,26 @@ async function background(
     });
     return img;
   }
-  const bmp = toCanvas(await deps.original(tileId));
-  return new fabric.FabricImage(bmp, {
-    ...common,
-    scaleX: TILE_W / bmp.width,
-    scaleY: TILE_H / bmp.height,
-  });
+  try {
+    const bmp = toCanvas(await deps.original(tileId));
+    return new fabric.FabricImage(bmp, {
+      ...common,
+      scaleX: TILE_W / bmp.width,
+      scaleY: TILE_H / bmp.height,
+    });
+  } catch {
+    /* One portrait the decoder will not take — truncated by a crash, half
+       synced, written by something that is not the game — used to take the
+       whole wall with it: every background is fetched in one Promise.all, one
+       rejection rejects the lot, and the build throws. What the user got was
+       an empty wall, on this wall and every other, for the rest of the
+       session, under a message naming no tile.
+       An empty cell instead. The tile is still there, still has its layers,
+       and the gap says which one it is. Silent on purpose: the folder is read
+       on every open and a message per bad file, per rebuild, would bury the
+       one line the status bar has. */
+    return new fabric.Rect({ ...common, width: TILE_W, height: TILE_H, fill: "#1b1b20" });
+  }
 }
 
 /** Which layers can be stretched out of proportion.

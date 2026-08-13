@@ -96,6 +96,31 @@ describe("deciding whether one tile is enough", () => {
     expect(soleTileChange(print(m), print(m))).toBe("");
   });
 
+  it("draws the rest of the wall when one portrait will not decode", async () => {
+    /* Every background is fetched in one Promise.all, so one rejection
+     * rejected the lot and the build threw: an empty wall — this wall and any
+     * other — for the rest of the session, under a message naming no tile.
+     * A truncated BMP is not exotic; a crash mid-write or a half-synced
+     * Documents folder produces one. */
+    const m = dressed(9);
+    const [bad] = order(m);
+    const deps = {
+      ...testDeps,
+      original: (id: string) =>
+        id === bad ? Promise.reject(new Error("not a bitmap")) : testDeps.original(id),
+    };
+
+    const canvas = wallCanvas(9);
+    try {
+      await buildGrid(canvas, view(m), m, deps, true);
+      // Every tile's layers are on the canvas, the bad one's included.
+      for (const id of order(m))
+        expect(canvas.getObjects().some((o) => (o as { tileId?: string }).tileId === id)).toBe(true);
+    } finally {
+      canvas.dispose();
+    }
+  });
+
   it("counts a padlock as no change, and the eye as a change", () => {
     /* Locking fourteen tiles' layers named fourteen changed tiles, which is
        past the incremental limit, which threw the wall away and built it again

@@ -439,6 +439,30 @@ describe("the wall", () => {
     for (const tile of [a, b, c]) expect(fill(tile)).toBe("#ff0000");
   });
 
+  it("leaves no wall open that the document does not have", async () => {
+    /* Undo swaps the document and nothing else, so the id of the open project
+     * outlived the project itself: the canvas fell back to Unsorted while the
+     * sidebar highlighted nothing, and the wall's own menu lost the two entries
+     * that wall is for and offered two that silently did nothing. Both ways in
+     * are here — undoing the making of a project, and redoing its deletion. */
+    await enterInbox();
+    app.selectedTiles = app.folderIds.slice(0, 3);
+    await newProjectFrom("Konto");
+    const made = projects()[0].id;
+    openProjectView(made);
+    expect(app.openProjectId).toBe(made);
+
+    await undoEdit();
+    expect(app.openProjectId).toBe("");
+
+    await redoEdit();
+    openProjectView(projects()[0].id);
+    await deleteProject(projects()[0].id);
+    await undoEdit();
+    await redoEdit();
+    expect(app.openProjectId).toBe("");
+  });
+
   it("stops reaching the picked tile once the pick is dropped", async () => {
     /* The other half of the rule above, and it was missing: the tile a layer
      * was picked on always counts, so something has to stop counting it. Left
@@ -1482,6 +1506,50 @@ describe("carrying one layer's properties to another", () => {
     // One layer across two tiles now: a drag on the group reaches both.
     app.selectedTiles = [a, b];
     expect(bulkTargets(group.id).sort()).toEqual([a, b].sort());
+  });
+
+  it("leaves each tile's own wording inside a pasted group", async () => {
+    /* The contract this paste is written to: a tile already carrying the layer
+     * keeps what its copy *says* and takes everything else. It held for a
+     * loose caption and not for one inside a group — the group's members were
+     * replaced wholesale, so a nameplate group carried across forty-four
+     * portraits gave every one of them the first tile's name. Worse than it
+     * sounds: a caption inside a group has no per-tile text field in the row,
+     * so there is nothing on screen to notice it with, and one undo is the
+     * only way back. */
+    await enterInbox();
+    const [a, b] = app.folderIds;
+    app.selectedTiles = [a];
+    await addTileShape("rect");
+    const plate = tileLayers(a).at(-1)!;
+    await addTileText();
+    const caption = tileLayers(a).at(-1)!;
+    selectLayer(plate.id, a);
+    alsoSelect(caption.id, a);
+    await groupPicked();
+    const group = tileLayers(a).find((l) => l.kind === "group")!;
+
+    // The arrangement is carried to the second portrait, whole.
+    copyLayerProps(group.id, a);
+    app.selectedTiles = [b];
+    await pasteLayerOntoTiles();
+    expect(findLayer(tileLayers(b), group.id)).toBeTruthy();
+
+    // Then each portrait is named by hand — the work being protected here.
+    await setTileLayerField([a], caption.id, "text", "Aria");
+    await setTileLayerField([b], caption.id, "text", "Bern");
+    // And the look is changed on the first one, and carried again.
+    await setTileLayerField([a], plate.id, "fill", "#00ff88");
+
+    copyLayerProps(group.id, a);
+    app.selectedTiles = [b];
+    await pasteLayerOntoTiles();
+
+    const on = (tile: string, id: string) => findLayer(tileLayers(tile), id)!;
+    // The look travelled; the name stayed.
+    expect((on(b, plate.id) as ShapeLayer).fill).toBe("#00ff88");
+    expect((on(b, caption.id) as TextLayer).text).toBe("Bern");
+    expect((on(a, caption.id) as TextLayer).text).toBe("Aria");
   });
 
   it("refuses to put two layers of one name on the same tile", async () => {

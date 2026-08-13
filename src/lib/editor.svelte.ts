@@ -788,6 +788,19 @@ async function travel(step: typeof undo<Manifest>, how: "Undone" | "Redone") {
     app.openProjectId = closedByDelete;
     closedByDelete = "";
   }
+  /* A wall the state travelled to does not have leaves nowhere to stand. Undo
+     of "Project from selection", or redo of a delete, left `openProjectId`
+     naming a project the document no longer holds: the canvas fell back to
+     Unsorted while the sidebar highlighted nothing, the wall menu lost the two
+     entries that wall exists for and offered two that silently did nothing,
+     and the Snapshots list came up empty. The only way out was to notice that
+     "Unsorted" — which did not look chosen — was the way back. */
+  if (
+    app.openProjectId &&
+    app.openProjectId !== ARCHIVE &&
+    !there.state.projects.some((p) => p.id === app.openProjectId)
+  )
+    app.openProjectId = "";
   app.version++;
   /* Said out loud, because Ctrl+Z is the one action with no target: every other
    * edit tells you what it touched by touching it, and this one can reach
@@ -2166,13 +2179,50 @@ function writeProps(to: Layer, from: Layer) {
     !KEPT_ON_PASTE.has(k) && (from.kind === to.kind || ACROSS_KINDS.has(k));
   const rec = to as unknown as Record<string, unknown>;
   for (const k of Object.keys(rec)) if (travels(k) && !(k in from)) delete rec[k];
-  for (const [k, v] of Object.entries(from)) if (travels(k)) rec[k] = clone(v);
+  for (const [k, v] of Object.entries(from)) {
+    /* A group's members travel — that is what makes "put this arrangement on
+       those portraits" one action — but each tile keeps what its own copy of a
+       member *says*. Replacing the list outright is what the rest of this
+       function is careful never to do: a nameplate group pasted across
+       forty-four portraits gave all of them tile one's caption, and the row
+       that would show it is not even drawn for a layer inside a group.
+       A member the target does not have arrives whole; one it has takes the
+       same treatment its loose twin would. */
+    if (k === "children" && to.kind === "group" && from.kind === "group") {
+      const mine = new Map(to.children.map((c) => [c.id, c]));
+      to.children = from.children.map((c) => {
+        const own = mine.get(c.id);
+        if (!own) return clone(c);
+        writeProps(own, c);
+        return own;
+      });
+      continue;
+    }
+    if (travels(k)) rec[k] = clone(v);
+  }
 }
 
 export async function pasteLayerProps(id: string, tileId = app.selectedTile) {
   const from = copied?.layer;
   const to = anyLayer(id, tileId);
   if (!from || !to || (copied!.tile === tileId && from.id === id)) return;
+  /* The same rule the paste onto tiles keeps, and this had none: an id has to
+     stay unique within a tile. Pasting one group's properties onto another
+     brought the first group's members with it, so a tile ended up with the
+     same id twice — once in each group — and every lookup takes the first hit.
+     The two rows then disagreed about which layer they were. */
+  /* Only what a paste actually brings an id for: the target keeps its own id,
+     so a group's members are the only ids that can arrive. Between two layers
+     that are not groups nothing can collide at all. */
+  const bringing = new Set(
+    from.kind === "group" ? [...walkLayers(from.children)].map((l) => l.id) : [],
+  );
+  const mine = new Set([...walkLayers([to])].map((l) => l.id));
+  const own = tileId ? (app.manifest.tiles[tileId]?.layers ?? []) : (openProject()?.gridLayers ?? []);
+  if (bringing.size && [...walkLayers(own)].some((l) => bringing.has(l.id) && !mine.has(l.id))) {
+    app.error = "Not pasted — this tile already carries a layer of that name";
+    return;
+  }
   await mutate("Paste properties", () => writeProps(to, from));
 }
 
