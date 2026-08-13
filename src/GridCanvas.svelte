@@ -265,6 +265,12 @@
          back what the layer already had, so moving a trimmed picture does not
          untrim it. */
       crop: base.kind === "image" ? base.crop : undefined,
+      /* The two above are the size the layer should end up at, measured off the
+         frame the hand let go of — not a factor to apply to what it has. The
+         stand-in keeps the scale of the gesture that just ended, so a factor
+         read from it lands again on the next write and again on the one after:
+         the frame grew once and the shape grew every time it was touched. */
+      absolute: true,
     };
     const targets = bulkTargets(target.layerId);
     /* Structural even for a plain move, where a direct drag skips it. There the
@@ -802,10 +808,13 @@
           ctx.strokeStyle = "rgba(255, 196, 92, 1)";
           ctx.lineWidth = 3;
         } else if (picked.has(id)) {
-          ctx.fillStyle = "rgba(166, 133, 255, 0.22)";
-          ctx.fillRect(x, y, w, h);
+          /* Outline only. A wash over the whole cell sat on top of the artwork
+             the pick was made in order to judge — colours shifted, a gradient
+             read wrong, and the one tile you were looking at was the one you
+             could see least well. Thick enough to count across a wall of
+             forty-four at a glance. */
           ctx.strokeStyle = "rgba(203, 184, 255, 0.95)";
-          ctx.lineWidth = 2;
+          ctx.lineWidth = 3;
         } else {
           ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
           ctx.lineWidth = 1;

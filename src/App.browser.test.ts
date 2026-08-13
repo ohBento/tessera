@@ -997,9 +997,19 @@ describe("the placing tool", () => {
     await tick();
     await new Promise((r) => setTimeout(r, 200));
 
-    const after = findLayer(app.manifest.tiles[tile]!.layers, layerId)! as ShapeLayer;
-    expect(after.w).toBeCloseTo(before.w * 2, 4);
-    expect(after.h).toBeCloseTo(before.h * 2, 4);
+    const once = findLayer(app.manifest.tiles[tile]!.layers, layerId)! as ShapeLayer;
+    /* And again, with the stand-in exactly as Fabric left it. A second gesture
+     * on a frame that was never rebuilt must not take the first one's factor a
+     * second time — which is what "the frame grew a little and the shape grew a
+     * lot" looks like from the inside. */
+    canvas.fire("object:modified", { target: stand as fabric.Object });
+    await tick();
+    await new Promise((r) => setTimeout(r, 200));
+    const twice = findLayer(app.manifest.tiles[tile]!.layers, layerId)! as ShapeLayer;
+
+    expect(once.w).toBeCloseTo(before.w * 2, 4);
+    expect(once.h).toBeCloseTo(before.h * 2, 4);
+    expect(twice.w).toBeCloseTo(once.w, 4);
   });
 
   it("will not let a gesture scale a layer down to nothing", async () => {

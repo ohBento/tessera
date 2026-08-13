@@ -1026,6 +1026,17 @@ type Transform = {
   boxH?: number;
   /** Only a picture has one, and only once its side handles were used. */
   crop?: Inset;
+  /** Set by the wall's stand-in, and only by it: `scale`/`scaleH` are the size
+   *  the layer should end up, not a factor to apply to the size it has.
+   *
+   *  A shape's size is otherwise multiplied by what Fabric scaled, which is
+   *  right for the object that *is* the layer — Fabric resets its scale on the
+   *  next rebuild, so each gesture contributes its factor once. The stand-in is
+   *  not rebuilt on that clock: it keeps the scale of the gesture that just
+   *  ended, so the next write applies that factor a second time and the one
+   *  after it a third. Seen as a frame that grew once and a shape that grew
+   *  again every time it was touched. */
+  absolute?: boolean;
 };
 
 /** Smallest a gesture may leave a layer: a hundredth of a tile, about six
@@ -1077,8 +1088,8 @@ function resize(layer: Layer, patch: Transform) {
      * a polygon shrink on every drag, since a regular n-gon's bounding box is
      * smaller than the box it is inscribed in. Both axes on their own: a shape
      * is the one kind that can be stretched. */
-    layer.w = Math.max(layer.w * (patch.fx || 1), MIN_SPAN);
-    layer.h = Math.max(layer.h * (patch.fy || 1), MIN_SPAN);
+    layer.w = Math.max(patch.absolute ? patch.scale : layer.w * (patch.fx || 1), MIN_SPAN);
+    layer.h = Math.max(patch.absolute ? patch.scaleH : layer.h * (patch.fy || 1), MIN_SPAN);
   }
 }
 /** Writes a finished drag/scale/rotate back into the model.
