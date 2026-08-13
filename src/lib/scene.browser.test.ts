@@ -166,6 +166,29 @@ describe("picture frames", () => {
     expect(pixel(bordered, TILE_W / 2, TILE_H / 2)).toEqual(pixel(plain, TILE_W / 2, TILE_H / 2));
   });
 
+  it("exports what is behind a transparent picture, not black", async () => {
+    /* The BMP the game reads has no alpha — encodeBmp32 forces every pixel
+     * opaque — so whatever a transparent pixel says its colour is, is what
+     * lands in the file. The export canvas had no ground of its own, so an
+     * untouched pixel said "transparent black" and came out black, while the
+     * editor showed its own dark grey behind the same picture. A PNG with
+     * transparency therefore looked right on the wall and had holes in it in
+     * the game.
+     *
+     * Measured on a tile whose whole background is a transparent picture, so
+     * the only thing under it is the ground being tested. */
+    const m = manifest(1);
+    const [id] = order(m);
+    // A disc leaves the corners transparent; the base fills the tile with it.
+    m.tiles[id].base = { asset: "disc:#ff0000", crop: { x: 0, y: 0, w: 200, h: 200 } };
+    const bytes = (await renderTiles(view(m), m, testDeps)).get(id)!;
+
+    const [r, g, b, a] = pixel(bytes, 4, 4);
+    expect(a).toBe(255);
+    // The editor's own ground, not black.
+    expect([r, g, b]).toEqual([0x17, 0x17, 0x1a]);
+  });
+
   it("still reports the trim it baked in", async () => {
     /* Framing means baking the trimmed window into a canvas of its own and
      * handing that to Fabric, so from then on the object *is* the window: it

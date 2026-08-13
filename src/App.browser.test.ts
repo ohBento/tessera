@@ -22,6 +22,7 @@ import {
   applyTransformBulk,
   addTileShape,
   addTileText,
+  bakeMosaic,
   bulkTargets,
   clearAll,
   selectLayer,
@@ -437,6 +438,43 @@ describe("the wall", () => {
     await setTileLayerField(bulkTargets("plate-01"), "plate-01", "fill", "#ff0000");
     const fill = (tile: string) => (findLayer(tileLayers(tile), "plate-01") as ShapeLayer).fill;
     for (const tile of [a, b, c]) expect(fill(tile)).toBe("#ff0000");
+  });
+
+  it("refuses to bake a wall picture whose look would not survive it", async () => {
+    /* A baked background is an asset name and a crop rectangle, and that is all
+     * `background()` draws. Everything else the panel offers for a picture —
+     * the rotation, the trim, the grading dials, the frame, the opacity — is
+     * drawn on the wall and would simply be missing from the forty-four files
+     * written to the game. It baked anyway, and with the eye switched off it
+     * baked a picture that was not even on screen. Named and refused, because
+     * the alternative is a wall that disagrees with the game and says nothing.
+     */
+    await enterInbox();
+    app.selectedTiles = app.folderIds.slice(0, 4);
+    await newProjectFrom("Konto");
+    const p = projects()[0].id;
+    openProjectView(p);
+
+    const picture = newImageLayer("block:#00ff88");
+    picture.space = "grid";
+    picture.scale = 4;
+    app.manifest.projects.find((x) => x.id === p)!.gridLayers.push(picture);
+    app.version++;
+    selectLayer(picture.id, "");
+    await tick();
+
+    await setLayerField(picture.id, "rotation", 30);
+    await bakeMosaic();
+    expect(app.error).toContain("rotation");
+    for (const id of app.folderIds.slice(0, 4)) expect(app.manifest.tiles[id].base).toBeNull();
+
+    /* Straightened out, the guard lets it past. What happens after that is the
+     * bake's own business and is covered where the arithmetic lives — this
+     * harness has no real picture behind that asset name. */
+    await setLayerField(picture.id, "rotation", 0);
+    app.error = "";
+    await bakeMosaic();
+    expect(app.error).not.toContain("Not applied");
   });
 
   it("leaves no wall open that the document does not have", async () => {

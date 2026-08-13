@@ -1557,10 +1557,46 @@ export async function clearMosaic() {
  *  should not keep sitting on top of other layers or stay draggable once it is
  *  where it belongs. Re-positioning means adding a new picture and baking
  *  again — there is deliberately no "unbake". */
+/** What Apply cannot carry into a tile's `base`.
+ *
+ *  A baked background is an asset name and a crop rectangle — `background()`
+ *  draws it with nothing else. Everything below is drawn on the wall by
+ *  `imageObject` and would simply be absent from the file written to the game:
+ *  a picture turned on the wall came out square-on, a graded one came out raw,
+ *  a half-transparent one came out solid, and one with the eye switched off
+ *  came out anyway. The wall showed one thing and forty-four portraits held
+ *  another, with nothing said either way.
+ *
+ *  Named rather than silently ignored, and refused rather than approximated:
+ *  the fix that would honour them is to bake the rendered pixels instead of
+ *  re-deriving a crop, which means writing a picture per tile. ponytail: this
+ *  is the honest half of that, and it is the half that stops work being lost. */
+function unbakeable(l: ImageLayer): string[] {
+  const off: string[] = [];
+  if (l.hidden) off.push("hidden");
+  if (l.rotation) off.push("rotation");
+  if (l.crop) off.push("crop");
+  if (l.flipX || l.flipY) off.push("flip");
+  if (l.opacity !== 1) off.push("opacity");
+  for (const k of ["brightness", "contrast", "saturation", "hue", "blur"] as const)
+    if (l[k]) off.push(k);
+  if (l.borderWidth) off.push("border");
+  if (l.cornerRadius) off.push("corners");
+  if (l.shadow) off.push("shadow");
+  return off;
+}
+
 export async function bakeMosaic() {
   const layer = selectedMosaic();
   const project = openProject();
   if (!layer || !project) return;
+  const off = unbakeable(layer);
+  if (off.length) {
+    app.error =
+      `Not applied: a baked background keeps only the placement, so ${off.join(", ")} ` +
+      `would be lost. Reset ${off.length > 1 ? "those" : "that"} first, or leave the picture live.`;
+    return;
+  }
   await run("bake", async () => {
     const bmp = await loadAsset(app.dir, layer.asset);
     /* Measured against the same project the bake writes into. The crop map is

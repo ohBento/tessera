@@ -116,6 +116,15 @@ export async function withTileCanvas<T>(
     width: TILE_W,
     height: TILE_H,
     enableRetinaScaling: false,
+    /* The same ground the editor paints on. Without it the export canvas is
+       transparent, and encodeBmp32 forces every pixel opaque on the way out —
+       which is right for the game and wrong for what it was given: a
+       transparent pixel handed over its straight colour, which for anything
+       Fabric had not drawn is black. A PNG with transparency showed the
+       editor's dark grey on the wall and came out with black holes in the
+       file. Semi-transparent edges came out unblended for the same reason;
+       compositing them against this is what makes them match the screen. */
+    backgroundColor: "#17171a",
   });
   try {
     return await fn(canvas);
