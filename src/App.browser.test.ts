@@ -28,6 +28,8 @@ import {
   pickedLayers,
   groupPicked,
   ungroupLayer,
+  groupHolding,
+  takeOutOfGroup,
   setTileLayerField,
   archived,
   archiveSelection,
@@ -1325,6 +1327,45 @@ describe("carrying one layer's properties to another", () => {
     expect(findLayer(tileLayers(a), id)!.name).not.toBe("Frame");
   });
 
+  it("carries a whole group to other tiles, members and all", async () => {
+    /* A group copied onto a tile has to arrive with what is in it, and each
+     * member with its own look — otherwise "copy this arrangement to those
+     * portraits" means rebuilding it by hand on each one.
+     *
+     * It falls out of the two rules already in place rather than needing a
+     * third: the clipboard holds a deep copy, so a group brings its children;
+     * and a tile that has no layer of that id gets the whole thing. The ids
+     * come with it, which is what makes the copies one layer across the wall
+     * from then on — drag one, they all move. */
+    await enterInbox();
+    const [a, b] = app.folderIds;
+    app.selectedTiles = [a];
+    await addTileShape("rect");
+    const one = tileLayers(a).at(-1)!;
+    await setTileLayerField([a], one.id, "fill", "#00ff88");
+    await addTileShape("ellipse");
+    const two = tileLayers(a).at(-1)!;
+    await setTileLayerField([a], two.id, "x", 0.8);
+    selectLayer(one.id, a);
+    alsoSelect(two.id, a);
+    await groupPicked();
+    const group = tileLayers(a).find((l) => l.kind === "group")!;
+
+    copyLayerProps(group.id, a);
+    app.selectedTiles = [b];
+    await pasteLayerOntoTiles();
+
+    const landed = tileLayers(b).find((l) => l.id === group.id);
+    expect(landed?.kind).toBe("group");
+    // Both members, under their own ids, with what they looked like.
+    const onB = (id: string) => findLayer(tileLayers(b), id) as ShapeLayer | undefined;
+    expect(onB(one.id)?.fill).toBe("#00ff88");
+    expect(onB(two.id)?.x).toBeCloseTo(0.8, 6);
+    // One layer across two tiles now: a drag on the group reaches both.
+    app.selectedTiles = [a, b];
+    expect(bulkTargets(group.id).sort()).toEqual([a, b].sort());
+  });
+
   it("opens the menu on the row and pastes through it", async () => {
     const [from, to] = await twoShapes();
     from.layer.x = 0.15;
@@ -2025,6 +2066,38 @@ describe("two guards the wall was given and nothing checked", () => {
     expect(now.x - was.group.x).toBeCloseTo(120 / TILE_W, 4);
     expect(findLayer(tileLayers(tile), one.id)!.x).toBeCloseTo(was.one.x, 6);
     expect(findLayer(tileLayers(tile), two.id)!.x).toBeCloseTo(was.two.x, 6);
+  });
+
+  it("takes a layer out of its group and leaves it where it was drawn", async () => {
+    /* Crossing that boundary swaps one displacement for another: the group's
+     * for the top level's. Without the swap the layer jumps by the group's
+     * offset, which is exactly the thing nobody asked for when they said "take
+     * this one out". */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const one = tileLayers(tile).at(-1)!;
+    await addTileShape("ellipse");
+    const two = tileLayers(tile).at(-1)!;
+    selectLayer(one.id, tile);
+    alsoSelect(two.id, tile);
+    await groupPicked();
+
+    const group = tileLayers(tile).find((l) => l.kind === "group")!;
+    await setTileLayerField([tile], group.id, "x", 0.75);
+    // Where it is drawn: its own x plus the group's quarter-tile shift.
+    const drawnAt = findLayer(tileLayers(tile), two.id)!.x + 0.25;
+
+    expect(groupHolding(two.id, tile)?.id).toBe(group.id);
+    await takeOutOfGroup(two.id, tile);
+
+    expect(groupHolding(two.id, tile)).toBeUndefined();
+    expect(tileLayers(tile).some((l) => l.id === two.id)).toBe(true);
+    // Same place on the tile, now said in its own coordinates.
+    expect(findLayer(tileLayers(tile), two.id)!.x).toBeCloseTo(drawnAt, 6);
+    // The group keeps the other one.
+    expect(groupHolding(one.id, tile)?.id).toBe(group.id);
   });
 
   it("frames a layer picked inside a group, where the group has put it", async () => {

@@ -871,6 +871,32 @@ export async function groupPicked() {
   });
 }
 
+/** The group holding this layer on its tile, if one does — what decides
+ *  whether "Take out of group" is offered on its row. */
+export const groupHolding = (id: string, tileId = app.selectedTile): Layer | undefined =>
+  [...walkLayers(app.manifest.tiles[tileId]?.layers ?? [])].find(
+    (l) => l.kind === "group" && l.children.some((c) => c.id === id),
+  );
+
+/** Takes one layer out of its group and leaves it on the tile.
+ *
+ *  `relocateLayer` is the whole of it: it swaps the group's displacement for
+ *  the top level's, so the layer stays exactly where it was drawn — crossing
+ *  that boundary without the swap is how a layer jumps by the group's offset.
+ *
+ *  It lands immediately after the group in the stack rather than on top of
+ *  everything, so leaving a group is not also a change of what covers what. */
+export async function takeOutOfGroup(id: string, tileId = app.selectedTile) {
+  const list = app.manifest.tiles[tileId]?.layers;
+  const group = groupHolding(id, tileId);
+  if (!list || !group) return;
+  const at = list.findIndex((l) => l.id === group.id);
+  const beforeId = at >= 0 ? (list[at + 1]?.id ?? null) : null;
+  await mutate("Take out of group", () => {
+    relocateLayer(list, id, null, beforeId);
+  });
+}
+
 /** Dissolves a group, leaving its members where they were drawn.
  *
  *  `removeLayerFrom` is the whole of it: a group hands its members back to the
@@ -1960,7 +1986,11 @@ const KEPT_ON_PASTE = new Set([
   "name",
   "seq",
   "kind",
-  "layers",
+  /* `children` is deliberately absent. A group's members are what the group
+     *is*, so copying one onto another tile has to bring them — otherwise
+     "put this arrangement on those portraits" means building it again by
+     hand on each. ("layers" stood here once; no layer has a field by that
+     name, so it excluded nothing and said something untrue.) */
   "asset",
   "text",
   "icon",

@@ -73,6 +73,8 @@
     pickedLayers,
     groupPicked,
     ungroupLayer,
+    groupHolding,
+    takeOutOfGroup,
     pasteLayerOntoTiles,
     layersOnSelection,
     removeLayerFromSelection,
@@ -695,7 +697,17 @@
         ...(isGroup
           ? [{ label: "Ungroup", run: () => void ungroupLayer(layerId, tileId) } as Item]
           : []),
-        ...(picked.length > 1 || isGroup ? [{ separator: true } as Item] : []),
+        ...(groupHolding(layerId, tileId)
+          ? [
+              {
+                label: "Take out of group",
+                run: () => void takeOutOfGroup(layerId, tileId),
+              } as Item,
+            ]
+          : []),
+        ...(picked.length > 1 || isGroup || groupHolding(layerId, tileId)
+          ? [{ separator: true } as Item]
+          : []),
         {
           label: "Copy properties",
           run: () => copyLayerProps(layerId, tileId),
