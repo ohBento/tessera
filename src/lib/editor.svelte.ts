@@ -110,6 +110,21 @@ export const app = $state({
    * loop the old editor guarded against with a JSON.stringify comparison on
    * every reactive pass. Structural changes bump; transforms do not. */
   version: 0,
+  /** Set when a change was written that deliberately asked for no rebuild.
+   *
+   *  The other half of the rule above, and it went missing for as long as the
+   *  rule existed. A transform does not bump the version, so the wall's record
+   *  of what it has drawn — the fingerprint the incremental redraw compares
+   *  against — still describes the state before the drag. Undo then restores
+   *  exactly that state, the comparison answers "nothing changed", and nothing
+   *  is repainted: the model and the file hold the old position and the screen
+   *  goes on showing the new one.
+   *
+   *  The canvas clears it when it has taken it into account. A boolean and not
+   *  a count because there is nothing to count: what it says is "the drawing
+   *  and the document parted company since the last build", and one is as
+   *  parted as ten. */
+  unprinted: false,
   /** Layer picked in the list or on the canvas, "" for none. */
   selected: "",
   /** Which tile that layer was picked on, "" for a wall-spanning one.
@@ -730,6 +745,7 @@ async function mutate(label: string, fn: () => void, structural = true, run?: st
     return;
   }
   if (structural) app.version++;
+  else app.unprinted = true;
   await persist();
 }
 
@@ -925,8 +941,10 @@ export async function ungroupLayer(id: string, tileId = app.selectedTile) {
  *  the flag was overwritten and a hidden design came back, in the wall and in
  *  the file written to the game, with this row still saying "hidden". */
 export async function toggleLayerHidden(id: string, tileId = app.selectedTile) {
-  const list = listOf(id, tileId);
-  const self = list?.find((l) => l.id === id);
+  // Through the tree, the way the lock beside it already did: a group's
+  // members have rows of their own, and a plain find on the tile's stack
+  // answers undefined for every one of them.
+  const self = anyLayer(id, tileId);
   if (!self) return;
   const next = !self.hidden;
   // Named after what it does, not after the control: "Undone: toggle layer"
@@ -1054,7 +1072,16 @@ export async function openFolder(dir?: string) {
     const { prints, broken: lostPrints } = await loadFingerprints(app.dir);
     const { fresh, changed } = classify(prints, hashes);
     for (const id of fresh) prints[id] = { original: hashes[id] };
-    for (const id of Object.keys(prints)) if (!hashes[id]) delete prints[id];
+    /* Against the folder's own list, not against the hashes. A portrait the
+     * game had open when we started reads as no hash at all — hashTiles leaves
+     * it out on purpose, because a file being written is not a file that
+     * changed — and pruning on that deleted the record of a tile that is
+     * sitting right there. What goes with it is the original hash: next open
+     * the tile reads as new, whatever bytes happen to be there become its
+     * "original", and the question the game's own overwrite is meant to raise
+     * can never be asked again. */
+    const inFolder = new Set(ids);
+    for (const id of Object.keys(prints)) if (!inFolder.has(id)) delete prints[id];
     await saveFingerprints(app.dir, prints);
     app.newTiles = fresh;
     app.changedTiles = changed;
@@ -1272,7 +1299,12 @@ export async function applyTransform(
       l.x += step.dx;
       l.y += step.dy;
     }
-  }, structural ?? scaled(patch));
+    /* The extras count as a rebuild too — the fourth shape of the same fault.
+       "The canvas already shows the result" is true of the object under the
+       pointer and false of every layer carried along with it: those are other
+       Fabric objects that no hand touched. Without this the model moved them
+       and the wall did not, until something unrelated bumped the document. */
+  }, structural ?? (scaled(patch) || along.length > 0));
   /* After the write, not before: the outline answers "where would this land"
    * and a plain drag does not bump `version`, so nothing else would recompute
    * it. Cheap — the picture is already decoded and cached. */
@@ -1473,13 +1505,26 @@ export async function bakeMosaic() {
  * has them: the same character with a new haircut, or a different character
  * who inherited the slot number. --- */
 
+/** Writes "this is what the file looked like when we last agreed about it".
+ *
+ *  Only when there is something to write. A missing hash means the read failed
+ *  — the game had the file open, most likely — and the empty string that used
+ *  to be stored instead is an original no file can ever match: `classify`
+ *  compares the real hash against it and reports the tile as changed, on every
+ *  open, for good. A record left alone is at worst out of date; a record of ""
+ *  is a question that answers itself wrongly forever. */
+const recordOriginal = (prints: Record<string, { original: string }>, id: string) => {
+  const hash = app.hashes[id];
+  if (hash) prints[id] = { original: hash };
+};
+
 /** Records the file as it stands now and leaves everything else alone — the
  *  character is the same one, wearing something new. The layers were composed
  *  for them and stay. */
 export async function keepCharacter(id: string) {
   await run("recheck", async () => {
     const { prints } = await loadFingerprints(app.dir);
-    prints[id] = { original: app.hashes[id] ?? "" };
+    recordOriginal(prints, id);
     await saveFingerprints(app.dir, prints);
     /* The vault copy goes too. It holds the face from before the restyle, and
      * loadOriginal prefers it over the game's own file — keeping it would mean
@@ -1499,7 +1544,7 @@ export async function keepCharacter(id: string) {
 export async function replaceCharacter(id: string) {
   await run("recheck", async () => {
     const { prints } = await loadFingerprints(app.dir);
-    prints[id] = { original: app.hashes[id] ?? "" };
+    recordOriginal(prints, id);
     await saveFingerprints(app.dir, prints);
     await dropVaultCopy(app.dir, id);
     app.vaulted = app.vaulted.filter((x) => x !== id);
@@ -1523,7 +1568,7 @@ export async function keepAllCharacters() {
   if (!ids.length) return;
   await run("recheck", async () => {
     const { prints } = await loadFingerprints(app.dir);
-    for (const id of ids) prints[id] = { original: app.hashes[id] ?? "" };
+    for (const id of ids) recordOriginal(prints, id);
     await saveFingerprints(app.dir, prints);
     app.changedTiles = [];
     /* No cache to drop and no rebuild: the vault copies stay, and they are
@@ -1540,7 +1585,7 @@ export async function replaceAllCharacters() {
   if (!ids.length) return;
   await run("recheck", async () => {
     const { prints } = await loadFingerprints(app.dir);
-    for (const id of ids) prints[id] = { original: app.hashes[id] ?? "" };
+    for (const id of ids) recordOriginal(prints, id);
     await saveFingerprints(app.dir, prints);
     const dropped = new Set(ids);
     app.vaulted = app.vaulted.filter((x) => !dropped.has(x));
@@ -1858,12 +1903,14 @@ const fieldLabel = (key: LayerField) =>
  *  set an edit should reach. Auto-names collide between unrelated layers and
  *  would reach tiles nobody pointed at. */
 export const bulkTargets = (id: string): string[] => {
-  const scope =
-    app.selectedTiles.length > 1
-      ? app.selectedTiles
-      : app.selectedTile
-        ? [app.selectedTile]
-        : [];
+  const scope = app.selectedTiles.length > 1 ? [...app.selectedTiles] : [];
+  /* The tile the layer was picked on always counts, whatever is picked on the
+   * wall. It is not one more selected tile — it is this layer's own address,
+   * and leaving it out is what made the properties panel edit every tile
+   * except the one whose numbers it was showing: click two tiles, then click a
+   * layer on a third, and the slider moved the two and not the one under the
+   * hand. */
+  if (app.selectedTile && !scope.includes(app.selectedTile)) scope.push(app.selectedTile);
   return scope.filter((t) => !!findLayer(app.manifest.tiles[t]?.layers ?? [], id));
 };
 

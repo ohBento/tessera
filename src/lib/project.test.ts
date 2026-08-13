@@ -42,6 +42,12 @@ writeTextFile.mockImplementation(async (path: string, text: string) => {
 });
 rename.mockImplementation(async (from: string, to: string) => {
   await tick();
+  /* Windows refuses these in a filename, and this mock used to take anything —
+   * so the two "set the damaged file aside" tests below passed while the code
+   * they pin could not run at all on the only platform this app ships on. A
+   * timestamp written as 10:03:11 has two of them. */
+  const name = to.slice(to.lastIndexOf("/") + 1);
+  if (/[<>:"|?*]/.test(name)) throw new Error(`invalid filename: ${name}`);
   const held = files.get(from);
   if (held === undefined) throw new Error(`not found: ${from}`);
   files.delete(from);
@@ -62,6 +68,7 @@ const {
   saveFingerprints,
   listSnapshots,
   vaultedIds,
+  pruneVault,
   restoreTiles,
   classify,
   hashTiles,
@@ -363,6 +370,36 @@ describe("a folder that will not open is not the same as an empty one", () => {
     exists.mockImplementation(async () => true);
     readDir.mockRejectedValueOnce(new Error("locked"));
     await expect(vaultedIds("/docs/FaceTexture")).rejects.toThrow("locked");
+  });
+
+  it("does not empty the vault because the game folder read empty", async () => {
+    /* pruneVault deletes every backup whose portrait is no longer in the
+     * folder, off one readDir, on every open, unattended. The vault is the only
+     * copy of what the game shipped once Tessera has written over a file, and
+     * `remove` is not a step any undo reaches.
+     *
+     * An empty listing is the case where that reasoning breaks: a folder that
+     * reads empty says nothing about which characters exist — a fresh install
+     * before anyone has logged in, a listing the OS refused, a sync client that
+     * has not brought the files down yet. Forty-four originals is not a
+     * conclusion to draw from zero portraits. */
+    const platform = await import("./platform");
+    const readDir = vi.mocked(platform.readDir);
+    const remove = vi.mocked(platform.remove);
+    remove.mockClear();
+    exists.mockImplementation(async () => true);
+    readDir.mockResolvedValueOnce([
+      { name: "40000000011240606.bmp", isFile: true },
+      { name: "40000000011311807.bmp", isFile: true },
+    ] as never);
+
+    await pruneVault("/docs/FaceTexture", []);
+    expect(remove).not.toHaveBeenCalled();
+    /* The listing above is still queued, because nothing read it — which is
+     * the result. Put back rather than left, or the next test gets a vault
+     * listing where it queued a failure. */
+    readDir.mockReset();
+    readDir.mockResolvedValue([]);
   });
 
   it("draws the same line for the snapshot list", async () => {

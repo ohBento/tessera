@@ -486,6 +486,16 @@
           const view = $state.snapshot(wall());
           const m = $state.snapshot(app.manifest);
           const print = wallPrint(view, m);
+          /* A move written without a rebuild left the canvas ahead of the
+             fingerprint, so the fingerprint no longer describes what is drawn
+             and no comparison against it can be trusted. Thrown away rather
+             than brought up to date: only the canvas knows whether it really
+             matched, and a full build is merely slower where a wrong "just
+             these tiles" is a wall that quietly disagrees with the document. */
+          if (app.unprinted) {
+            drawn = null;
+            app.unprinted = false;
+          }
           const few = tilesChanged(drawn, print);
           /* Forgotten before the build, not after it: a build that throws
              leaves the canvas in a state nothing here can describe, and the

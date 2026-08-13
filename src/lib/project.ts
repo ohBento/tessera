@@ -54,6 +54,18 @@ export function localStamp(len: 16 | 19 = 16) {
     .replace("T", " ");
 }
 
+/** The same moment, spelled so a filename can hold it.
+ *
+ *  Windows refuses `:` in a name, and a stamp to the second has two of them —
+ *  so both places that set a damaged file aside were building a path the OS
+ *  rejects, and the rename threw. Which is worse than it sounds: the recovery
+ *  is deliberately not wrapped in a catch, so the folder then does not open at
+ *  all, this time and every time after, and the only way out is renaming a
+ *  file by hand in Explorer. Snapshots have always been named through
+ *  `snapshotKey`, which strips these — this is the same rule, said where the
+ *  other two callers can reach it. */
+export const fileStamp = () => localStamp(19).replace(/:/g, "_");
+
 /** The document lined up with the folder, plus what that cost.
  *
  *  `lost` are the ids the folder no longer has that still carried work, and
@@ -128,7 +140,7 @@ export async function loadManifest(
        * the right way round. Starting clean over a manifest we could neither
        * read nor set aside is the one outcome this whole path exists to
        * prevent. */
-      broken = `manifest.unreadable ${localStamp(19)}.json`;
+      broken = `manifest.unreadable ${fileStamp()}.json`;
       await rename(await manifestPath(dir), await join(await projectDir(dir), broken));
     }
   }
@@ -211,7 +223,7 @@ export async function loadFingerprints(
      * their own pristine portrait is never captured. Set aside instead, and
      * said out loud, because what the user loses is a warning they will never
      * see missing. */
-    const broken = `fingerprints.unreadable ${localStamp(19)}.json`;
+    const broken = `fingerprints.unreadable ${fileStamp()}.json`;
     await rename(await printsPath(dir), await join(await projectDir(dir), broken));
     return { prints: {}, broken };
   }
@@ -666,6 +678,14 @@ export async function vaultedIds(dir: string): Promise<string[]> {
  *  let the game regenerate, and the regenerated files are the new originals.
  *  Running this on open keeps the vault honest for one readDir per session. */
 export async function pruneVault(dir: string, ids: string[]) {
+  /* An empty folder listing is not evidence that every character is gone. It
+     is what a fresh install looks like before anyone has logged in, what a
+     listing the OS refused looks like, and what a sync client that has not
+     brought the files down yet looks like — and acting on it deletes the only
+     copy of every portrait the game ever shipped, on open, with nothing asked
+     and nothing said. The vault stays; a stale copy is a wrong original for
+     one tile, and this was the whole vault. */
+  if (!ids.length) return;
   const keep = new Set(ids);
   for (const id of await vaultedIds(dir)) {
     if (!keep.has(id)) await remove(await vaultPath(dir, id));

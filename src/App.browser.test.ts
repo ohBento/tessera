@@ -88,7 +88,7 @@ import {
 import { maskChoices } from "./lib/model";
 import { cellAt, textWidth, type Tagged } from "./lib/scene";
 import { TILE_H, TILE_W } from "./lib/bmp";
-import { dragObject } from "./test/gestures";
+import { dragObject, scaleObject } from "./test/gestures";
 import {
   undoLabel,
   redoLabel,
@@ -405,6 +405,37 @@ describe("the wall", () => {
     await undoEdit();
     expect(fill(a)).toBe("#111111");
     expect(fill(b)).toBe("#111111");
+  });
+
+  it("reaches the tile the panel is showing, whichever tiles are picked", async () => {
+    /* Reported from the code rather than by hand, and worth pinning because
+     * what it looks like is a dead control: pick two tiles on the wall, click a
+     * layer on a third, drag Opacity — the two change and the one whose numbers
+     * are in the panel does not. Clicking a layer object sets the pair (id,
+     * tile) and deliberately leaves the wall's tile selection alone, so the
+     * panel showed C while the edit went to A and B.
+     *
+     * The tile a layer was picked on is not one more selected tile; it is the
+     * layer's own address, which is why it is unioned in rather than replacing
+     * the selection. */
+    await enterInbox();
+    const [a, b, c] = app.folderIds;
+    for (const tile of [a, b, c]) {
+      const l = newShapeLayer("rect");
+      l.id = "plate-01";
+      l.fill = "#111111";
+      app.manifest.tiles[tile].layers.push(l);
+    }
+    app.version++;
+    await tick();
+
+    app.selectedTiles = [a, b];
+    selectLayer("plate-01", c);
+    expect(bulkTargets("plate-01").sort()).toEqual([a, b, c].sort());
+
+    await setTileLayerField(bulkTargets("plate-01"), "plate-01", "fill", "#ff0000");
+    const fill = (tile: string) => (findLayer(tileLayers(tile), "plate-01") as ShapeLayer).fill;
+    for (const tile of [a, b, c]) expect(fill(tile)).toBe("#ff0000");
   });
 
   it("starts a new undo step when the picked tiles change mid-slider", async () => {
@@ -1045,6 +1076,61 @@ describe("the placing tool", () => {
     expect(once.w).toBeCloseTo(before.w * 2, 4);
     expect(once.h).toBeCloseTo(before.h * 2, 4);
     expect(twice.w).toBeCloseTo(once.w, 4);
+  });
+
+  it("takes the size from the handle a hand actually dragged", async () => {
+    /* The same claim as the test above, made through Fabric's own transform
+     * pipeline instead of a value assigned onto the stand-in.
+     *
+     * Worth the extra seconds because the shortcut skips the half of the story
+     * the report was about: `_setupCurrentTransform`, the live `object:scaling`
+     * work, and the rebuild that lands while the pointer is still down. A
+     * gesture is also the only way to find out whether the handle exists at
+     * all — `setControlsVisibility` decides that per kind, and a corner that
+     * cannot be grabbed is a feature nobody has.
+     *
+     * Read off the stand-in after the fact on purpose: that object is the frame
+     * the hand let go of, and the rebuild that follows leaves it detached with
+     * the gesture's scale still on it. What must hold is that the layer ended
+     * up the size that frame was — the thing the eye compares. */
+    const { canvas, stand, tile, layerId } = await placing();
+    const layer = () => findLayer(app.manifest.tiles[tile]!.layers, layerId)! as ShapeLayer;
+    const before = { ...layer() };
+
+    /* Measured off the frame as it is drawn, not in scene units: a handle is
+     * grabbed where it appears, and this canvas is fitted to a test window that
+     * has almost no width — a zoom near zero, where a flat 140 pixels is three
+     * hundred tiles. dragObject takes scene units and converts; scaleObject
+     * takes the canvas's own. Half again as wide is the gesture. */
+    const zoom = canvas.getZoom();
+    await scaleObject(
+      canvas,
+      stand,
+      "br",
+      (stand.getScaledWidth() * zoom) / 2,
+      (stand.getScaledHeight() * zoom) / 2,
+    );
+    await until(() => layer().w !== before.w);
+
+    // Copied, not held: findLayer hands back the live record, and a reference
+    // compared against itself after the next gesture says nothing ever moved.
+    const after = { ...layer() };
+    expect(after.w).toBeCloseTo(((stand.width ?? 0) * (stand.scaleX ?? 1)) / TILE_W, 3);
+    expect(after.h).toBeCloseTo(((stand.height ?? 0) * (stand.scaleY ?? 1)) / TILE_H, 3);
+    // Pulled outwards, so it grew: a sign error would satisfy the two above.
+    expect(after.w).toBeGreaterThan(before.w * 1.1);
+
+    /* And moving it afterwards leaves the size alone. The stand-in the rebuild
+     * put up is a fresh rectangle at scale 1, and the drag that follows must
+     * write that size back unchanged — "the shape grew every time it was
+     * touched" is what it looks like when a factor outlives its gesture. */
+    const frame = canvas
+      .getObjects()
+      .find((o) => (o as Tagged & { framing?: boolean }).framing) as fabric.Object;
+    await dragObject(canvas, frame, 120, 90);
+    await until(() => layer().x !== after.x);
+    expect(layer().w).toBeCloseTo(after.w, 4);
+    expect(layer().h).toBeCloseTo(after.h, 4);
   });
 
   it("will not let a gesture scale a layer down to nothing", async () => {
@@ -1962,6 +2048,56 @@ describe("two guards the wall was given and nothing checked", () => {
     return { canvas, tile, layer };
   }
 
+  it("puts the wall back when a drag is undone", async () => {
+    /* A plain drag deliberately asks for no rebuild, because the object the
+     * hand moved is the layer and the canvas is already right. What that skips
+     * is the *record* of what the canvas shows: the fingerprint the incremental
+     * redraw compares against still describes the wall before the drag.
+     *
+     * So the undo restores exactly the state the fingerprint remembers, the
+     * comparison answers "nothing changed", and nothing is repainted. The
+     * status line says "Undone: Move layer", the model holds the old position,
+     * the file on disk holds the old position, and the wall — and anything
+     * rendered from what the wall thinks it has — goes on showing the new one.
+     *
+     * Read off the canvas on purpose. Asked of the model this passes today. */
+    const { canvas, tile, layer } = await wallWith(() => addTileShape("rect"));
+    const at = () =>
+      canvas.getObjects().find((o) => (o as Tagged).layerId === layer.id)?.left ?? NaN;
+    // Settled first: a rebuild still owed from building the tile would land
+    // afterwards and refresh the fingerprint by accident.
+    await new Promise((r) => setTimeout(r, 500));
+    const obj = canvas.getObjects().find((o) => (o as Tagged).layerId === layer.id)! as Tagged;
+    const was = { left: at(), x: findLayer(tileLayers(tile), layer.id)!.x };
+
+    /* The write a plain move makes, asked for outright rather than through a
+     * gesture: `structural: false` is the contract — "the canvas already shows
+     * this, do not rebuild" — and every drag whose object comes back at scale 1
+     * takes it. Moving the object first is the half a hand would have done. */
+    obj.set({ left: (obj.left ?? 0) + 80 });
+    obj.setCoords();
+    await applyTransform(
+      obj,
+      {
+        x: was.x + 80 / TILE_W,
+        y: findLayer(tileLayers(tile), layer.id)!.y,
+        rotation: 0,
+        fx: 1,
+        fy: 1,
+        scale: (findLayer(tileLayers(tile), layer.id) as ShapeLayer).w,
+        scaleH: (findLayer(tileLayers(tile), layer.id) as ShapeLayer).h,
+      },
+      false,
+    );
+    expect(at()).toBeGreaterThan(was.left + 20);
+
+    await undoEdit();
+    await until(() => findLayer(tileLayers(tile), layer.id)!.x === was.x);
+    // Given long enough that a rebuild would have landed if one were coming.
+    await new Promise((r) => setTimeout(r, 400));
+    expect(at()).toBeCloseTo(was.left, 0);
+  });
+
   it("moves a flattened layer by the distance dragged, never to its bake's corner", async () => {
     /* A cut layer and a class icon are composited to pixels and placed at the
      * cell's origin, so the object on the canvas sits at 0,0 at scale 1 whatever
@@ -2083,6 +2219,14 @@ describe("two guards the wall was given and nothing checked", () => {
       two: { ...findLayer(tileLayers(tile), mate.id)! },
     };
     const steps = historySteps().length;
+    /* Where the second one is *drawn*, before and after. The model half of this
+     * was right from the first day and the wall did not follow: the extras are
+     * separate Fabric objects that no hand touched, and a plain move asks for
+     * no rebuild because "the canvas already shows the result" — true of the
+     * object under the pointer, false of every other one carried along. */
+    const mateAt = () =>
+      canvas.getObjects().find((o) => (o as Tagged).layerId === mate.id)?.left ?? NaN;
+    const mateWas = mateAt();
     await dragObject(canvas, held!, 60, 0);
     await until(() => findLayer(tileLayers(tile), layer.id)!.x !== was.one.x);
 
@@ -2095,6 +2239,10 @@ describe("two guards the wall was given and nothing checked", () => {
     // Its own y is untouched: they travelled, they did not line up.
     expect(now.two.y).toBeCloseTo(was.two.y, 6);
     expect(historySteps().length).toBe(steps + 1);
+
+    // And the wall shows the second one where the model now has it.
+    await until(() => Number.isFinite(mateAt()) && mateAt() !== mateWas);
+    expect(mateAt() - mateWas).toBeCloseTo((now.two.x - was.two.x) * TILE_W, 0);
   });
 
   it("groups the picked layers without moving them, and lets them go again", async () => {
@@ -2209,6 +2357,62 @@ describe("two guards the wall was given and nothing checked", () => {
     expect(findLayer(tileLayers(tile), two.id)!.x).toBeCloseTo(drawnAt, 6);
     // The group keeps the other one.
     expect(groupHolding(one.id, tile)?.id).toBe(group.id);
+  });
+
+  it("hides and deletes a layer that sits inside a group", async () => {
+    /* Every row in the list carries an eye, a lock and a ×, and the rows for a
+     * group's children are drawn by the same snippet as the rest. Two of the
+     * three did nothing there: the finder walks the tree, the writer looked at
+     * the top level only, and they disagreed in silence. The lock beside them
+     * worked, which is what made it read as a fluke rather than a rule.
+     *
+     * The delete was the worse half. It got past its own guard — that one
+     * walks — and then removed nothing, while still pushing a step named
+     * "Delete layer" that undoes to the same picture. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const one = tileLayers(tile).at(-1)!;
+    await addTileShape("ellipse");
+    const two = tileLayers(tile).at(-1)!;
+    selectLayer(one.id, tile);
+    alsoSelect(two.id, tile);
+    await groupPicked();
+    const group = tileLayers(tile).find((l) => l.kind === "group")!;
+
+    await toggleLayerHidden(two.id, tile);
+    expect(findLayer(tileLayers(tile), two.id)!.hidden).toBe(true);
+    await toggleLayerHidden(two.id, tile);
+    expect(findLayer(tileLayers(tile), two.id)!.hidden).toBeFalsy();
+
+    await deleteLayer(two.id, tile);
+    expect(findLayer(tileLayers(tile), two.id)).toBeUndefined();
+    // The group is still there with the other one in it: a member leaving is
+    // not the group dissolving.
+    expect(groupHolding(one.id, tile)?.id).toBe(group.id);
+  });
+
+  it("takes a grouped layer off every picked tile", async () => {
+    /* The wall menu counts with a walk and removed without one, so "Remove
+     * layer — 2 tile(s)" reported two and reached none. */
+    await enterInbox();
+    const [a, b] = app.folderIds;
+    app.selectedTiles = [a, b];
+    await addTileShape("rect");
+    const one = tileLayers(a).at(-1)!;
+    await addTileShape("ellipse");
+    const two = tileLayers(a).at(-1)!;
+    for (const t of [a, b]) {
+      selectLayer(one.id, t);
+      alsoSelect(two.id, t);
+      await groupPicked();
+    }
+    app.selectedTiles = [a, b];
+    expect(layersOnSelection().find((l) => l.id === two.id)?.tiles).toBe(2);
+
+    await removeLayerFromSelection(two.id);
+    for (const t of [a, b]) expect(findLayer(tileLayers(t), two.id)).toBeUndefined();
   });
 
   it("frames a layer picked inside a group, where the group has put it", async () => {

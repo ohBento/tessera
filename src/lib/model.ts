@@ -273,13 +273,20 @@ export function shiftLayer(l: Layer, dx: number, dy: number) {
  *  into them on the way out. */
 export function removeLayerFrom(list: Layer[] | undefined, id: string) {
   if (!list) return;
-  const at = list.findIndex((l) => l.id === id);
+  /* The list a group's member sits in is the group's own children, not the
+   * tile's stack. Looked up rather than assumed: every row in the layer list
+   * carries a ×, group members included, and this used to find nothing there
+   * and remove nothing — quietly, with the caller's undo step already
+   * pushed. */
+  const owner = findList(list, id);
+  if (!owner) return;
+  const at = owner.findIndex((l) => l.id === id);
   if (at < 0) return;
-  const [gone] = list.splice(at, 1);
+  const [gone] = owner.splice(at, 1);
   if (gone.kind === "group") {
     const { dx, dy } = groupShift(gone);
     for (const child of gone.children) shiftLayer(child, dx, dy);
-    list.splice(at, 0, ...gone.children);
+    owner.splice(at, 0, ...gone.children);
   }
 }
 
