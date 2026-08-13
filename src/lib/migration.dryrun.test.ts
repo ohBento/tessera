@@ -144,6 +144,56 @@ describe.skipIf(!existsSync(FILE))("the v8 migration over the document on this m
     expect(wrong).toEqual([]);
   });
 
+  it("puts every layer exactly where the frame record had it", () => {
+    /* The other three records change what a layer says or shows, and the test
+     * above checks all of them. This one changes where it *is*, and a layer
+     * that survives the migration in the wrong place is the failure no count
+     * can see — the plan called the arithmetic a blocker for that reason.
+     *
+     * Computed here from the rule rather than read back from the migration:
+     * x and y add, rotation adds, a picture's scale multiplies. Asking the
+     * migration what it did and then checking it did that is not a test.
+     *
+     * This is what the planned all-tile render diff was for, arrived at by
+     * arithmetic instead of pixels. It answers the same question exactly,
+     * where a pixel diff would have had to allow a tolerance wide enough to
+     * hide a layer displaced by a couple of millimetres. */
+    const wrong: string[] = [];
+    const vanished: string[] = [];
+    let checked = 0;
+    let framed = 0;
+    for (const id of ids) {
+      const t = raw.tiles[id];
+      const now = after.tiles[id] ? byId(after.tiles[id]) : new Map<string, Layer>();
+      for (const was of walk((t.layers ?? []) as Layer[]) as V7Layer[]) {
+        // A stamp is the one layer meant to disappear; everything else is
+        // supposed to come out the other side.
+        if (was.kind === "image" && was.layoutId && !was.live) continue;
+        const got = now.get(was.id);
+        if (!got) {
+          vanished.push(`${id}/${was.id}`);
+          continue;
+        }
+        checked++;
+        const f = t.frame?.[was.id];
+        if (f) framed++;
+        const near = (a: number, b: number) => Math.abs(a - b) < 1e-9;
+        if (
+          !near(got.x, was.x + (f?.x ?? 0)) ||
+          !near(got.y, was.y + (f?.y ?? 0)) ||
+          !near(got.rotation, was.rotation + (f?.a ?? 0))
+        )
+          wrong.push(`${id}/${was.id} placement`);
+        if (f && was.kind === "image" && got.kind === "image" && !near(got.scale, was.scale * f.z))
+          wrong.push(`${id}/${was.id} scale`);
+      }
+    }
+    console.log(`layers kept: ${checked}, of them carrying a frame record: ${framed}`);
+    expect(vanished).toEqual([]);
+    expect(wrong).toEqual([]);
+    expect(checked).toBeGreaterThan(0);
+  });
+
   it("keeps every mask pointing at a layer on its own tile", () => {
     const dangling: string[] = [];
     for (const id of ids) {
@@ -172,6 +222,12 @@ describe.skipIf(!existsSync(FILE))("the v8 migration over the document on this m
    * empty baked half — a blank image layer sitting under the live copies that
    * did the actual drawing. Each one dissolves to nothing, and 44 tiles come
    * out 58 layers lighter without losing a mark on the screen.
+   *
+   * "Blank" was read off the perTile flags when this was written and has since
+   * been measured: all 58 stamps name one asset, and every one of that PNG's
+   * 501,696 pixels is fully transparent. That is why this branch never needed
+   * the pre/post render diff the plan asked for — on the pre side there was
+   * nothing to render.
    *
    * Asserting the identity instead of the direction is what makes this worth
    * running: a layer going missing for any other reason breaks it, whichever
