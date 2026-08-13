@@ -957,6 +957,31 @@ describe("the placing tool", () => {
     expect((stand as Tagged).tileId).toBe(tile);
   });
 
+  it("shows the frame for a layer picked in the list, with no tile picked", async () => {
+    /* Reported as: I have to pick the tile *and* then the layer before the
+     * frame and its ghost appear.
+     *
+     * They are two different things. Clicking a layer's row sets the pair
+     * (id, tile) — which tile that layer was picked on — and deliberately
+     * leaves the wall's tile selection alone. The frame asked the selection,
+     * so it stayed away until the tile had been picked a second time. */
+    const { canvas, tile, layerId } = await placing();
+    // Exactly what the list leaves behind: a pair, and nothing picked on the
+    // wall.
+    app.selectedTiles = [];
+    selectLayer(layerId, tile);
+    await tick();
+
+    await until(() =>
+      canvas.getObjects().some((o) => (o as Tagged & { framing?: boolean }).framing),
+    );
+    const stand = canvas
+      .getObjects()
+      .find((o) => (o as Tagged & { framing?: boolean }).framing) as Tagged;
+    expect(stand.layerId).toBe(layerId);
+    expect(stand.tileId).toBe(tile);
+  });
+
   it("moves the layer it stands for", async () => {
     const { canvas, stand, tile, layerId } = await placing();
     const before = findLayer(app.manifest.tiles[tile]!.layers, layerId)!;

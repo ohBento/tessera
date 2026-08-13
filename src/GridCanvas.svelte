@@ -295,7 +295,13 @@
      the tile it stood on stops existing. */
   $effect(() => {
     void app.version;
-    const tile = app.selectedTiles.length === 1 ? app.selectedTiles[0] : "";
+    /* The tile the layer was picked on, not the tile selection. Those are two
+       different things: clicking a layer's row sets the pair (id, tile) and
+       leaves the wall's tile selection alone, so asking the selection meant the
+       frame stayed away until the tile was picked a second time — once in the
+       list to reach the row, once on the wall to satisfy this. The pair is the
+       honest source; it is what every write on this layer already uses. */
+    const tile = app.selectedTile;
     const layerId = app.selected;
     /* No mode to switch on any more: the frame appears by itself, on exactly
        the layers whose own object cannot serve as a handle. A class icon and a
