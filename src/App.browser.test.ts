@@ -1828,6 +1828,40 @@ describe("two guards the wall was given and nothing checked", () => {
     expect(after.x).toBeGreaterThan(0.1);
   });
 
+  it("does not count a bake's displacement twice when two drags run together", async () => {
+    /* The distance a bake has moved is read from the cell's origin, which is
+     * where the next rebuild puts it back. Two gestures close enough together
+     * that the rebuild has not landed between them therefore read the first
+     * one's distance a second time: 120 then 80 more comes out as 320 instead
+     * of 200, and a picture walks off its tile in a few drags.
+     *
+     * The same shape as the stand-in's factor — a number that only means what
+     * it says while something resets it. */
+    const { canvas, tile, layer } = await wallWith(() => addTileShape("icon", "Ranger"));
+    type Baked = fabric.Object & { flattened?: boolean };
+    const bake = () =>
+      canvas
+        .getObjects()
+        .find((o) => (o as Tagged).layerId === layer.id && "flattened" in o) as Baked | undefined;
+    await until(() => !!bake());
+    const obj = bake()!;
+    const from = { ...findLayer(app.manifest.tiles[tile]!.layers, layer.id)! };
+
+    obj.set({ left: (obj.left ?? 0) + 120 });
+    obj.setCoords();
+    canvas.fire("object:modified", { target: obj });
+    await until(() => findLayer(app.manifest.tiles[tile]!.layers, layer.id)!.x !== from.x);
+
+    // Straight on, on the same object, before any rebuild can put it back.
+    obj.set({ left: (obj.left ?? 0) + 80 });
+    obj.setCoords();
+    canvas.fire("object:modified", { target: obj });
+    await new Promise((r) => setTimeout(r, 400));
+
+    const after = findLayer(app.manifest.tiles[tile]!.layers, layer.id)!;
+    expect(after.x).toBeCloseTo(from.x + 200 / TILE_W, 4);
+  });
+
   it("pulls a dragged layer onto its cell's centre", async () => {
     /* The wall snaps a tile layer against its own cell and its neighbours on
      * that tile — the same pull the layout editor had, with the cell where the

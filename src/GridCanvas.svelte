@@ -1054,7 +1054,17 @@
        * read off it would mean nothing. */
       if (obj.flattened) {
         const at = cellAt(ids.indexOf(obj.tileId));
-        void nudgeLayer(obj, ((obj.left ?? 0) - at.x) / TILE_W, ((obj.top ?? 0) - at.y) / TILE_H);
+        const dx = ((obj.left ?? 0) - at.x) / TILE_W;
+        const dy = ((obj.top ?? 0) - at.y) / TILE_H;
+        /* Back to the origin at once, not when the rebuild gets round to it.
+           The distance is read from there, so an object still carrying the last
+           gesture's offset hands that offset over again: 120 and then 80 more
+           came out as 320, and a picture walked off its tile in a few drags.
+           The rebuild does the same thing a moment later; doing it here as well
+           is what makes it true between two drags that arrive together. */
+        obj.set({ left: at.x, top: at.y });
+        obj.setCoords();
+        void nudgeLayer(obj, dx, dy);
         return;
       }
       const patch = readBack(obj, ids.length, ids.indexOf(obj.tileId));
