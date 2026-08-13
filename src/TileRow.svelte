@@ -59,6 +59,7 @@
     inGroup,
     framing = $bindable(),
     openIcons,
+    layerMenu,
   }: {
     id: string;
     inGroup: string;
@@ -67,6 +68,9 @@
      *  App's — one of them serves the whole window — so the row asks rather
      *  than owns. */
     openIcons: (target: { tile: string; layer: string }) => void;
+    /** Likewise for the right-click menu on a layer row: one menu serves the
+     *  window, so the row hands over the pair and App builds the items. */
+    layerMenu: (e: MouseEvent, layerId: string, tileId: string) => void;
   } = $props();
 
   /** A tile's rows as the list draws them: topmost first. Every layer gets a
@@ -157,6 +161,7 @@
         ondragover={(e) => over(e, layer.id, false)}
         ondragleave={() => drag.on?.id === layer.id && (drag.on = null)}
         ondragend={endDrag}
+        oncontextmenu={(e) => layerMenu(e, layer.id, id)}
         ondrop={(e) => {
           e.preventDefault();
           const spot = drag.on;

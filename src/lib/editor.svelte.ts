@@ -1770,6 +1770,86 @@ export async function toggleLayerLocked(id: string, tileId = app.selectedTile) {
   await mutate("Lock or unlock layer", () => (layer.locked = !layer.locked));
 }
 
+/* What "copy the properties" leaves behind, when both layers are of a kind.
+ *
+ * Identity, because the pair (id, tile) is what says which layer this is and
+ * two layers answering to one id on one tile is the one shape nothing here
+ * copes with. Content, because a caption that took on another's wording would
+ * not be a caption with the same look — it would be the same caption twice,
+ * and the crop goes with it since it is measured in one particular picture's
+ * pixels. Hidden and locked, because they are where you are in the work rather
+ * than what the layer looks like: a paste that switches a layer off reads as a
+ * bug however well documented. `space` reinterprets x and y against the whole
+ * wall instead of the tile, so carrying it across would fling the layer off
+ * somewhere. The last two are leftovers of the layout editor. */
+const KEPT_ON_PASTE = new Set([
+  "id",
+  "name",
+  "seq",
+  "kind",
+  "layers",
+  "asset",
+  "text",
+  "icon",
+  "crop",
+  "hidden",
+  "locked",
+  "space",
+  "layoutId",
+  "live",
+]);
+
+/* All that can travel between two layers of different kinds. A picture has no
+ * font and a caption has no corner radius, so between kinds there is nothing
+ * but the placement and the two things every layer can do. */
+const ACROSS_KINDS = new Set([
+  "x",
+  "y",
+  "rotation",
+  "opacity",
+  "shadow",
+  "shadowColor",
+  "maskId",
+  "maskInvert",
+]);
+
+/** The layer whose properties were copied, if any — a snapshot, not a
+ *  reference, so editing or deleting the original afterwards leaves what was
+ *  copied alone. Deliberately not saved with the document: it is a clipboard,
+ *  and a clipboard that survives a restart is a surprise, not a feature. */
+let copied: { layer: Layer; tile: string } | undefined;
+
+/** What the paste item names, so the menu can say what it would paste rather
+ *  than leaving it to be remembered. The tile comes with it for the same
+ *  reason it comes with everything else here: one id is not a layer. */
+export const copiedLayer = () => copied;
+
+export function copyLayerProps(id: string, tileId = app.selectedTile) {
+  const layer = anyLayer(id, tileId);
+  if (layer) copied = { layer: clone(layer), tile: tileId };
+}
+
+/** Makes one layer the twin of another — everything but what it is and what it
+ *  shows. Photoshop's Paste Layer Style, widened: there the placement stays
+ *  behind, and here it is most of the point. Two captions on two portraits sit
+ *  in exactly the same spot at exactly the same size, which is the thing that
+ *  cannot be done by eye across forty-four tiles.
+ *
+ *  A field the source does not have is removed rather than left standing. A
+ *  half-copy is worse than none: the layer would come out with the source's
+ *  colour and its own old shadow, and nothing on screen would say why. */
+export async function pasteLayerProps(id: string, tileId = app.selectedTile) {
+  const from = copied?.layer;
+  const to = anyLayer(id, tileId);
+  if (!from || !to || (copied!.tile === tileId && from.id === id)) return;
+  const travels = (k: string) =>
+    !KEPT_ON_PASTE.has(k) && (from.kind === to.kind || ACROSS_KINDS.has(k));
+  await mutate("Paste properties", () => {
+    const rec = to as unknown as Record<string, unknown>;
+    for (const k of Object.keys(rec)) if (travels(k) && !(k in from)) delete rec[k];
+    for (const [k, v] of Object.entries(from)) if (travels(k)) rec[k] = clone(v);
+  });
+}
 
 /** Reorders a tile's own stack. Takes the list rather than an owner, so the
  *  project's wall picture and a tile's stack are the same call. */

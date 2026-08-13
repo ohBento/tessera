@@ -56,6 +56,8 @@ import {
   toggleLayerHidden,
   toggleLayerLocked,
   toggleTile,
+  copyLayerProps,
+  pasteLayerProps,
 } from "./lib/editor.svelte";
 import {
   emptyManifest,
@@ -982,6 +984,137 @@ describe("the placing tool", () => {
     /* The whole point of the rewiring: the placement is on the layer, and
      * nothing grows a second copy of it beside the tile. */
     expect((app.manifest.tiles[tile] as unknown as { frame?: unknown }).frame).toBeUndefined();
+  });
+});
+
+describe("carrying one layer's properties to another", () => {
+  /* Photoshop's Copy/Paste Layer Style, which is where the idea came from.
+   * Widened on purpose: there the placement stays behind, and here it is most
+   * of the point — two captions on two portraits in exactly the same spot at
+   * exactly the same size is what cannot be done by eye across forty-four
+   * tiles. */
+  const twoShapes = async () => {
+    await enterInbox();
+    const [a, b] = app.folderIds;
+    for (const t of [a, b]) {
+      app.selectedTiles = [t];
+      await addTileShape("rect");
+    }
+    return [
+      { tile: a, layer: tileLayers(a).at(-1)! as ShapeLayer },
+      { tile: b, layer: tileLayers(b).at(-1)! as ShapeLayer },
+    ] as const;
+  };
+
+  it("makes the target a twin, without taking its identity", async () => {
+    const [from, to] = await twoShapes();
+    Object.assign(from.layer, { x: 0.2, y: 0.3, w: 0.4, opacity: 0.5, fill: "#ff0000" });
+    const wasCalled = to.layer.id;
+
+    copyLayerProps(from.layer.id, from.tile);
+    await pasteLayerProps(to.layer.id, to.tile);
+
+    const now = findLayer(tileLayers(to.tile), wasCalled) as ShapeLayer;
+    expect(now.x).toBeCloseTo(0.2, 5);
+    expect(now.w).toBeCloseTo(0.4, 5);
+    expect(now.opacity).toBeCloseTo(0.5, 5);
+    expect(now.fill).toBe("#ff0000");
+    // Its own, both of them: an id it shares with the source is the one shape
+    // the wall cannot hold, and the layer stayed on its own tile.
+    expect(now.id).toBe(wasCalled);
+    expect(findLayer(tileLayers(from.tile), from.layer.id)).toBeTruthy();
+  });
+
+  it("clears a field the source does not have", async () => {
+    /* The half-copy: the target keeps its old shadow, takes the source's
+     * colour, and comes out looking like neither. Nothing on screen would say
+     * why, which is what makes it worth a test of its own. */
+    const [from, to] = await twoShapes();
+    to.layer.shadow = 0.05;
+    to.layer.shadowColor = "#000000";
+
+    copyLayerProps(from.layer.id, from.tile);
+    await pasteLayerProps(to.layer.id, to.tile);
+
+    const now = findLayer(tileLayers(to.tile), to.layer.id)!;
+    expect(now.shadow).toBeUndefined();
+    expect(now.shadowColor).toBeUndefined();
+  });
+
+  it("carries only the placement between two kinds, and leaves the wording", async () => {
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const shape = tileLayers(tile).at(-1)! as ShapeLayer;
+    shape.x = 0.25;
+    shape.opacity = 0.4;
+    await addTileText();
+    const caption = tileLayers(tile).at(-1)! as TextLayer;
+    caption.text = "{{id}}";
+    const size = caption.size;
+
+    copyLayerProps(shape.id, tile);
+    await pasteLayerProps(caption.id, tile);
+
+    const now = findLayer(tileLayers(tile), caption.id) as TextLayer;
+    expect(now.x).toBeCloseTo(0.25, 5);
+    expect(now.opacity).toBeCloseTo(0.4, 5);
+    // A shape has no wording and no font size to hand over, and a caption that
+    // took the shape's kind-specific fields would be undrawable.
+    expect(now.text).toBe("{{id}}");
+    expect(now.size).toBe(size);
+    expect((now as unknown as Record<string, unknown>).w).toBeUndefined();
+  });
+
+  it("leaves what you are doing alone: hidden and locked stay put", async () => {
+    const [from, to] = await twoShapes();
+    from.layer.hidden = true;
+    from.layer.locked = true;
+
+    copyLayerProps(from.layer.id, from.tile);
+    await pasteLayerProps(to.layer.id, to.tile);
+
+    const now = findLayer(tileLayers(to.tile), to.layer.id)!;
+    expect(now.hidden).toBeFalsy();
+    expect(now.locked).toBeFalsy();
+  });
+
+  it("opens the menu on the row and pastes through it", async () => {
+    const [from, to] = await twoShapes();
+    from.layer.x = 0.15;
+    app.version++;
+    reveal("tiles");
+    await tick();
+
+    const open = async (tile: string) => {
+      const row = document.querySelector(`[data-tile="${tile}"]`) as HTMLElement;
+      (row.querySelector("button.twisty") as HTMLButtonElement).click();
+      // The rows are created by the click, not before it.
+      await tick();
+      return row;
+    };
+    const item = (text: string) =>
+      [...document.querySelectorAll("button")].find((b) =>
+        b.textContent!.trim().startsWith(text),
+      ) as HTMLButtonElement;
+
+    (await open(from.tile)).querySelector("li")!.dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true, clientX: 20, clientY: 20 }),
+    );
+    await tick();
+    item("Copy properties").click();
+    await tick();
+
+    (await open(to.tile)).querySelector("li")!.dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true, clientX: 20, clientY: 20 }),
+    );
+    await tick();
+    // Named, not just "Paste": the menu says what would land.
+    expect(item("Paste from")).toBeTruthy();
+    item("Paste from").click();
+
+    await until(() => findLayer(tileLayers(to.tile), to.layer.id)!.x === 0.15);
   });
 });
 

@@ -67,6 +67,9 @@
     removeFolder,
     renameSnapshot,
     selectLayer,
+    copiedLayer,
+    copyLayerProps,
+    pasteLayerProps,
     strippableCount,
     pickTileImage,
     setLayerField,
@@ -596,7 +599,40 @@
     };
   }
 
-
+  /** The same menu, on a layer's row. Photoshop's Copy/Paste Layer Style,
+   *  which is where the idea comes from and roughly where it stops: there the
+   *  placement stays behind, and here it travels, because lining two layers up
+   *  by hand across forty-four portraits is the job this saves.
+   *
+   *  Right-clicking a row picks its layer first, the way right-clicking a tile
+   *  re-targets the selection above. Otherwise "copy" would take whatever
+   *  happened to be picked before and the row you aimed at would be a
+   *  decoration. */
+  function layerMenu(e: MouseEvent, layerId: string, tileId: string) {
+    e.preventDefault();
+    selectLayer(layerId, tileId);
+    const held = copiedLayer();
+    menu = {
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        {
+          label: "Copy properties",
+          run: () => copyLayerProps(layerId, tileId),
+        },
+        {
+          // Named, so it says what is about to land rather than "paste" and a
+          // surprise. Its kind too: pasting a caption onto a shape carries the
+          // placement and nothing else, and that is worth knowing beforehand.
+          label: held ? `Paste from "${layerLabel(held.layer)}"` : "Paste properties",
+          run: () => void pasteLayerProps(layerId, tileId),
+          // Onto itself is the one paste that cannot do anything, and it would
+          // still cost an undo step saying it had.
+          disabled: !held || (held.tile === tileId && held.layer.id === layerId),
+        },
+      ],
+    };
+  }
 </script>
 
 <!-- `change` is the browser's own "this control is finished" signal — it fires
@@ -1375,7 +1411,7 @@
             {#if isOpen(folder.id)}
               <div class="indent">
                 {#each folder.tiles as id (id)}
-                  <TileRow {id} inGroup={folder.id} bind:framing {openIcons} />
+                  <TileRow {id} inGroup={folder.id} bind:framing {openIcons} {layerMenu} />
                 {/each}
               </div>
             {/if}
@@ -1398,7 +1434,7 @@
           {#if isOpen("tiles")}
             <div class="indent">
               {#each looseIds() as id (id)}
-                <TileRow {id} inGroup="" bind:framing {openIcons} />
+                <TileRow {id} inGroup="" bind:framing {openIcons} {layerMenu} />
               {/each}
             </div>
           {/if}
