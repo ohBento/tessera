@@ -149,6 +149,16 @@
   function shortcut(e: KeyboardEvent) {
     if (isTyping(e.target)) return;
     const key = e.key.toLowerCase();
+    /* Nothing that changes the document while a long action is reading it.
+       Every button carrying one of these is disabled for the duration; the keys
+       were not, and an undo pressed while "Write to game" was taking its
+       snapshot swapped the document out from under a write already in flight —
+       portraits rendered from the new document into the old one's slot order,
+       into the game's own folder, and recorded as written. */
+    if (app.busy && (key === "delete" || key === "backspace" || e.ctrlKey)) {
+      e.preventDefault();
+      return;
+    }
 
     /* The sheet answers to the key it documents, and closes on Escape like
        everything else that opens over the page. Checked before the Layout's own

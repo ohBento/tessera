@@ -320,6 +320,9 @@ function frameImage(
   img.setElement(out);
   img.cropX = 0;
   img.cropY = 0;
+  // What the baked window was cut from, for cropOff — which can no longer
+  // measure it off an element that is already the cut.
+  Object.assign(img, { bakedCrop: l.crop });
 }
 
 /** A colour, or a Fabric gradient built from one of ours.
@@ -1756,6 +1759,22 @@ export function readBack(obj: Tagged, tileCount: number, index: number) {
  *  answers the same way. */
 function cropOff(obj: fabric.Object): Inset | undefined {
   const img = obj as fabric.FabricImage;
+  /* A framed picture is a different picture by the time it gets here: drawing
+     the border means baking the trimmed window into a canvas of its own and
+     handing that to Fabric, so `getOriginalSize` reports the window and cropX
+     is nought — and the measurement below then answers "not trimmed at all".
+     `resize` reads that as the trim having been let go and deletes it, so
+     turning on a border and nudging the picture untrimmed it, and did so on
+     every selected tile at once.
+
+     What was baked in is remembered at the moment it is baked, and handed back
+     here unchanged. ponytail: it comes back unchanged, so the side handles do
+     nothing on a framed picture rather than measuring it against the wrong
+     image — a dead handle where there used to be a compounding wrong crop.
+     Trimming a framed picture wants frameImage to stop replacing the element;
+     that is a bigger change than this one. */
+  const baked = (obj as { bakedCrop?: Inset }).bakedCrop;
+  if (baked) return { ...baked };
   if (typeof img.getOriginalSize !== "function") return undefined;
   const src = img.getOriginalSize();
   if (!src.width || !src.height) return undefined;

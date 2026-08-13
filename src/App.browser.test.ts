@@ -1962,6 +1962,37 @@ describe("three the demolition took and nobody missed", () => {
     expect(sheetOpen("Keyboard and mouse")).toBe(true);
   });
 
+  it("ignores undo and delete while a long action is reading the document", async () => {
+    /* Every button that changes the document is disabled while one of these
+     * runs. The keys were not — and "Write to game" holds a reference to the
+     * open project across the snapshot it writes first, so an undo landing in
+     * that window swapped the document out from under a write already under
+     * way: portraits rendered from the new document into the old one's slot
+     * order, into the game's own folder, and recorded as written, so the next
+     * open reported nothing wrong. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const layer = tileLayers(tile).at(-1)!;
+    await setTileLayerField([tile], layer.id, "x", 0.9);
+    selectLayer(layer.id, tile);
+
+    app.busy = "save";
+    press("z", { ctrlKey: true });
+    await tick();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(findLayer(tileLayers(tile), layer.id)!.x).toBeCloseTo(0.9, 6);
+    press("Delete");
+    await tick();
+    expect(findLayer(tileLayers(tile), layer.id)).toBeTruthy();
+
+    // And they come back when it is over.
+    app.busy = "";
+    press("z", { ctrlKey: true });
+    await until(() => findLayer(tileLayers(tile), layer.id)!.x !== 0.9);
+  });
+
   it("puts the game's portraits back without touching the document", async () => {
     /* The vault holds what BDO shipped, and putting it back is the way out of a
      * wall that went wrong. It writes files and nothing else: the layers stay,

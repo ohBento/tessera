@@ -22,7 +22,7 @@ import {
   type ImageLayer,
   type Manifest,
 } from "./model";
-import { buildGrid, cellAt, gridSize, type Wall } from "./scene";
+import { buildGrid, cellAt, gridSize, readBack, type Tagged, type Wall } from "./scene";
 import { testDeps } from "../test/images";
 
 const HEADER = 54;
@@ -164,6 +164,30 @@ describe("picture frames", () => {
     expect(pixel(plain, justInside, TILE_H / 2)[0]).toBeGreaterThan(200);
     // Inside the frame the picture is untouched, so the layer keeps its size.
     expect(pixel(bordered, TILE_W / 2, TILE_H / 2)).toEqual(pixel(plain, TILE_W / 2, TILE_H / 2));
+  });
+
+  it("still reports the trim it baked in", async () => {
+    /* Framing means baking the trimmed window into a canvas of its own and
+     * handing that to Fabric, so from then on the object *is* the window: it
+     * reports no crop, and the write path reads that as the trim having been
+     * let go and deletes it. Turning on a border and then nudging the picture
+     * threw the trim away — on every selected tile at once, and with the
+     * editor showing nothing until the next rebuild.
+     *
+     * Asked of readBack, which is what a finished gesture reads. */
+    const m = manifest(1);
+    const [id] = order(m);
+    const crop = { l: 0.1, r: 0.1, t: 0.1, b: 0.1 };
+    const l = newImageLayer("block:#ff00ff");
+    l.scale = 0.8;
+    l.crop = { ...crop };
+    l.borderWidth = 0.02;
+    m.tiles[id].layers.push(l);
+
+    const canvas = new fabric.StaticCanvas(undefined, { width: TILE_W, height: TILE_H });
+    await buildGrid(canvas, view(m), m, testDeps);
+    const obj = canvas.getObjects().find((o) => (o as Tagged).layerId === l.id)!;
+    expect(readBack(obj as Tagged, 1, 0).crop).toEqual(crop);
   });
 
   it("bends the frame round the corners instead of losing them", async () => {

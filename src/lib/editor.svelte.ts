@@ -993,7 +993,15 @@ export const visibleIds = () => wall().ids;
  *  all. Without it the failure was worse than invisible: the next `run` clears
  *  `app.error` as its first act, so the message was gone before anyone read
  *  it, and the write went ahead regardless. */
+/** How many of these are in flight. Counted rather than flagged: saveToGame
+ *  runs takeSnapshot inside itself, and the inner one's `finally` used to
+ *  declare the app idle while the outer one was still writing to the game's own
+ *  folder — every button came back to life, and a second write could start into
+ *  the files the first was still copying. */
+let running = 0;
+
 async function run(label: string, fn: () => Promise<void>): Promise<boolean> {
+  running++;
   app.busy = label;
   app.error = "";
   try {
@@ -1003,7 +1011,7 @@ async function run(label: string, fn: () => Promise<void>): Promise<boolean> {
     app.error = String(e);
     return false;
   } finally {
-    app.busy = "";
+    if (--running === 0) app.busy = "";
   }
 }
 
@@ -1890,11 +1898,20 @@ export async function saveToGame() {
   if (!(await takeSnapshot(`Before write ${stamp}`))) return;
   await run("save", async () => {
     if (!app.deps) throw new Error("no folder open");
+    /* Asked again, after the snapshot has been written. `project` above is a
+       live reference into the document, and taking a snapshot is a real file
+       write — an undo landing in that window replaces app.manifest wholesale,
+       leaving that reference pointing into a document nobody is looking at any
+       more. The tiles would then be rendered from the new document into the
+       old one's slot order, written over the game's own portraits, and marked
+       as written, so the next open would report nothing wrong. */
+    const now = openProject();
+    if (now?.id !== project.id) throw new Error("the wall changed — nothing was written");
     /* Snapshotted together: the id list positions the export window and keys
      * the result, so it has to be the same list the scene is built from. */
     const n = await saveTiles(
       app.dir,
-      { ids: plain(project.order), gridLayers: plain(project.gridLayers) },
+      { ids: plain(now.order), gridLayers: plain(now.gridLayers) },
       plain(app.manifest),
       app.deps,
     );
