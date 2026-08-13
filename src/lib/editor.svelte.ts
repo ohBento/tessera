@@ -1838,16 +1838,80 @@ export function copyLayerProps(id: string, tileId = app.selectedTile) {
  *  A field the source does not have is removed rather than left standing. A
  *  half-copy is worse than none: the layer would come out with the source's
  *  colour and its own old shadow, and nothing on screen would say why. */
+function writeProps(to: Layer, from: Layer) {
+  const travels = (k: string) =>
+    !KEPT_ON_PASTE.has(k) && (from.kind === to.kind || ACROSS_KINDS.has(k));
+  const rec = to as unknown as Record<string, unknown>;
+  for (const k of Object.keys(rec)) if (travels(k) && !(k in from)) delete rec[k];
+  for (const [k, v] of Object.entries(from)) if (travels(k)) rec[k] = clone(v);
+}
+
 export async function pasteLayerProps(id: string, tileId = app.selectedTile) {
   const from = copied?.layer;
   const to = anyLayer(id, tileId);
   if (!from || !to || (copied!.tile === tileId && from.id === id)) return;
-  const travels = (k: string) =>
-    !KEPT_ON_PASTE.has(k) && (from.kind === to.kind || ACROSS_KINDS.has(k));
-  await mutate("Paste properties", () => {
-    const rec = to as unknown as Record<string, unknown>;
-    for (const k of Object.keys(rec)) if (travels(k) && !(k in from)) delete rec[k];
-    for (const [k, v] of Object.entries(from)) if (travels(k)) rec[k] = clone(v);
+  await mutate("Paste properties", () => writeProps(to, from));
+}
+
+/** Puts the copied layer on every picked tile, under one id — which is what
+ *  makes them one layer from then on: a later drag moves all of them and a
+ *  later field edit reaches all of them, in one undo step.
+ *
+ *  A tile already carrying that id keeps what its layer *says* — its wording,
+ *  its picture, its icon — and takes everything else. That is the case this
+ *  exists for: forty-four captions typed one at a time are forty-four
+ *  different names worth keeping, and it is only their placement and look that
+ *  should stop being forty-four separate decisions.
+ *
+ *  A tile without it gets the whole layer, wording included, because there is
+ *  nothing of its own to keep. Its name is not renumbered on the way in: these
+ *  are meant to be one layer seen on many tiles, and nameInStack would give
+ *  each copy a different name. */
+export async function pasteLayerOntoTiles() {
+  const from = copied?.layer;
+  const tiles = app.selectedTiles.filter((t) => app.manifest.tiles[t]);
+  if (!from || !tiles.length) return;
+  await mutate(`Paste layer onto ${tiles.length} tile(s)`, () => {
+    for (const t of tiles) {
+      const own = app.manifest.tiles[t].layers;
+      const to = findLayer(own, from.id);
+      if (to) writeProps(to, from);
+      else own.push(clone(from));
+    }
+    selectLayer(from.id, tiles[0]);
+  });
+}
+
+/** Every layer the picked tiles carry, one entry per id — what the wall's
+ *  "Remove layer" submenu lists.
+ *
+ *  Keyed by id rather than by name, because the id is what a removal has to
+ *  name: two layers can wear one label and only one of them is meant. The
+ *  count is what tells you how far the click reaches before you make it. */
+export const layersOnSelection = (): { id: string; label: string; tiles: number }[] => {
+  const seen = new Map<string, { id: string; label: string; tiles: number }>();
+  for (const t of app.selectedTiles)
+    for (const l of walkLayers(app.manifest.tiles[t]?.layers ?? [])) {
+      const had = seen.get(l.id);
+      if (had) had.tiles++;
+      else seen.set(l.id, { id: l.id, label: layerLabel(l), tiles: 1 });
+    }
+  return [...seen.values()].sort((a, b) => b.tiles - a.tiles || a.label.localeCompare(b.label));
+};
+
+/** Takes one layer off every picked tile that has it — one undo step.
+ *
+ *  Between "Clear all layers", which undresses a tile completely, and the × on
+ *  a row, which reaches exactly one tile. Undressing forty tiles to be rid of
+ *  one caption is the trip this saves. */
+export async function removeLayerFromSelection(id: string) {
+  const tiles = app.selectedTiles.filter(
+    (t) => !!findLayer(app.manifest.tiles[t]?.layers ?? [], id),
+  );
+  if (!tiles.length) return;
+  await mutate("Remove layer", () => {
+    for (const t of tiles) removeLayerFrom(app.manifest.tiles[t].layers, id);
+    if (app.selected === id) app.selected = "";
   });
 }
 

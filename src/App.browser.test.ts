@@ -58,6 +58,9 @@ import {
   toggleTile,
   copyLayerProps,
   pasteLayerProps,
+  pasteLayerOntoTiles,
+  layersOnSelection,
+  removeLayerFromSelection,
 } from "./lib/editor.svelte";
 import {
   emptyManifest,
@@ -1078,6 +1081,101 @@ describe("carrying one layer's properties to another", () => {
     const now = findLayer(tileLayers(to.tile), to.layer.id)!;
     expect(now.hidden).toBeFalsy();
     expect(now.locked).toBeFalsy();
+  });
+
+  it("puts the copied layer on every picked tile under one id", async () => {
+    /* The whole point of the action: one id across the selection is what makes
+     * a later drag move all of them, so this checks the id and then checks
+     * that the wall agrees by asking bulkTargets, which is what the drag
+     * actually consults. */
+    await enterInbox();
+    const [a, b, c] = app.folderIds;
+    app.selectedTiles = [a];
+    await addTileShape("rect");
+    const src = tileLayers(a).at(-1)! as ShapeLayer;
+    src.fill = "#00ff88";
+
+    copyLayerProps(src.id, a);
+    app.selectedTiles = [a, b, c];
+    await pasteLayerOntoTiles();
+
+    for (const t of [b, c]) {
+      const got = findLayer(tileLayers(t), src.id) as ShapeLayer;
+      expect(got).toBeTruthy();
+      expect(got.fill).toBe("#00ff88");
+    }
+    expect(bulkTargets(src.id).sort()).toEqual([a, b, c].sort());
+  });
+
+  it("leaves a tile its own wording and takes everything else", async () => {
+    /* The decision this action turns on. Captions typed one at a time are
+     * worth keeping; it is their placement and look that should stop being one
+     * decision per tile. A tile with no such layer has nothing of its own to
+     * keep and gets the whole thing, wording included. */
+    await enterInbox();
+    const [a, b, c] = app.folderIds;
+    for (const t of [a, b]) {
+      app.selectedTiles = [t];
+      await addTileText();
+    }
+    const src = tileLayers(a).at(-1)! as TextLayer;
+    const mine = tileLayers(b).at(-1)! as TextLayer;
+    src.text = "Alpha";
+    src.x = 0.2;
+    src.size = 0.09;
+    mine.id = src.id;
+    mine.text = "Beta";
+    mine.x = 0.8;
+
+    copyLayerProps(src.id, a);
+    app.selectedTiles = [b, c];
+    await pasteLayerOntoTiles();
+
+    const onB = findLayer(tileLayers(b), src.id) as TextLayer;
+    expect(onB.text).toBe("Beta");
+    expect(onB.x).toBeCloseTo(0.2, 5);
+    expect(onB.size).toBeCloseTo(0.09, 5);
+    // Nothing of its own to keep, so it takes the wording too.
+    expect((findLayer(tileLayers(c), src.id) as TextLayer).text).toBe("Alpha");
+  });
+
+  it("takes one layer off the picked tiles and leaves the rest standing", async () => {
+    await enterInbox();
+    const [a, b, c] = app.folderIds;
+    app.selectedTiles = [a, b, c];
+    await addTileShape("rect");
+    await addTileText();
+    const shape = tileLayers(a).at(-2)!;
+    const caption = tileLayers(a).at(-1)!;
+
+    // Only two of the three, so the third proves the reach is the selection.
+    app.selectedTiles = [a, b];
+    const steps = historySteps().length;
+    await removeLayerFromSelection(caption.id);
+
+    for (const t of [a, b]) {
+      expect(findLayer(tileLayers(t), caption.id)).toBeUndefined();
+      expect(findLayer(tileLayers(t), shape.id)).toBeTruthy();
+    }
+    expect(findLayer(tileLayers(c), caption.id)).toBeTruthy();
+    expect(historySteps().length).toBe(steps + 1);
+  });
+
+  it("lists what is on the selection, with how far a removal would reach", async () => {
+    await enterInbox();
+    const [a, b, c] = app.folderIds;
+    app.selectedTiles = [a, b, c];
+    await addTileShape("rect");
+    app.selectedTiles = [a];
+    await addTileText();
+
+    app.selectedTiles = [a, b, c];
+    const listed = layersOnSelection();
+    expect(listed).toHaveLength(2);
+    // Widest reach first, so the blunt instrument is not the one you have to
+    // hunt for.
+    expect(listed[0].tiles).toBe(3);
+    expect(listed[1].tiles).toBe(1);
   });
 
   it("opens the menu on the row and pastes through it", async () => {

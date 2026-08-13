@@ -70,6 +70,9 @@
     copiedLayer,
     copyLayerProps,
     pasteLayerProps,
+    pasteLayerOntoTiles,
+    layersOnSelection,
+    removeLayerFromSelection,
     strippableCount,
     pickTileImage,
     setLayerField,
@@ -506,6 +509,8 @@
     e.preventDefault();
     const picked = app.selectedTiles.length;
     const elsewhere = projects().filter((p) => p.id !== app.openProjectId);
+    const onClipboard = copiedLayer();
+    const onSelection = layersOnSelection();
     menu = {
       x: e.clientX,
       y: e.clientY,
@@ -541,6 +546,30 @@
            all. Counts what it would actually take, so a selection with nothing
            on it says so instead of offering a no-op. */
         { separator: true } as Item,
+        {
+          /* Where a layer stops being one tile's business. The row menu copies
+             it; this puts it on the whole selection under one id, which is what
+             makes a later drag move all of them at once. */
+          label: onClipboard
+            ? `Paste "${layerLabel(onClipboard.layer)}" onto ${picked} tile(s)`
+            : "Paste layer",
+          run: () => void pasteLayerOntoTiles(),
+          disabled: !onClipboard,
+        },
+        ...(onSelection.length
+          ? [
+              {
+                label: "Remove layer",
+                /* One entry per layer id on the selection, with the reach
+                   written out: "Descr — 14 tiles" answers "how far does this
+                   click go" before it is made rather than after. */
+                items: onSelection.map((l) => ({
+                  label: `${l.label} — ${l.tiles} tile(s)`,
+                  run: () => void removeLayerFromSelection(l.id),
+                })),
+              } as Item,
+            ]
+          : []),
         {
           // Plain when it takes one tile, and when it can take none: "on 0
           // tiles" is a sentence no disabled item should have to say.
