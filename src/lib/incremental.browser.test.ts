@@ -17,7 +17,7 @@ import {
   newTextLayer,
   type Manifest,
 } from "./model";
-import { buildGrid, gridSize, rebuildTile, soleTileChange, wallPrint, type Wall } from "./scene";
+import { buildGrid, gridSize, rebuildTile, soleTileChange, tilesChanged, wallPrint, type Wall } from "./scene";
 import { testDeps } from "../test/images";
 
 function manifest(count: number): Manifest {
@@ -94,6 +94,25 @@ describe("deciding whether one tile is enough", () => {
   it("says nothing when nothing changed", () => {
     const m = dressed(9);
     expect(soleTileChange(print(m), print(m))).toBe("");
+  });
+
+  it("counts a padlock as no change, and the eye as a change", () => {
+    /* Locking fourteen tiles' layers named fourteen changed tiles, which is
+       past the incremental limit, which threw the wall away and built it again
+       — every mask baked a second time — for a change that alters not one
+       pixel. Reported as an occasional freeze on lock, reproducible only with
+       masks on the wall and nine or more tiles picked.
+       `hidden` is the neighbouring flag and does reach the picture, so the two
+       are checked together: the fingerprint has to tell them apart. */
+    const m = dressed(9);
+    const [a, b] = order(m);
+    const before = print(m);
+
+    for (const id of [a, b]) m.tiles[id].layers[0].locked = true;
+    expect(tilesChanged(before, print(m))).toEqual([]);
+
+    m.tiles[a].layers[0].hidden = true;
+    expect(tilesChanged(before, print(m))).toEqual([a]);
   });
 
   it("refuses when two tiles changed", () => {

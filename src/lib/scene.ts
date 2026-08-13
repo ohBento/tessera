@@ -1604,7 +1604,20 @@ export type WallPrint = { ids: string; grid: string; tiles: Map<string, string> 
 export const wallPrint = (wall: Wall, m: Manifest): WallPrint => ({
   ids: wall.ids.join(","),
   grid: JSON.stringify(wall.gridLayers),
-  tiles: new Map(wall.ids.map((id) => [id, JSON.stringify(m.tiles[id] ?? null)])),
+  /* `locked` is left out on purpose: it decides what a hand can grab and not
+     one pixel of what is drawn. In it, a padlock clicked across fourteen tiles
+     reported fourteen changed tiles, which is past REDRAW_MAX, which threw
+     away and rebuilt the whole wall — every mask baked again, 635ms measured
+     on forty-four tiles and four seconds on three hundred, for a change no
+     rebuild could show. GridCanvas reads the lock off the document instead.
+     Everything else in the record does reach the picture, `hidden` included,
+     and stays in. */
+  tiles: new Map(
+    wall.ids.map((id) => [
+      id,
+      JSON.stringify(m.tiles[id] ?? null, (k, v) => (k === "locked" ? undefined : v)),
+    ]),
+  ),
 });
 
 /** Which tiles changed between two states, or null when the wall itself did —

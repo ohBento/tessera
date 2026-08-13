@@ -486,16 +486,6 @@
           const view = $state.snapshot(wall());
           const m = $state.snapshot(app.manifest);
           const print = wallPrint(view, m);
-          /* A move written without a rebuild left the canvas ahead of the
-             fingerprint, so the fingerprint no longer describes what is drawn
-             and no comparison against it can be trusted. Thrown away rather
-             than brought up to date: only the canvas knows whether it really
-             matched, and a full build is merely slower where a wrong "just
-             these tiles" is a wall that quietly disagrees with the document. */
-          if (app.unprinted) {
-            drawn = null;
-            app.unprinted = false;
-          }
           const few = tilesChanged(drawn, print);
           /* Forgotten before the build, not after it: a build that throws
              leaves the canvas in a state nothing here can describe, and the
@@ -532,6 +522,23 @@
     const version = app.version;
     const deps = app.deps;
     if (canvas && deps && version !== built) void rebuild(deps);
+  });
+
+  /* A gesture that asked for no rebuild moved the canvas without moving the
+     record of what the canvas holds. Brought up to date rather than thrown
+     away: the object the hand moved *is* the layer and Fabric put it exactly
+     where the write says, so the new fingerprint is known here and exact —
+     where discarding it forced the next structural edit to rebuild all
+     forty-four tiles (measured: 412ms against 35ms for the one tile that
+     actually changed).
+     Left stale, the fingerprint describes the wall before the drag, so an undo
+     of that drag restores precisely what it remembers, the comparison answers
+     "nothing changed", and the screen keeps the dragged position while the
+     model and the file hold the old one. */
+  $effect(() => {
+    if (!app.unprinted) return;
+    app.unprinted = false;
+    if (drawn && canvas) drawn = wallPrint($state.snapshot(wall()), $state.snapshot(app.manifest));
   });
 
   /* Which tiles a selected wall picture would actually be baked into. Keyed on
@@ -575,6 +582,21 @@
   const isPick = (o: fabric.Object) =>
     (o as Tagged).layerId === app.selected && ((o as Tagged).tileId ?? "") === app.selectedTile;
 
+  /** Whether the layer that is picked is locked, read off the document.
+   *
+   *  Every other object is inert regardless, so this is the one lock that
+   *  decides anything — which is why it is worth one lookup rather than a tag
+   *  on every object. The tag is written when the object is built and says
+   *  what was true then; a padlock clicked since does not reach it, and the
+   *  padlock is not a reason to rebuild a wall. */
+  function pickIsLocked() {
+    const own: Layer[] = app.selectedTile
+      ? drawnLayers(app.manifest, app.selectedTile)
+      : wall().gridLayers;
+    const l = own.find((x: Layer) => x.id === app.selected);
+    return !!l && (!!l.locked || !!l.layoutId);
+  }
+
   $effect(() => {
     if (!canvas) return;
     app.selected;
@@ -582,9 +604,10 @@
     app.version;
     void building.then(() => {
       if (!canvas) return;
+      const held = pickIsLocked();
       for (const o of canvas.getObjects()) {
         const mine = (o as Tagged).layerId;
-        if (mine) o.evented = o.selectable = isPick(o) && !(o as Tagged).locked;
+        if (mine) o.evented = o.selectable = isPick(o) && !held;
       }
       // A rubber band would only ever catch the one grabbable object.
       canvas.selection = false;

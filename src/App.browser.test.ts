@@ -2158,6 +2158,28 @@ describe("two guards the wall was given and nothing checked", () => {
     expect(at()).toBeCloseTo(was.left, 0);
   });
 
+  it("stops answering the mouse the moment its padlock is clicked", async () => {
+    /* The lock no longer rebuilds the wall — it changes no pixels, and doing so
+     * across fourteen tiles was throwing the whole wall away and baking every
+     * mask again. What it must still do is take the layer out of reach, and
+     * the flag the canvas was reading is written when the object is built: it
+     * says what was true then. Read off the document instead. */
+    const { canvas, tile, layer } = await wallWith(() => addTileShape("rect"));
+    const obj = () =>
+      canvas.getObjects().find((o) => (o as Tagged).layerId === layer.id) as fabric.Object;
+    await until(() => !!obj()?.evented);
+
+    await toggleLayerLocked(layer.id, tile);
+    await tick();
+    await until(() => !obj().evented);
+    expect(obj().selectable).toBe(false);
+
+    // And back again, without a rebuild in either direction.
+    await toggleLayerLocked(layer.id, tile);
+    await tick();
+    await until(() => obj().evented);
+  });
+
   it("moves a flattened layer by the distance dragged, never to its bake's corner", async () => {
     /* A cut layer and a class icon are composited to pixels and placed at the
      * cell's origin, so the object on the canvas sits at 0,0 at scale 1 whatever
