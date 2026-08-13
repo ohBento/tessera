@@ -983,6 +983,37 @@ describe("the placing tool", () => {
     expect(after.y - from.y).toBeGreaterThan(0.08);
   });
 
+  it("will not let a gesture scale a layer down to nothing", async () => {
+    /* Seen happening: a shape left at Width 0, Height 0, gone from the wall
+     * with its row still in the list.
+     *
+     * A shape's size is multiplied by whatever Fabric scaled, so a run of tiny
+     * factors walks it towards nothing and no later gesture brings it back —
+     * the panel reads 0 because it rounds, and the layer is a point on the
+     * wall. Exactly nought is already caught (`patch.fx || 1`), which is why
+     * this uses a factor that is small rather than zero: that is the one that
+     * got through. The stand-in makes it easy to reach, being transparent —
+     * there is nothing to watch disappearing as the handle crosses the far
+     * side. */
+    const { canvas, stand, tile, layerId } = await placing();
+    const before = findLayer(app.manifest.tiles[tile]!.layers, layerId)! as ShapeLayer;
+    expect(before.w).toBeGreaterThan(0);
+
+    // What a corner handle dragged almost onto the opposite corner reports.
+    canvas.fire("object:modified", {
+      target: Object.assign(stand, { scaleX: 0.001, scaleY: 0.001 }) as fabric.Object,
+    });
+    await tick();
+    await new Promise((r) => setTimeout(r, 150));
+
+    const after = findLayer(app.manifest.tiles[tile]!.layers, layerId)! as ShapeLayer;
+    expect(after.w).toBeGreaterThan(0);
+    expect(after.h).toBeGreaterThan(0);
+    // And still grabbable: a hundredth of a tile is about six pixels across a
+    // portrait, small but not a point.
+    expect(after.w).toBeGreaterThanOrEqual(0.01);
+  });
+
   it("leaves no per-tile frame record behind", async () => {
     const { canvas, stand, tile } = await placing();
     await dragObject(canvas, stand, 60, 40);

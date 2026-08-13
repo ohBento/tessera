@@ -1028,9 +1028,21 @@ type Transform = {
   crop?: Inset;
 };
 
+/** Smallest a gesture may leave a layer: a hundredth of a tile, about six
+ *  pixels across a portrait.
+ *
+ *  Zero is a one-way door. A shape's size is *multiplied* by what Fabric
+ *  scaled, so once w or h reaches nought no gesture can bring it back —
+ *  anything times zero is zero — and a picture at scale 0 has no box left to
+ *  grab. Reached in ordinary use: dragging a corner handle past the opposite
+ *  corner, which the stand-in makes easy because it is transparent and there
+ *  is nothing to see going. The layer vanishes off the wall with its row still
+ *  in the list, and nothing but undo puts it back. */
+const MIN_SPAN = 0.01;
+
 function resize(layer: Layer, patch: Transform) {
   if (layer.kind === "image") {
-    layer.scale = patch.scale;
+    layer.scale = Math.max(patch.scale, MIN_SPAN);
     /* `scale` measures what the crop leaves, so the two travel together: a
      * side handle changes both, and storing one without the other would put
      * the picture back at the wrong size on the next rebuild. */
@@ -1054,10 +1066,10 @@ function resize(layer: Layer, patch: Transform) {
      * that was still hugging its words while the user only moved it. "Once you
      * touch it" has to mean the handle, not the layer. */
     if (dragged && (layer.w !== undefined || Math.abs(patch.scale - textWidth(layer)) > 0.002)) {
-      layer.w = patch.scale;
+      layer.w = Math.max(patch.scale, MIN_SPAN);
     }
     // Only ever present when a top or bottom handle was actually dragged.
-    if (patch.boxH !== undefined) layer.h = patch.boxH / TILE_H;
+    if (patch.boxH !== undefined) layer.h = Math.max(patch.boxH / TILE_H, MIN_SPAN);
   } else if (layer.kind === "shape") {
     /* Multiplied by what Fabric actually scaled, not set from the object's
      * measured width. A shape is built at exactly w×h with scaleX 1, so a
@@ -1065,8 +1077,8 @@ function resize(layer: Layer, patch: Transform) {
      * a polygon shrink on every drag, since a regular n-gon's bounding box is
      * smaller than the box it is inscribed in. Both axes on their own: a shape
      * is the one kind that can be stretched. */
-    layer.w *= patch.fx || 1;
-    layer.h *= patch.fy || 1;
+    layer.w = Math.max(layer.w * (patch.fx || 1), MIN_SPAN);
+    layer.h = Math.max(layer.h * (patch.fy || 1), MIN_SPAN);
   }
 }
 /** Writes a finished drag/scale/rotate back into the model.
