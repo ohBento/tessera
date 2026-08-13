@@ -232,6 +232,27 @@ describe.skipIf(!existsSync(FILE))("the v8 migration over the document on this m
    * Asserting the identity instead of the direction is what makes this worth
    * running: a layer going missing for any other reason breaks it, whichever
    * way the total happens to move. */
+  it("hands back a document with no id used twice on one tile", () => {
+    /* The invariant everything by-id rests on, checked over the real thing.
+     *
+     * Two tiles here had it broken: a build that let a group be pasted onto a
+     * tile already carrying one of its members put the copy in nested, and a
+     * later Ungroup laid it down beside the original. Two rows in one list
+     * under one key — the tile's row stopped opening at all, which is how it
+     * was found. `unclash` renames the second on the way in rather than
+     * dropping it: it is real work, and which of the two is the copy cannot be
+     * known from here. */
+    const clashes: string[] = [];
+    for (const [id, t] of Object.entries(after.tiles)) {
+      const seen = new Set<string>();
+      for (const l of walk(t.layers)) {
+        if (seen.has(l.id)) clashes.push(`${id}/${l.id}`);
+        seen.add(l.id);
+      }
+    }
+    expect(clashes).toEqual([]);
+  });
+
   it("accounts for every layer it removed", () => {
     const baked = new Map(
       (raw.layouts ?? []).map((l) => [

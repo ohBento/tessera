@@ -1212,6 +1212,31 @@ function toV8(m: Raw): Raw {
   return { version: 8, projects: m.projects, tiles };
 }
 
+/** Gives a fresh id to any layer whose id is already taken on its tile.
+ *
+ *  An id is unique within a tile, and everything here rests on it: every
+ *  lookup finds a layer by id and takes the first hit, so a second layer of
+ *  that name makes the eye, the lock, the delete and the drag land wherever
+ *  the walk reaches first. Worse, two rows in one list under one key is a
+ *  duplicate key, and the list refuses to render at all — the tile simply
+ *  stops opening.
+ *
+ *  Written by a build that let a group be pasted onto a tile already carrying
+ *  one of its members: the copy went in nested, and a later Ungroup put it
+ *  beside the original. Repaired on the way in rather than left for the user
+ *  to find, and by renaming rather than dropping — the second layer is real
+ *  work, and which of the two is "the copy" is not knowable from here. */
+function unclash(m: Manifest): Manifest {
+  for (const tile of Object.values(m.tiles ?? {})) {
+    const seen = new Set<string>();
+    for (const l of walkLayers(tile.layers ?? [])) {
+      if (seen.has(l.id)) l.id = newId();
+      seen.add(l.id);
+    }
+  }
+  return m;
+}
+
 export function migrate(raw: unknown): Manifest {
   const m = raw as Raw | null;
   if (!m || typeof m !== "object") return emptyManifest();
@@ -1224,7 +1249,8 @@ export function migrate(raw: unknown): Manifest {
    * Reading it as v7 is a guess, but a bounded one: the spread keeps fields
    * this build has no name for, so what it cannot use it carries. Rewriting a
    * newer document as an older shape is not bounded at all. */
-  if (typeof m.version === "number" && m.version >= 8) return { ...emptyManifest(), ...m } as Manifest;
+  if (typeof m.version === "number" && m.version >= 8)
+    return unclash({ ...emptyManifest(), ...m } as Manifest);
   const v7 = m.version === 7 ? m : toV7(m.version === 6 ? m : toV6(m));
-  return { ...emptyManifest(), ...toV8(v7) } as Manifest;
+  return unclash({ ...emptyManifest(), ...toV8(v7) } as Manifest);
 }

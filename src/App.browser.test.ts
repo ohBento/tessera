@@ -78,6 +78,8 @@ import {
   layerLabel,
   newImageLayer,
   newShapeLayer,
+  newGroupLayer,
+  clone,
   walkLayers,
   type ImageLayer,
   type ShapeLayer,
@@ -1403,6 +1405,34 @@ describe("carrying one layer's properties to another", () => {
     expect(tileLayers(b).some((l) => l.kind === "group")).toBe(false);
     expect([...walkLayers(tileLayers(b))].filter((l) => l.id === shared.id)).toHaveLength(1);
     expect(app.error).toContain("skipped");
+  });
+
+  it("still opens the row of a tile that already carries an id twice", async () => {
+    /* Documents written before the guard have such tiles: a loose layer and a
+     * group holding a copy of it, one id twice. The guard stops new ones being
+     * made and does nothing for those, and the report is that the tile's row
+     * will not open at all — so the state has to be survivable, not merely
+     * unreachable. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("ellipse");
+    const loose = tileLayers(tile).at(-1)!;
+    // What the old paste left behind: the same id again, inside a group.
+    const twin = { ...clone(loose), id: loose.id };
+    app.manifest.tiles[tile].layers.push(newGroupLayer([twin]));
+    app.version++;
+    await tick();
+
+    reveal("tiles");
+    await tick();
+    const row = document.querySelector(`[data-tile="${tile}"]`) as HTMLElement;
+    (row.querySelector("button.twisty") as HTMLButtonElement).click();
+    await tick();
+    await new Promise((r) => setTimeout(r, 200));
+
+    const names = [...row.querySelectorAll("button.name")].map((b) => b.textContent!.trim());
+    expect(names.length).toBeGreaterThan(0);
   });
 
   it("says nothing when the tiles already carry that very group", async () => {
