@@ -12,6 +12,7 @@
 import { ask } from "./platform";
 import {
   app,
+  changedHere,
   deleteProject,
   openProject,
   projects,
@@ -83,7 +84,11 @@ export async function writeToGame() {
  *  "Reset in game" for those tiles, and the question does not come round
  *  again — the entry leaves the list either way. */
 export async function allNewCharacters() {
-  const n = app.changedTiles.length;
+  /* The list the banner shows, which is the one being answered. Counting every
+     changed tile meant the dialog offered three where the banner listed two,
+     and the third was a portrait deliberately archived — set aside as "not
+     now" and then decided for anyway. */
+  const n = changedHere().length;
   if (
     !(await confirmed(
       `Treat all ${n} portrait(s) as new characters? Their layers and wording go, ` +

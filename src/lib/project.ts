@@ -310,11 +310,19 @@ export async function hashTiles(dir: string, ids: string[]): Promise<Record<stri
  *  one: every caller still gets its turn, in order. */
 let writing: Promise<void> = Promise.resolve();
 let queuedWrite: { dir: string; m: Manifest } | null = null;
+/** Set while a write is actually touching the disk.
+ *
+ *  The queue slot is emptied the moment a turn picks it up, which is before
+ *  the four awaits that do the writing — so `savePending` answered "nothing
+ *  pending" for the whole of the slow part, which is exactly the window the
+ *  guard exists to cover. In the common case of a single edit and an
+ *  immediate close it was never true at all. */
+let writingNow = false;
 
-/** Whether a manifest write is still waiting its turn. Closing the window with
- *  one queued drops the last edit on the floor — the model has it, the disk
- *  never gets it — and the queue is what makes that window exist at all. */
-export const savePending = () => queuedWrite !== null;
+/** Whether a manifest write is queued or in flight. Closing the window with
+ *  one of either drops the last edit on the floor — the model has it, the disk
+ *  never gets it. */
+export const savePending = () => queuedWrite !== null || writingNow;
 
 export function saveManifest(dir: string, m: Manifest): Promise<void> {
   /* Newer state supersedes older: a burst of edits — a slider being dragged —
@@ -330,10 +338,15 @@ export function saveManifest(dir: string, m: Manifest): Promise<void> {
       // Already covered by a later call that ran ahead of this turn.
       if (!next) return;
       queuedWrite = null;
-      const path = await manifestPath(next.dir);
-      await mkdir(await projectDir(next.dir), { recursive: true });
-      await writeTextFile(`${path}.tmp`, JSON.stringify(next.m, null, 2));
-      await rename(`${path}.tmp`, path);
+      writingNow = true;
+      try {
+        const path = await manifestPath(next.dir);
+        await mkdir(await projectDir(next.dir), { recursive: true });
+        await writeTextFile(`${path}.tmp`, JSON.stringify(next.m, null, 2));
+        await rename(`${path}.tmp`, path);
+      } finally {
+        writingNow = false;
+      }
     });
   return writing;
 }
@@ -622,7 +635,16 @@ export type Snapshot = { manifest: Manifest; prints: Fingerprints };
 
 export async function writeSnapshot(dir: string, ref: SnapshotRef, snap: Snapshot) {
   await mkdir(await snapshotDir(dir), { recursive: true });
-  await writeTextFile(await snapshotFile(dir, ref), JSON.stringify(snap, null, 2));
+  /* Temp file then rename, the way the manifest and the fingerprints are
+     written, and for a sharper reason: a snapshot is what the app offers as the
+     way back from the two actions that cannot be undone, and this was the one
+     write here that truncated its target first. A power cut during the one
+     "Before write" takes on every save to the game left a half file that
+     `listSnapshots` still offers and `readSnapshot` throws on — and unlike a
+     damaged manifest there is no path that sets a damaged snapshot aside. */
+  const path = await snapshotFile(dir, ref);
+  await writeTextFile(`${path}.tmp`, JSON.stringify(snap, null, 2));
+  await rename(`${path}.tmp`, path);
 }
 
 /** Reads one back, migrating it the same way the manifest itself is.

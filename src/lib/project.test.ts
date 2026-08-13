@@ -67,6 +67,7 @@ const {
   loadFingerprints,
   saveFingerprints,
   listSnapshots,
+  writeSnapshot,
   vaultedIds,
   pruneVault,
   restoreTiles,
@@ -454,6 +455,25 @@ describe("fingerprints survive a half-written file, and say so if they did not",
     await saveFingerprints("/docs/FaceTexture", { a: { original: "aaa" } });
     expect(files.get(path)).toContain("aaa");
     expect([...files.keys()].some((k) => k.endsWith(".tmp"))).toBe(false);
+    expect(rename).toHaveBeenCalled();
+  });
+
+  it("writes a snapshot through a temp file too", async () => {
+    /* A snapshot is what the app offers as the way back from the two actions
+     * that cannot be undone, and this was the one write here that truncated its
+     * target first. A power cut during the "Before write" taken on every save
+     * to the game leaves half a file that listSnapshots still offers and
+     * readSnapshot throws on — and unlike a damaged manifest, nothing sets a
+     * damaged snapshot aside. */
+    files.clear();
+    rename.mockClear();
+    await writeSnapshot(
+      "/docs/FaceTexture",
+      { name: "Before write", projectId: "p1" },
+      { manifest: emptyManifest(), prints: {} },
+    );
+    expect([...files.keys()].some((k) => k.endsWith(".tmp"))).toBe(false);
+    expect([...files.keys()].some((k) => k.includes("Before write"))).toBe(true);
     expect(rename).toHaveBeenCalled();
   });
 

@@ -24,6 +24,7 @@ import {
   addTileText,
   bakeMosaic,
   bulkTargets,
+  changedHere,
   clearAll,
   selectLayer,
   alsoSelect,
@@ -35,6 +36,7 @@ import {
   setTileLayerField,
   archived,
   archiveSelection,
+  releaseTilesToInbox,
   endGesture,
   deleteLayer,
   freeCount,
@@ -1048,6 +1050,38 @@ describe("keeping and replacing a character", () => {
     expect(app.manifest.tiles[a].layers.length).toBeGreaterThan(0);
     expect(app.changedTiles).toEqual([]);
     expect(await vaultedIds(app.dir)).not.toContain(a);
+    expect(app.vaulted).not.toContain(a);
+  });
+
+  it("leaves an archived portrait's question alone when the list is answered", async () => {
+    /* Archiving is "not now", not "decide for me" — the banner leaves those out
+     * and lists the rest. The two mass buttons read every changed tile instead,
+     * so a portrait set aside was answered by a button that never mentioned it:
+     * with "All new characters" that means its layers stripped and its vault
+     * original deleted, which is the one step Ctrl+Z cannot take back. */
+    const [a, b] = await written(2);
+    app.hashes = { ...app.hashes, [a]: "fremder", [b]: "fremder" };
+    app.changedTiles = [a, b];
+
+    /* b is put away, so the banner asks about a alone. Archiving is only
+     * offered for a tile no project has claimed, so it leaves the wall first —
+     * which is what a user does with a portrait they are not ready to decide
+     * about. */
+    app.selectedTiles = [b];
+    await releaseTilesToInbox();
+    // Re-picked: releasing a tile clears the selection it was made from.
+    app.selectedTiles = [b];
+    await archiveSelection(true);
+    app.selectedTiles = [];
+    expect(changedHere()).toEqual([a]);
+
+    await replaceAllCharacters();
+
+    // The one on screen was answered; the one put away kept its question and
+    // its original.
+    expect(app.changedTiles).toEqual([b]);
+    expect(app.vaulted).toContain(b);
+    expect(await vaultedIds(app.dir)).toContain(b);
     expect(app.vaulted).not.toContain(a);
   });
 

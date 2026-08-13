@@ -1636,17 +1636,25 @@ const recordOriginal = (prints: Record<string, { original: string }>, id: string
  *  for them and stay. */
 export async function keepCharacter(id: string) {
   await run("recheck", async () => {
-    const { prints } = await loadFingerprints(app.dir);
-    recordOriginal(prints, id);
-    await saveFingerprints(app.dir, prints);
-    /* The vault copy goes too. It holds the face from before the restyle, and
-     * loadOriginal prefers it over the game's own file — keeping it would mean
-     * the editor went on showing the old haircut for good. */
+    /* The vault copy goes first, and the fingerprint after it. It holds the
+     * face from before the restyle, and loadOriginal prefers it over the
+     * game's own file — keeping it would mean the editor went on showing the
+     * old haircut for good.
+     *
+     * The order is the whole point: the fingerprint is the durable record that
+     * says "we have seen this file and agreed about it", and writing it first
+     * meant a drop that failed left the record saying so anyway. The question
+     * could then never be asked again, for a portrait whose old original was
+     * still sitting in the vault being served. */
     await dropVaultCopy(app.dir, id);
     app.vaulted = app.vaulted.filter((x) => x !== id);
     forgetOriginal(id);
+    const { prints } = await loadFingerprints(app.dir);
+    recordOriginal(prints, id);
+    await saveFingerprints(app.dir, prints);
     app.changedTiles = app.changedTiles.filter((x) => x !== id);
     app.version++;
+    app.error = "Kept. The vault's copy of the old face was released.";
   });
 }
 
@@ -1656,14 +1664,20 @@ export async function keepCharacter(id: string) {
  *  served as this slot's "original". */
 export async function replaceCharacter(id: string) {
   await run("recheck", async () => {
-    const { prints } = await loadFingerprints(app.dir);
-    recordOriginal(prints, id);
-    await saveFingerprints(app.dir, prints);
+    /* The undoable part first, the irreversible part after it, and the durable
+       record last of all. Undo puts the layers back and cannot put the vault
+       copy back, so the message says which half it reaches — "Undone: Replace
+       character" over a portrait whose original is gone for good is a promise
+       this app cannot keep. */
+    await mutate("Replace character", () => removeFromProjectToInbox(app.manifest, id, true));
     await dropVaultCopy(app.dir, id);
     app.vaulted = app.vaulted.filter((x) => x !== id);
     forgetOriginal(id);
-    await mutate("Replace character", () => removeFromProjectToInbox(app.manifest, id, true));
+    const { prints } = await loadFingerprints(app.dir);
+    recordOriginal(prints, id);
+    await saveFingerprints(app.dir, prints);
     app.changedTiles = app.changedTiles.filter((x) => x !== id);
+    app.error = "Layers cleared. Ctrl+Z brings them back — the vault's original is gone.";
   });
 }
 
@@ -1677,13 +1691,18 @@ export async function replaceCharacter(id: string) {
  *  files are recorded as seen and the vault stays untouched; a face that truly
  *  did change still has its per-tile button, with the stricter behaviour. */
 export async function keepAllCharacters() {
-  const ids = [...app.changedTiles];
+  /* The list on screen, not every changed tile. Archiving is "not now", so the
+     banner leaves those out — and this answered for them anyway: a tile
+     deliberately set aside had its question closed by a button that never
+     mentioned it. */
+  const ids = changedHere();
   if (!ids.length) return;
   await run("recheck", async () => {
     const { prints } = await loadFingerprints(app.dir);
     for (const id of ids) recordOriginal(prints, id);
     await saveFingerprints(app.dir, prints);
-    app.changedTiles = [];
+    const done = new Set(ids);
+    app.changedTiles = app.changedTiles.filter((id) => !done.has(id));
     /* No cache to drop and no rebuild: the vault copies stay, and they are
      * exactly what loadOriginal is already serving. */
   });
@@ -1694,22 +1713,25 @@ export async function keepAllCharacters() {
  *  so one Ctrl+Z puts all the layers back (the vault copies stay gone, as with
  *  the per-tile button). */
 export async function replaceAllCharacters() {
-  const ids = [...app.changedTiles];
+  // The list on screen — see keepAllCharacters. The dialog counts these too.
+  const ids = changedHere();
   if (!ids.length) return;
   await run("recheck", async () => {
-    const { prints } = await loadFingerprints(app.dir);
-    for (const id of ids) recordOriginal(prints, id);
-    await saveFingerprints(app.dir, prints);
+    // Undoable first, irreversible second, the durable record last.
+    await mutate("Replace characters", () => {
+      for (const id of ids) removeFromProjectToInbox(app.manifest, id, true);
+    });
     const dropped = new Set(ids);
     app.vaulted = app.vaulted.filter((x) => !dropped.has(x));
     for (const id of ids) {
       await dropVaultCopy(app.dir, id);
       forgetOriginal(id);
     }
-    await mutate("Replace characters", () => {
-      for (const id of ids) removeFromProjectToInbox(app.manifest, id, true);
-    });
-    app.changedTiles = [];
+    const { prints } = await loadFingerprints(app.dir);
+    for (const id of ids) recordOriginal(prints, id);
+    await saveFingerprints(app.dir, prints);
+    app.changedTiles = app.changedTiles.filter((id) => !dropped.has(id));
+    app.error = `${ids.length} tile(s) cleared. Ctrl+Z brings the layers back — the vault's originals are gone.`;
   });
 }
 
