@@ -1344,7 +1344,14 @@
             </p>
           {/if}
           <ul>
-            {#each snapshots() as snap (snap.name)}
+            <!-- Keyed on the wall as well as the name. Names are only kept
+                 apart within one scope, and the overview deliberately lists the
+                 document-wide ones together with any left behind by a deleted
+                 project — so two "Snapshot 1" taken on different walls can meet
+                 here, and a keyed each throws on the pair rather than drawing
+                 it. That takes the sidebar down, in the build as well as in
+                 development. -->
+            {#each snapshots() as snap (`${snap.projectId}~${snap.name}`)}
               <li>
                 {#if renaming === `snap:${snap.name}`}
                   <!-- svelte-ignore a11y_autofocus -->

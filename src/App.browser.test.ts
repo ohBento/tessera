@@ -58,6 +58,7 @@ import {
   restoreSnapshot,
   stripSelectedTiles,
   saveToGame,
+  nextSnapshotName,
   snapshots,
   takeSnapshot,
   tileLayers,
@@ -2272,6 +2273,71 @@ describe("three the demolition took and nobody missed", () => {
     press("?");
     await tick();
     expect(sheetOpen("Keyboard and mouse")).toBe(true);
+  });
+
+  it("lists two snapshots of one name without taking the sidebar down", async () => {
+    /* Names are kept apart within one scope, and the overview deliberately
+     * lists the document-wide snapshots together with any left behind by a
+     * deleted project. So two "Snapshot 1" taken on different walls meet in one
+     * list — and a keyed `each` throws on the pair rather than drawing it,
+     * which takes the sidebar with it in the packaged build as well as in
+     * development. */
+    await enterInbox();
+    app.selectedTiles = app.folderIds.slice(0, 2);
+    await newProjectFrom("Konto");
+    const p = projects()[0].id;
+
+    // One on the overview, one inside the project, under the same name — which
+    // each scope allows, because their files are keyed by the project too.
+    // Making a project opens it, so the overview has to be gone back to.
+    openProjectView("");
+    await takeSnapshot("Snapshot 1");
+    openProjectView(p);
+    await takeSnapshot("Snapshot 1");
+    expect(new Set(app.snapshots.map((s) => s.name)).size).toBe(1);
+    expect(app.snapshots).toHaveLength(2);
+
+    // The project goes; its snapshot stays and lands in the overview's list.
+    await deleteProject(p);
+    reveal("snapshots");
+    await tick();
+    await new Promise((r) => setTimeout(r, 150));
+
+    expect(snapshots().length).toBe(2);
+    // The list drew both, and the sidebar is still standing.
+    expect(document.querySelectorAll("aside").length).toBeGreaterThan(0);
+  });
+
+  it("leaves Delete to a dropdown that has the keyboard", async () => {
+    /* A select takes the keyboard the way a field does — letters jump to a
+     * name, the arrows walk the list — and the panel's Font and Mask controls
+     * are two of them. Delete pressed there reached the global handler and took
+     * the layer off its tile: the cursor was in a control belonging to the very
+     * layer that vanished. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileText();
+    const caption = tileLayers(tile).at(-1)!;
+    selectLayer(caption.id, tile);
+    reveal("props");
+    await tick();
+
+    const font = [...document.querySelectorAll("label.field")]
+      .find((l) => l.querySelector("span")?.textContent?.trim() === "Font")
+      ?.querySelector("select") as HTMLSelectElement;
+    expect(font).toBeTruthy();
+    font.focus();
+    font.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true }));
+    await tick();
+    await new Promise((r) => setTimeout(r, 80));
+
+    expect(findLayer(tileLayers(tile), caption.id)).toBeTruthy();
+
+    // The same key with the focus anywhere else does take the layer off, or
+    // this proves nothing about the dropdown.
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true }));
+    await until(() => !findLayer(tileLayers(tile), caption.id));
   });
 
   it("ignores undo and delete while a long action is reading the document", async () => {

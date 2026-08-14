@@ -19,7 +19,16 @@ export const COLS = 7;
  *  One predicate, so the next field type is fixed everywhere at once. */
 export const isTyping = (el: EventTarget | Element | null): boolean =>
   el instanceof HTMLElement &&
-  (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el.isContentEditable);
+  (el instanceof HTMLInputElement ||
+    el instanceof HTMLTextAreaElement ||
+    /* A dropdown counts. It takes the keyboard the way a field does — letters
+       jump to a name, the arrows walk the list — and the panel's Font and Mask
+       controls are two of them. Without this, Delete pressed with the cursor in
+       the Font dropdown reached the global handler and took the layer off its
+       tile, and Escape unmounted the panel out from under the control that had
+       focus. */
+    el instanceof HTMLSelectElement ||
+    el.isContentEditable);
 
 /** How many rows a wall of `count` tiles needs — never fewer than one.
  *
