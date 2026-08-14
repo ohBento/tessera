@@ -1665,12 +1665,16 @@ export const wallPrint = (wall: Wall, m: Manifest): WallPrint => ({
      away and rebuilt the whole wall — every mask baked again, 635ms measured
      on forty-four tiles and four seconds on three hundred, for a change no
      rebuild could show. GridCanvas reads the lock off the document instead.
+     `tint` is out for the same reason and more plainly: it colours a row in
+     the sidebar and nothing else.
      Everything else in the record does reach the picture, `hidden` included,
      and stays in. */
   tiles: new Map(
     wall.ids.map((id) => [
       id,
-      JSON.stringify(m.tiles[id] ?? null, (k, v) => (k === "locked" ? undefined : v)),
+      JSON.stringify(m.tiles[id] ?? null, (k, v) =>
+        k === "locked" || k === "tint" ? undefined : v,
+      ),
     ]),
   ),
 });

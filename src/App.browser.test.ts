@@ -92,7 +92,7 @@ import {
   type TextLayer,
 } from "./lib/model";
 import { maskChoices } from "./lib/model";
-import { cellAt, textWidth, type Tagged } from "./lib/scene";
+import { cellAt, textWidth, tilesChanged, wallPrint, type Tagged } from "./lib/scene";
 import { TILE_H, TILE_W } from "./lib/bmp";
 import { dragObject, scaleObject } from "./test/gestures";
 import {
@@ -2845,6 +2845,48 @@ describe("two guards the wall was given and nothing checked", () => {
     /* Same place on the tile, now said in the group's coordinates: its own x
      * plus the group's quarter-tile shift is where it was. */
     expect(findLayer(tileLayers(tile), joiner.id)!.x + 0.25).toBeCloseTo(drawnAt, 6);
+  });
+
+  it("colours a group's row and its members' rows, and nothing else", async () => {
+    /* Asked for as: give grp01 red and every layer in it shows red — and
+     * nothing in the layers' own properties or on the wall changes. So it is a
+     * mark on the row, held once on the group: a member wears its group's
+     * rather than carrying a copy, which is why recolouring cannot half-apply
+     * and why a layer taken out of the group loses the colour by leaving. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const one = tileLayers(tile).at(-1)!;
+    await setTileLayerField([tile], one.id, "fill", "#00ff88");
+    await addTileShape("ellipse");
+    const two = tileLayers(tile).at(-1)!;
+    selectLayer(one.id, tile);
+    alsoSelect(two.id, tile);
+    await groupPicked();
+    const group = tileLayers(tile).find((l) => l.kind === "group")!;
+    reveal(group.id);
+    reveal("tiles");
+    await tick();
+
+    await setTileLayerField([tile], group.id, "tint", "#ff0000");
+    await tick();
+    const painted = () =>
+      [...document.querySelectorAll("li.tinted")].map(
+        (el) => (el as HTMLElement).style.getPropertyValue("--tint") || "",
+      );
+    // The group's row and both of its members', all in the one colour.
+    await until(() => painted().length === 3);
+    expect(new Set(painted())).toEqual(new Set(["#ff0000"]));
+
+    /* What must not have happened: the members' own colours are their own, and
+     * the wall has nothing to redraw — a mark on a row is not a pixel. */
+    expect((findLayer(tileLayers(tile), one.id) as ShapeLayer).fill).toBe("#00ff88");
+    expect(findLayer(tileLayers(tile), two.id)!.tint).toBeUndefined();
+    const wall = { ids: visibleIds(), gridLayers: [] };
+    const before = wallPrint(wall, clone(app.manifest));
+    await setTileLayerField([tile], group.id, "tint", "#0000ff");
+    expect(tilesChanged(before, wallPrint(wall, clone(app.manifest)))).toEqual([]);
   });
 
   it("says why a group cannot be put inside itself", async () => {

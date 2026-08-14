@@ -553,6 +553,25 @@
        angle nobody drew. Saying "no properties of its own" three lines above
        two working sliders was the other half of the same lie. -->
   <p class="empty">A group carries its children — only the fade below is its own.</p>
+  <!-- A colour for the row, and for the rows of everything in the group. It
+       draws nothing: the wall, the file written to the game and every field of
+       every member are untouched. It is there so a stack of a dozen layers can
+       be read at a glance — which of these belong together. -->
+  <label class="field" title="Colours this group's row and its members' rows. Nothing else.">
+    <span>Colour</span>
+    <input
+      type="color"
+      value={layer.tint ?? "#a685ff"}
+      oninput={(e) => set("tint", e.currentTarget.value)}
+    />
+    <button
+      disabled={!layer.tint}
+      title={layer.tint ? "Back to no colour" : "This group has no colour"}
+      onclick={() => set("tint", undefined)}
+    >
+      Clear
+    </button>
+  </label>
 {/if}
 
 {#if layer.kind !== "group"}

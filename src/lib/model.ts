@@ -76,6 +76,16 @@ type Common = {
    * through the layer rather than a piece cut out of it. Absent means the
    * ordinary way round. */
   maskInvert?: boolean;
+  /* A colour for the row in the list, and for the rows of everything inside it
+   * when this is a group. Nothing draws it: the wall, the export and every
+   * other field of the layer are untouched. It is there so a stack of a dozen
+   * layers can be read at a glance — which of these belong together — the way
+   * a layer colour works in Photoshop.
+   *
+   * On a group in practice, though it costs nothing to allow anywhere: the
+   * members read their group's rather than carrying their own, so recolouring
+   * a group is one write and cannot half-apply. */
+  tint?: string;
   /* Set on anything a Layout put here: the picture rendered from it, and any
    * caption it keeps live. Lets one Layout find every copy of itself across
    * every tile carrying it and bring them all up to date in one pass. Absent

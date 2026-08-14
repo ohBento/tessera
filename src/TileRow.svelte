@@ -144,9 +144,15 @@
      without it every drop was written as `parentId: null` and a row dragged
      between two members of a group escaped to the top of the tile. */
   parentId: string | null,
+  /* The colour of the group these rows sit in, "" at the top level. A member
+     wears its group's rather than carrying one of its own: recolouring a group
+     is then one write that cannot half-apply, and a layer taken out of the
+     group loses the colour by leaving, which is what the colour meant. */
+  inherited: string,
 )}
   <ul class="indent">
     {#each rows as layer (layer.id)}
+      {@const tint = layer.tint ?? inherited}
       <!-- A group's row takes a drop in its middle third: that is how a layer
            joins a group that already exists. `canHold` was hard-coded false, so
            the only way in was to dissolve the group and make it again — three
@@ -155,6 +161,8 @@
            group's displacement in and out on the way; nothing else was
            missing. -->
       <li
+        class:tinted={!!tint}
+        style={tint ? `--tint: ${tint}` : undefined}
         class:selected={app.selectedTile === id &&
           (app.selected === layer.id || app.alsoSelected.includes(layer.id))}
         aria-current={app.selectedTile === id &&
@@ -249,7 +257,7 @@
            group writes the tile's stack, and relocateLayer is what works out
            which list the row actually landed in. -->
       {#if layer.kind === "group" && layer.children.length && isOpen(layer.id)}
-        {@render stampRows(stampsOf(layer.children), drop, layer.id)}
+        {@render stampRows(stampsOf(layer.children), drop, layer.id, tint)}
       {/if}
     {/each}
   </ul>
@@ -356,6 +364,7 @@
         own,
         (moving, parentId, beforeId) => void dropTileLayer(id, moving, parentId, beforeId),
         null,
+        "",
       )}
       <!-- What this tile alone says and shows. In the row rather
            than in a panel below the list: with forty-four rows,
