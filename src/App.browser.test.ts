@@ -2739,11 +2739,13 @@ describe("two guards the wall was given and nothing checked", () => {
     // The dragged layer landed on both tiles, as it always did.
     expect(findLayer(tileLayers(a), one.id)!.x).toBeCloseTo(was.one.x + 0.2, 6);
     expect(findLayer(tileLayers(b), one.id)!.x).toBeCloseTo(was.one.x + 0.2, 6);
-    // The extra travelled the same distance, on the tile the hand was on.
+    /* The extra travelled the same distance — on every picked tile, keeping
+     * the place it has on each of them. That is the difference between the two
+     * halves: the dragged layer is placed, the extra is nudged. */
     expect(findLayer(tileLayers(a), two.id)!.x).toBeCloseTo(was.two.x + 0.2, 6);
     expect(findLayer(tileLayers(a), two.id)!.y).toBeCloseTo(was.two.y, 6);
-    // And nothing reached into the other portrait's copy of it.
-    expect(findLayer(tileLayers(b), two.id)!.x).toBeCloseTo(was.twoOnB.x, 6);
+    expect(findLayer(tileLayers(b), two.id)!.x).toBeCloseTo(was.twoOnB.x + 0.2, 6);
+    expect(findLayer(tileLayers(b), two.id)!.y).toBeCloseTo(was.twoOnB.y, 6);
   });
 
   it("takes the layers picked alongside it the same distance", async () => {

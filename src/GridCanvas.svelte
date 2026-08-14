@@ -15,6 +15,7 @@
     clearAll,
     clearTiles,
     nudgeLayer,
+    pickedLayers,
     refreshCoverPreview,
     selectLayer,
     swapTilePlaces,
@@ -933,6 +934,35 @@
           ctx.lineWidth = 2;
         }
         ctx.strokeRect(x, y, w, h);
+      }
+
+      /* What a drag is about to reach on the *other* portraits. A gesture on
+         one tile is written to every picked tile carrying that layer, and until
+         now the only sign of that was the tile outline — which says "this tile
+         is picked", not "these layers will move". So a shape dragged on tile
+         two moved a shape on tile one with nothing having pointed at it.
+         The layers themselves are marked, faintly and dashed, on every picked
+         tile but the one under the hand: that one has Fabric's own handles and
+         a second mark on top of them is noise. */
+      const reach = pickedLayers();
+      if (reach.length && app.selectedTiles.length > 1) {
+        const targets = new Set(bulkTargets(app.selected));
+        ctx.setLineDash([4, 3]);
+        ctx.strokeStyle = "rgba(203, 184, 255, 0.55)";
+        ctx.lineWidth = 1;
+        for (const o of canvas!.getObjects()) {
+          const t = o as Tagged & { keep?: boolean };
+          if (t.keep || !t.layerId || !reach.includes(t.layerId)) continue;
+          if (!t.tileId || t.tileId === app.selectedTile || !targets.has(t.tileId)) continue;
+          const r = o.getBoundingRect();
+          ctx.strokeRect(
+            Math.round(r.left * vt[0] + vt[4]) + 0.5,
+            Math.round(r.top * vt[3] + vt[5]) + 0.5,
+            Math.round(r.width * vt[0]),
+            Math.round(r.height * vt[3]),
+          );
+        }
+        ctx.setLineDash([]);
       }
 
       /* Where a dragged wall picture has been pulled flush with the wall. Drawn

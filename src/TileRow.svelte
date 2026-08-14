@@ -114,13 +114,33 @@
    *  starts itself would type over the first name. */
   async function stepName(e: KeyboardEvent, from: string, group: string) {
     e.preventDefault();
-    (e.currentTarget as HTMLInputElement).blur();
+    const here = e.currentTarget as HTMLInputElement;
+    /* The next field on this tile first. One caption per portrait was the quiet
+       assumption — with two, Enter jumped straight past the second one to the
+       next tile, and the only way to it was the mouse. The row's own fields are
+       in the order the tile lists them, so "the next one" is the one after this
+       in that list. */
+    const own = [...(here.closest(".group")?.querySelectorAll<HTMLInputElement>(".field input") ?? [])];
+    const step = e.shiftKey ? -1 : 1;
+    const sibling = own[own.indexOf(here) + step];
+    if (sibling) {
+      sibling.focus();
+      sibling.select();
+      return;
+    }
+    here.blur();
     const list = group ? (folders().find((f) => f.id === group)?.tiles ?? []) : looseIds();
     const next = list[list.indexOf(from) + (e.shiftKey ? -1 : 1)];
     if (!next) return;
     toggleTileRow(next);
     await tick();
-    const field = document.querySelector<HTMLInputElement>(`[data-tile="${next}"] .field input`);
+    /* Going back, the last field of that tile rather than the first: Shift+Enter
+       is the way back through the walk, and landing on the first of two fields
+       would skip the one just above. */
+    const fields = [
+      ...document.querySelectorAll<HTMLInputElement>(`[data-tile="${next}"] .field input`),
+    ];
+    const field = step < 0 ? fields.at(-1) : fields[0];
     field?.focus();
     field?.select();
     // `nearest`, so a row already in view is not yanked to the top of the pane.

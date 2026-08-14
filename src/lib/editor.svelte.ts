@@ -1517,15 +1517,16 @@ export async function applyTransformBulk(
   if (!others.length) return applyTransform(obj, patch);
 
   const shift = nestingShift(own, obj.layerId) ?? { dx: 0, dy: 0 };
-  /* The extras of a multi-layer pick travel here too. Without this the same
-     gesture meant two different things: with one tile picked a Ctrl-picked
-     second layer came along, with two or more it stayed where it was — and
-     which you got depended on how many portraits happened to be selected. They
-     travel by distance, as they do on the single-tile path, and only on the
-     tile the hand was on: the other tiles get the dragged layer's placement
-     copied, and copying a *distance* onto a layer that sits somewhere else on
-     that portrait would move it somewhere nobody pointed at. */
+  /* The extras of a multi-layer pick travel here too, and on every picked tile
+     — one rule for the whole gesture: what is picked is what is reached.
+     The two halves move differently on purpose, and both ways round are what
+     the hand asked for. The dragged layer is *placed*: it lands at the same
+     spot on every portrait, which is what carrying one design across a wall
+     means. An extra is *nudged*: it keeps whatever place it has on its own
+     portrait and shifts by the same distance, because it was picked to come
+     along, not to be lined up with a copy of itself somewhere else. */
   const along = travellers(obj);
+  const alongIds = along.map((l) => l.id);
   const step = { dx: patch.x - shift.dx - layer.x, dy: patch.y - shift.dy - layer.y };
   await mutate(
     "Move layer",
@@ -1541,8 +1542,15 @@ export async function applyTransformBulk(
       /* Each target's own nesting, not the dragged one's: the same layer can
        * sit inside a group on one tile and loose on another, and a position is
        * stored relative to whatever encloses it. */
-      for (const { list, layer: other } of others)
+      for (const { list, layer: other } of others) {
         copyPlacement(other, layer, nestingShift(list, obj.layerId) ?? { dx: 0, dy: 0 });
+        for (const id of alongIds) {
+          const mate = findLayer(list, id);
+          if (!mate) continue;
+          mate.x += step.dx;
+          mate.y += step.dy;
+        }
+      }
     },
     true,
   );
