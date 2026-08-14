@@ -1233,6 +1233,19 @@ function toV8(m: Raw): Raw {
  *  beside the original. Repaired on the way in rather than left for the user
  *  to find, and by renaming rather than dropping — the second layer is real
  *  work, and which of the two is "the copy" is not knowable from here. */
+/** A copy of a layer, with fresh ids all the way down.
+ *
+ *  Ids are shared across tiles on purpose — that is what makes one layer
+ *  editable on forty-four portraits at once — but never twice within a tile:
+ *  every lookup here finds a layer by id and takes the first hit. So a copy
+ *  landing beside its original needs its own, and so does every member of a
+ *  copied group. */
+export function copyOf(layer: Layer): Layer {
+  const made = clone(layer);
+  for (const l of walkLayers([made])) l.id = newId();
+  return made;
+}
+
 function unclash(m: Manifest): Manifest {
   for (const tile of Object.values(m.tiles ?? {})) {
     const seen = new Set<string>();

@@ -39,6 +39,8 @@ import {
   releaseTilesToInbox,
   endGesture,
   deleteLayer,
+  dropTileLayer,
+  duplicateLayer,
   freeCount,
   history,
   historySteps,
@@ -2754,6 +2756,90 @@ describe("two guards the wall was given and nothing checked", () => {
     await until(() => !!frame() && frame() !== first);
 
     expect(frame()!.getScaledWidth()).toBeCloseTo(before, 0);
+  });
+
+  it("duplicates a layer onto its own tile, clear of the original", async () => {
+    /* There was no way to have two of something that share a look. The route
+     * was: insert a fresh layer (which lands on every selected tile), copy the
+     * properties across through two context menus, then drag the copy off the
+     * original it landed exactly on top of. The keyboard sheet has claimed a
+     * duplicate exists for longer than one did.
+     *
+     * Fresh ids all the way down, or the copy and the original answer to the
+     * same name on one tile and every lookup takes the first hit. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const one = tileLayers(tile).at(-1)!;
+    await setTileLayerField([tile], one.id, "fill", "#00ff88");
+
+    await duplicateLayer(one.id, tile);
+
+    const own = tileLayers(tile);
+    expect(own).toHaveLength(2);
+    const copy = own.find((l) => l.id !== one.id)! as ShapeLayer;
+    // Its own id and name, the original's look, and not hidden behind it.
+    expect(copy.id).not.toBe(one.id);
+    expect(copy.name).not.toBe(one.name);
+    expect(copy.fill).toBe("#00ff88");
+    expect(copy.x).toBeGreaterThan((findLayer(own, one.id) as ShapeLayer).x);
+    // And it is what the panel is now showing.
+    expect(app.selected).toBe(copy.id);
+
+    /* A group comes with its members, each of them under an id of its own —
+     * two layers of one name on a tile is the shape nothing here copes with. */
+    await addTileShape("ellipse");
+    const two = tileLayers(tile).at(-1)!;
+    selectLayer(one.id, tile);
+    alsoSelect(two.id, tile);
+    await groupPicked();
+    const group = tileLayers(tile).find((l) => l.kind === "group")!;
+    await duplicateLayer(group.id, tile);
+
+    const ids = [...walkLayers(tileLayers(tile))].map((l) => l.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    const groups = tileLayers(tile).filter((l) => l.kind === "group");
+    expect(groups).toHaveLength(2);
+    expect(groups[0].kind === "group" && groups[0].children).toHaveLength(2);
+  });
+
+  it("puts a layer into a group that already exists, where it was drawn", async () => {
+    /* The model has taken a parent since the day groups arrived, and the row
+     * list computes the answer for a drop in a row's middle third — but the
+     * flag that offers that third was hard-coded false and the drop was written
+     * as "no parent". So a group could be made and never added to: the only way
+     * to put a fifth layer in a group of four was to dissolve it, re-select all
+     * five and group again.
+     *
+     * Crossing the boundary swaps the top level's displacement for the group's,
+     * which is what keeps the layer where it is drawn. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const one = tileLayers(tile).at(-1)!;
+    await addTileShape("ellipse");
+    const two = tileLayers(tile).at(-1)!;
+    selectLayer(one.id, tile);
+    alsoSelect(two.id, tile);
+    await groupPicked();
+    const group = tileLayers(tile).find((l) => l.kind === "group")!;
+    await setTileLayerField([tile], group.id, "x", 0.75);
+
+    // A third layer, loose, at a place of its own.
+    await addTileShape("rect");
+    const joiner = tileLayers(tile).at(-1)!;
+    await setTileLayerField([tile], joiner.id, "x", 0.2);
+    const drawnAt = findLayer(tileLayers(tile), joiner.id)!.x;
+
+    await dropTileLayer(tile, joiner.id, group.id, null);
+
+    expect(groupHolding(joiner.id, tile)?.id).toBe(group.id);
+    expect(tileLayers(tile).some((l) => l.id === joiner.id)).toBe(false);
+    /* Same place on the tile, now said in the group's coordinates: its own x
+     * plus the group's quarter-tile shift is where it was. */
+    expect(findLayer(tileLayers(tile), joiner.id)!.x + 0.25).toBeCloseTo(drawnAt, 6);
   });
 
   it("takes a layer out of its group and leaves it where it was drawn", async () => {

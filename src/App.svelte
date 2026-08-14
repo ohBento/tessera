@@ -33,6 +33,7 @@
     coverTheWall,
     clearTiles,
     deleteLayer,
+    duplicateLayer,
     dropTileLayer,
     endGesture,
     fileSelectionInto,
@@ -205,6 +206,13 @@
       return;
     }
     if (!e.ctrlKey) return;
+    /* The duplicate the keyboard sheet has always listed. It needs a layer and
+       the tile it was picked on, the same pair Delete takes. */
+    if (key === "d" && app.selected && app.selectedTile) {
+      void duplicateLayer(app.selected, app.selectedTile);
+      e.preventDefault();
+      return;
+    }
     // Ctrl+Shift+Z as well as Ctrl+Y — both are in wide use and cost one clause.
     if (key === "z" && !e.shiftKey) void undoEdit();
     else if (key === "y" || (key === "z" && e.shiftKey)) void redoEdit();
@@ -294,7 +302,13 @@
     ["Ctrl + Z", "Undo"],
     ["Ctrl + Y  ·  Ctrl + Shift + Z", "Redo"],
     ["Delete  ·  Backspace", "Take the picked layer off its tile"],
-    ["Escape", "Leave the placing tool, or close the sheet over the page"],
+    ["Ctrl + D", "Duplicate the picked layer on its tile"],
+    ["Escape", "Drop the picked layer, or close the sheet over the page"],
+    /* Half of what this app can do is behind a right-click and nothing on
+       screen said so — a sheet that lists the gestures and leaves out the one
+       that opens the actions is a map with the roads missing. */
+    ["Right-click a layer row", "Duplicate, group, ungroup, copy and paste a look"],
+    ["Right-click the wall", "Act on the picked tiles: hide, lock, remove a layer, archive"],
     ["?", "This sheet"],
     ["Wheel", "Zoom"],
     ["Middle-drag", "Pan"],
@@ -718,6 +732,12 @@
         ...(picked.length > 1 || isGroup || groupHolding(layerId, tileId)
           ? [{ separator: true } as Item]
           : []),
+        {
+          // Ctrl+D as well, which the keyboard sheet has claimed for longer
+          // than the action has existed.
+          label: "Duplicate",
+          run: () => void duplicateLayer(layerId, tileId),
+        },
         {
           label: "Copy properties",
           run: () => copyLayerProps(layerId, tileId),

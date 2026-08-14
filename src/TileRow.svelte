@@ -135,9 +135,24 @@
 <!-- The stamps on one holder — a group's stack or a single tile's own. Same
      row either way, so `drop` is the only thing that differs: which list the
      reorder writes back to. -->
-{#snippet stampRows(rows: Layer[], drop: (moving: string, beforeId: string | null) => void)}
+{#snippet stampRows(
+  rows: Layer[],
+  drop: (moving: string, parentId: string | null, beforeId: string | null) => void,
+  /* The group these rows are the children of, "" for the tile's own stack.
+     Carried because a drop lands in the list the row it was aimed at lives in:
+     without it every drop was written as `parentId: null` and a row dragged
+     between two members of a group escaped to the top of the tile. */
+  parentId: string | null,
+)}
   <ul class="indent">
     {#each rows as layer (layer.id)}
+      <!-- A group's row takes a drop in its middle third: that is how a layer
+           joins a group that already exists. `canHold` was hard-coded false, so
+           the only way in was to dissolve the group and make it again — three
+           actions, all right-click-only, one of them the button labelled
+           "Delete". relocateLayer has always taken a parent and folded the
+           group's displacement in and out on the way; nothing else was
+           missing. -->
       <li
         class:selected={app.selectedTile === id &&
           (app.selected === layer.id || app.alsoSelected.includes(layer.id))}
@@ -147,9 +162,10 @@
           : undefined}
         class:drop-before={drag.on?.id === layer.id && drag.on.where === "before"}
         class:drop-after={drag.on?.id === layer.id && drag.on.where === "after"}
+        class:drop-into={drag.on?.id === layer.id && drag.on.where === "into"}
         draggable="true"
         ondragstart={(e) => startDrag(e, layer.id)}
-        ondragover={(e) => over(e, layer.id, false)}
+        ondragover={(e) => over(e, layer.id, layer.kind === "group")}
         ondragleave={() => drag.on?.id === layer.id && (drag.on = null)}
         ondragend={endDrag}
         oncontextmenu={(e) => layerMenu(e, layer.id, id)}
@@ -159,7 +175,8 @@
           const moving = drag.id;
           endDrag();
           if (!spot || !moving) return;
-          drop(moving, landing(rows, spot.id, spot.where, null).beforeId);
+          const to = landing(rows, spot.id, spot.where, parentId);
+          drop(moving, to.parentId, to.beforeId);
         }}
       >
         <button
@@ -216,7 +233,7 @@
            group writes the tile's stack, and relocateLayer is what works out
            which list the row actually landed in. -->
       {#if layer.kind === "group" && layer.children.length}
-        {@render stampRows(stampsOf(layer.children), drop)}
+        {@render stampRows(stampsOf(layer.children), drop, layer.id)}
       {/if}
     {/each}
   </ul>
@@ -321,7 +338,8 @@
     {#if isOpen(id)}
       {@render stampRows(
         own,
-        (moving, beforeId) => void dropTileLayer(id, moving, beforeId),
+        (moving, parentId, beforeId) => void dropTileLayer(id, moving, parentId, beforeId),
+        null,
       )}
       <!-- What this tile alone says and shows. In the row rather
            than in a panel below the list: with forty-four rows,

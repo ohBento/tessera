@@ -23,6 +23,7 @@ import {
   dissolveFolder,
   emptyManifest,
   clone,
+  copyOf,
   findLayer,
   findList,
   groupShift,
@@ -928,6 +929,34 @@ export const groupHolding = (id: string, tileId = app.selectedTile): Layer | und
  *
  *  It lands immediately after the group in the stack rather than on top of
  *  everything, so leaving a group is not also a change of what covers what. */
+/** A second copy of a layer on the same tile, just above it.
+ *
+ *  The way to two of something that shares a look: build one, duplicate it,
+ *  move the copy. Without it the route was to insert a fresh layer — which
+ *  lands on every selected tile — then copy the properties over through two
+ *  context menus, and then drag the copy off the original it landed exactly
+ *  on top of. The keyboard sheet has claimed a duplicate exists since before
+ *  this app had one.
+ *
+ *  Fresh ids, a name of its own, and nudged clear of the original: a copy
+ *  hidden exactly behind what it was copied from looks like nothing happened.
+ *  A group is duplicated whole, members and all. */
+export async function duplicateLayer(id: string, tileId = app.selectedTile) {
+  const list = tileId ? app.manifest.tiles[tileId]?.layers : openProject()?.gridLayers;
+  if (!list) return;
+  const owner = findList(list, id);
+  const layer = owner && findLayer(owner, id);
+  if (!owner || !layer) return;
+  const copy = copyOf(layer);
+  nameInStack(copy, list);
+  copy.x += 0.04;
+  copy.y += 0.04;
+  await mutate("Duplicate layer", () => {
+    owner.splice(owner.indexOf(layer) + 1, 0, copy);
+    selectLayer(copy.id, tileId);
+  });
+}
+
 export async function takeOutOfGroup(id: string, tileId = app.selectedTile) {
   const list = app.manifest.tiles[tileId]?.layers;
   const group = groupHolding(id, tileId);
@@ -2418,20 +2447,41 @@ export async function removeLayerFromSelection(id: string) {
 
 /** Reorders a tile's own stack. Takes the list rather than an owner, so the
  *  project's wall picture and a tile's stack are the same call. */
-async function dropInto(layers: Layer[] | undefined, id: string, beforeId: string | null) {
+async function dropInto(
+  layers: Layer[] | undefined,
+  id: string,
+  /* The group to land in, null for the tile's own stack. Hard-coded null here
+     for as long as the row list could not offer a group as a target: a drop
+     aimed between two members of a group landed at the top of the tile
+     instead, and there was no way at all to put a layer into a group that
+     already existed. */
+  parentId: string | null,
+  beforeId: string | null,
+) {
   if (!layers) return;
   // Checked on a copy first, so a refused move costs neither an undo step nor
   // a save.
   const trial = plain(layers) as Layer[];
-  if (!relocateLayer(trial, id, null, beforeId)) return;
-  await mutate("Reorder layer", () => {
-    relocateLayer(layers, id, null, beforeId);
+  if (!relocateLayer(trial, id, parentId, beforeId)) {
+    /* The one refusal there is: a group cannot be put inside itself or inside
+       anything it holds, which would take the whole branch out of reach. Said
+       out loud — the row springing back looks like a drag that never
+       registered, and the answer is to aim somewhere else. */
+    app.error = "A group cannot be put inside itself";
+    return;
+  }
+  await mutate(parentId ? "Move layer into group" : "Reorder layer", () => {
+    relocateLayer(layers, id, parentId, beforeId);
     app.selected = id;
   });
 }
 
-export const dropTileLayer = (tileId: string, id: string, beforeId: string | null) =>
-  dropInto(app.manifest.tiles[tileId]?.layers, id, beforeId);
+export const dropTileLayer = (
+  tileId: string,
+  id: string,
+  parentId: string | null,
+  beforeId: string | null,
+) => dropInto(app.manifest.tiles[tileId]?.layers, id, parentId, beforeId);
 
 /** Puts a new layer on every selected tile — one undo step.
  *
