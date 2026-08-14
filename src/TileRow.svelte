@@ -25,6 +25,7 @@
     over,
     renameKey,
     startDrag,
+    toggleOpen,
     toggleTileRow,
   } from "./lib/rows.svelte";
   import {
@@ -194,6 +195,21 @@
         >
           <RowIcon name="lock" on={!!layer.locked} />
         </button>
+        <!-- A group folds away, the way a tile's own row does. Its members were
+             always drawn, so a tile with three groups of four was a column of
+             fifteen rows to scroll past to reach the next tile — and the point
+             of a group is to be one thing. Uses the same open set as every
+             other row in the sidebar; a layer id can never collide with a tile
+             id. -->
+        {#if layer.kind === "group" && layer.children.length}
+          <button
+            class="twisty"
+            title={isOpen(layer.id) ? "Fold the group away" : "Show what is in the group"}
+            onclick={() => toggleOpen(layer.id)}
+          >
+            {isOpen(layer.id) ? "▾" : "▸"}
+          </button>
+        {/if}
         <!-- Double-click to rename, the way the tile above it is renamed. The
              input replaces the button rather than sitting beside it, so the row
              keeps its width and nothing shifts under the pointer.
@@ -232,7 +248,7 @@
            its own name to rename. `drop` is the parent's: reordering inside a
            group writes the tile's stack, and relocateLayer is what works out
            which list the row actually landed in. -->
-      {#if layer.kind === "group" && layer.children.length}
+      {#if layer.kind === "group" && layer.children.length && isOpen(layer.id)}
         {@render stampRows(stampsOf(layer.children), drop, layer.id)}
       {/if}
     {/each}

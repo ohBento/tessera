@@ -714,7 +714,11 @@
           ? [
               {
                 label: `Group ${picked.length} layers`,
-                run: () => void groupPicked(),
+                /* Opened as it is made. A group folds away like any other row,
+                   and one that arrived folded looked like the layers had been
+                   swallowed rather than gathered. `app.selected` is the new
+                   group — groupPicked picks it. */
+                run: () => void groupPicked().then(() => reveal(app.selected)),
               } as Item,
             ]
           : []),
@@ -736,7 +740,9 @@
           // Ctrl+D as well, which the keyboard sheet has claimed for longer
           // than the action has existed.
           label: "Duplicate",
-          run: () => void duplicateLayer(layerId, tileId),
+          // Same as grouping: the copy is picked, so open it if it holds
+          // anything.
+          run: () => void duplicateLayer(layerId, tileId).then(() => reveal(app.selected)),
         },
         {
           label: "Copy properties",

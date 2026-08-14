@@ -948,9 +948,18 @@ export async function duplicateLayer(id: string, tileId = app.selectedTile) {
   const layer = owner && findLayer(owner, id);
   if (!owner || !layer) return;
   const copy = copyOf(layer);
-  nameInStack(copy, list);
   copy.x += 0.04;
   copy.y += 0.04;
+  /* Every layer of it gets a name of its own, the group's members included —
+     they came out wearing the names they were copied from, so a tile listed
+     polygon01 and ellipse01 twice over and only the group's own number told
+     the two apart.
+     Named here rather than after the splice: `list` is a reactive array, so
+     what goes into it is not the object this holds, and renaming afterwards
+     wrote onto a copy nobody was looking at. The stack the numbers are counted
+     against therefore has to be spelled out — what the tile already holds,
+     plus this. */
+  for (const l of walkLayers([copy])) nameInStack(l, [...list, copy]);
   await mutate("Duplicate layer", () => {
     owner.splice(owner.indexOf(layer) + 1, 0, copy);
     selectLayer(copy.id, tileId);

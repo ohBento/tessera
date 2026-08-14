@@ -2802,6 +2802,11 @@ describe("two guards the wall was given and nothing checked", () => {
     const groups = tileLayers(tile).filter((l) => l.kind === "group");
     expect(groups).toHaveLength(2);
     expect(groups[0].kind === "group" && groups[0].children).toHaveLength(2);
+    /* And every one of them wears a name of its own. The members came out
+     * carrying the names they were copied from, so the tile listed polygon01
+     * and ellipse01 twice and only the group's own number told them apart. */
+    const names = [...walkLayers(tileLayers(tile))].map((l) => l.name);
+    expect(new Set(names).size).toBe(names.length);
   });
 
   it("puts a layer into a group that already exists, where it was drawn", async () => {
@@ -2840,6 +2845,39 @@ describe("two guards the wall was given and nothing checked", () => {
     /* Same place on the tile, now said in the group's coordinates: its own x
      * plus the group's quarter-tile shift is where it was. */
     expect(findLayer(tileLayers(tile), joiner.id)!.x + 0.25).toBeCloseTo(drawnAt, 6);
+  });
+
+  it("says why a group cannot be put inside itself", async () => {
+    /* The one drop the model refuses: a group inside itself, or inside
+     * anything it holds, takes the whole branch out of reach of every list.
+     * The row springing back reads as a drag that never registered, so the
+     * refusal says what it is. (A row dropped on itself never gets this far —
+     * the drag layer ignores its own row, which is the right kind of nothing.)
+     */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const one = tileLayers(tile).at(-1)!;
+    await addTileShape("ellipse");
+    const two = tileLayers(tile).at(-1)!;
+    selectLayer(one.id, tile);
+    alsoSelect(two.id, tile);
+    await groupPicked();
+    const group = tileLayers(tile).find((l) => l.kind === "group")!;
+    const steps = historySteps().length;
+
+    app.error = "";
+    await dropTileLayer(tile, group.id, group.id, null);
+    expect(app.error).toContain("inside itself");
+    // Into one of its own members, which is the same mistake one level down.
+    app.error = "";
+    await dropTileLayer(tile, group.id, one.id, null);
+    expect(app.error).toContain("inside itself");
+
+    // And nothing moved, and no step was spent saying so.
+    expect(groupHolding(one.id, tile)?.id).toBe(group.id);
+    expect(historySteps().length).toBe(steps);
   });
 
   it("takes a layer out of its group and leaves it where it was drawn", async () => {
