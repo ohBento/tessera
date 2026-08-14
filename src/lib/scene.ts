@@ -1829,8 +1829,16 @@ export function readBack(obj: Tagged, tileCount: number, index: number) {
   return {
     x: ((obj.left ?? 0) - box.x) / box.w,
     y: ((obj.top ?? 0) - box.y) / box.h,
-    scale: obj.getScaledWidth() / box.w,
-    scaleH: obj.getScaledHeight() / box.h,
+    /* The object's own box, without the outline around it. `getScaledWidth`
+       adds the stroke, and a Textbox is built with `strokeWidth` set and no
+       `strokeUniform` — so a caption with an outline reported itself wider
+       than it is, `resize` wrote that back as its wrap width, and every plain
+       move made it a little wider again. Ten repositionings of a caption at
+       full outline and the words wrap somewhere else. The stand-in's own path
+       fixed this for itself months ago and said why; this is the same
+       subtraction on the direct one. */
+    scale: ((obj.width ?? 0) * (obj.scaleX ?? 1)) / box.w,
+    scaleH: (obj.height ?? 0) * (obj.scaleY ?? 1) / box.h,
     fx: obj.scaleX ?? 1,
     fy: obj.scaleY ?? 1,
     /* The same two the Layout reads back. The side and height handles are put

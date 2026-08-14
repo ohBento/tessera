@@ -2678,6 +2678,74 @@ describe("two guards the wall was given and nothing checked", () => {
     expect(after.x).toBeCloseTo(from.x + 200 / TILE_W, 4);
   });
 
+  it("keeps a tile's wording field when the caption is put in a group", async () => {
+    /* The row's own fields are built from what the tile draws, and that reading
+     * stopped at the top level. So grouping a nameplate — the rectangle and the
+     * caption on it, the most ordinary tidying there is — took the wording box
+     * out of the row, dropped the headline back to the seventeen-digit id, and
+     * stopped the Enter-walk on that tile. Naming forty-four portraits is the
+     * job this app exists for, and tidying up broke it. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const plate = tileLayers(tile).at(-1)!;
+    await addTileText();
+    const caption = tileLayers(tile).at(-1)!;
+    await setTileLayerField([tile], caption.id, "text", "Aria");
+    expect(tileCaptions(tile).map((l) => l.id)).toContain(caption.id);
+    expect(tileHeadline(tile)).toBe("Aria");
+
+    selectLayer(plate.id, tile);
+    alsoSelect(caption.id, tile);
+    await groupPicked();
+
+    // Still the tile's caption, still its headline.
+    expect(tileCaptions(tile).map((l) => l.id)).toContain(caption.id);
+    expect(tileHeadline(tile)).toBe("Aria");
+  });
+
+  it("takes them along with several tiles picked too", async () => {
+    /* The same gesture meant two different things depending on how many
+     * portraits happened to be selected: with one tile picked a Ctrl-picked
+     * second layer came along, with two or more it stayed where it was.
+     *
+     * They travel on the tile the hand was on. The other tiles get the dragged
+     * layer's placement copied — copying a *distance* onto a layer that sits
+     * somewhere else on that portrait would move it where nobody pointed. */
+    await enterInbox();
+    const [a, b] = app.folderIds;
+    app.selectedTiles = [a, b];
+    await addTileShape("rect");
+    const one = tileLayers(a).at(-1)!;
+    await addTileShape("ellipse");
+    const two = tileLayers(a).at(-1)!;
+    await setTileLayerField([a, b], two.id, "y", 0.8);
+
+    selectLayer(one.id, a);
+    alsoSelect(two.id, a);
+    const was = {
+      one: { ...findLayer(tileLayers(a), one.id)! },
+      two: { ...findLayer(tileLayers(a), two.id)! },
+      twoOnB: { ...findLayer(tileLayers(b), two.id)! },
+    };
+
+    await applyTransformBulk(
+      { layerId: one.id, tileId: a, space: "tile", locked: false } as Tagged,
+      { x: was.one.x + 0.2, y: was.one.y, rotation: 0, scale: 0.3, scaleH: 0.3, fx: 1, fy: 1 },
+      [a, b],
+    );
+
+    // The dragged layer landed on both tiles, as it always did.
+    expect(findLayer(tileLayers(a), one.id)!.x).toBeCloseTo(was.one.x + 0.2, 6);
+    expect(findLayer(tileLayers(b), one.id)!.x).toBeCloseTo(was.one.x + 0.2, 6);
+    // The extra travelled the same distance, on the tile the hand was on.
+    expect(findLayer(tileLayers(a), two.id)!.x).toBeCloseTo(was.two.x + 0.2, 6);
+    expect(findLayer(tileLayers(a), two.id)!.y).toBeCloseTo(was.two.y, 6);
+    // And nothing reached into the other portrait's copy of it.
+    expect(findLayer(tileLayers(b), two.id)!.x).toBeCloseTo(was.twoOnB.x, 6);
+  });
+
   it("takes the layers picked alongside it the same distance", async () => {
     /* Two layers on one tile, neither in a group: Ctrl-click adds the second to
      * the pick and a drag on the first carries both.

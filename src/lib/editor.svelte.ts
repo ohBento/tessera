@@ -545,7 +545,15 @@ export async function newProjectFrom(name: string) {
  *  own now, and its live captions and pictures sit in the tile's own stack —
  *  looking only at the group left an individually stamped portrait with no
  *  wording panel at all. */
-const drawnOn = (tileId: string) => resolveLayers(app.manifest, tileId);
+/** Every layer the tile draws, groups walked into.
+ *
+ *  The row's own fields are built from this — the wording box, the picture
+ *  gallery, the class badge, the colour swatches — and it read the top level
+ *  only. So grouping a nameplate took the caption's text field out of the row,
+ *  dropped the headline back to the seventeen-digit id, and stopped the
+ *  Enter-walk dead on that tile: the fastest way to name forty-four portraits
+ *  was undone by tidying them up. */
+const drawnOn = (tileId: string) => [...walkLayers(resolveLayers(app.manifest, tileId))];
 
 /** The live captions on one tile — what its wording fields offer to edit.
  *
@@ -1509,6 +1517,16 @@ export async function applyTransformBulk(
   if (!others.length) return applyTransform(obj, patch);
 
   const shift = nestingShift(own, obj.layerId) ?? { dx: 0, dy: 0 };
+  /* The extras of a multi-layer pick travel here too. Without this the same
+     gesture meant two different things: with one tile picked a Ctrl-picked
+     second layer came along, with two or more it stayed where it was — and
+     which you got depended on how many portraits happened to be selected. They
+     travel by distance, as they do on the single-tile path, and only on the
+     tile the hand was on: the other tiles get the dragged layer's placement
+     copied, and copying a *distance* onto a layer that sits somewhere else on
+     that portrait would move it somewhere nobody pointed at. */
+  const along = travellers(obj);
+  const step = { dx: patch.x - shift.dx - layer.x, dy: patch.y - shift.dy - layer.y };
   await mutate(
     "Move layer",
     () => {
@@ -1516,6 +1534,10 @@ export async function applyTransformBulk(
       layer.y = patch.y - shift.dy;
       layer.rotation = patch.rotation;
       resize(layer, patch);
+      for (const l of along) {
+        l.x += step.dx;
+        l.y += step.dy;
+      }
       /* Each target's own nesting, not the dragged one's: the same layer can
        * sit inside a group on one tile and loose on another, and a position is
        * stored relative to whatever encloses it. */

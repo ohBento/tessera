@@ -214,6 +214,24 @@ describe("picture frames", () => {
     expect([r, g, b]).toEqual([0x17, 0x17, 0x1a]);
   });
 
+  it("reports a caption's own width, without the outline round it", async () => {
+    /* What a finished gesture reads back is what the write stores, and
+     * `getScaledWidth` counts the stroke: a Textbox carries its outline as one,
+     * with no `strokeUniform`. So an outlined caption reported itself wider
+     * than it is, the write took that as its wrap width, and every plain move
+     * made it a little wider again — ten repositionings at full outline and
+     * the words wrap somewhere else than they were typed to. */
+    const m = manifest(1);
+    const [id] = order(m);
+    const caption = { ...newTextLayer(), id: "cap", w: 0.5, strokeWidth: 0.02, text: "Aria" };
+    m.tiles[id].layers.push(caption);
+
+    const canvas = new fabric.StaticCanvas(undefined, { width: TILE_W, height: TILE_H });
+    await buildGrid(canvas, view(m), m, testDeps);
+    const obj = canvas.getObjects().find((o) => (o as Tagged).layerId === "cap")!;
+    expect(readBack(obj as Tagged, 1, 0).scale).toBeCloseTo(0.5, 6);
+  });
+
   it("still reports the trim it baked in", async () => {
     /* Framing means baking the trimmed window into a canvas of its own and
      * handing that to Fabric, so from then on the object *is* the window: it
@@ -486,6 +504,59 @@ describe("export matches what the editor shows", () => {
       if (Math.abs(r - wallPixels[o]) > 1 || Math.abs(g - wallPixels[o + 1]) > 1 || Math.abs(b - wallPixels[o + 2]) > 1) {
         differing++;
       }
+    }
+    expect(differing).toBe(0);
+  });
+
+  it("agrees with the canvas the editor actually builds", async () => {
+    /* The test above compares one buildGrid against another, so it cannot see a
+     * difference between the *editor's* canvas and the export's — and that is
+     * exactly where the two had drifted: the editor paints on #17171a and the
+     * export canvas had no ground at all, so transparent pixels handed over
+     * their straight colour and the BMP came out with black holes where the
+     * wall showed dark grey. Nothing in the suite compared the two.
+     *
+     * Built the way GridCanvas builds it: interactive, with the same ground.
+     * A tile whose whole background is a picture with transparent corners, so
+     * what is being compared is the ground showing through. */
+    const m = manifest(4);
+    const [id] = order(m);
+    const target = 0;
+    m.tiles[id].base = { asset: "disc:#ff0000", crop: { x: 0, y: 0, w: 200, h: 200 } };
+    const caption = { ...newTextLayer(), id: "cap", text: "Aria", y: 0.7 };
+    m.tiles[id].layers.push(caption);
+
+    const exported = (await renderTiles(view(m), m, testDeps)).get(id)!;
+
+    const grid = gridSize(4);
+    const editor = new fabric.Canvas(undefined, {
+      width: grid.w,
+      height: grid.h,
+      enableRetinaScaling: false,
+      backgroundColor: "#17171a",
+    });
+    let shown: Uint8ClampedArray;
+    try {
+      await buildGrid(editor, view(m), m, testDeps, true);
+      editor.renderAll();
+      const at = cellAt(target);
+      shown = editor.getElement().getContext("2d")!.getImageData(at.x, at.y, TILE_W, TILE_H).data;
+    } finally {
+      await editor.dispose();
+    }
+
+    let differing = 0;
+    for (let i = 0; i < TILE_W * TILE_H; i++) {
+      const [r, g, b] = pixel(exported, i % TILE_W, Math.floor(i / TILE_W));
+      const o = i * 4;
+      // Composited against the same ground on both sides, so anti-aliased
+      // edges land on the same colour rather than within a tolerance of it.
+      if (
+        Math.abs(r - shown[o]) > 1 ||
+        Math.abs(g - shown[o + 1]) > 1 ||
+        Math.abs(b - shown[o + 2]) > 1
+      )
+        differing++;
     }
     expect(differing).toBe(0);
   });
