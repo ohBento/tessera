@@ -18,7 +18,13 @@ vi.mock("./platform", async (importOriginal) => {
   return {
     ...real,
     writeFile: async (path: string, bytes: Uint8Array) => {
-      if (failAt.name && path.endsWith(failAt.name)) throw new Error("locked by the game");
+      /* The temp file as well as the target: a tile is written beside itself
+         and renamed into place, so the write that can fail is the one to
+         `t01.bmp.tmp`. Matching only the final name meant the stub stopped
+         firing the day that changed, and the test passed by writing everything
+         successfully. */
+      if (failAt.name && (path.endsWith(failAt.name) || path.endsWith(`${failAt.name}.tmp`)))
+        throw new Error("locked by the game");
       return real.writeFile(path, bytes);
     },
   };
@@ -97,6 +103,12 @@ describe("saveTiles records what landed, however the loop ended", () => {
     expect(typeof prints.t00?.written).toBe("string");
     // The one that never landed is not claimed as ours.
     expect(prints.t01).toBeUndefined();
+    /* And the game's own file for it is untouched — not half a portrait. The
+     * write goes to a temp file beside it and is renamed into place, so the
+     * folder holds either the old picture or the new one. A truncated BMP
+     * would read as "changed in the game" on the next open, and the answer
+     * that fits what the user sees is the one that deletes its vault copy. */
+    expect(same(await readFile(game("t01")), await readFile(vault("t01")))).toBe(true);
   });
 
   it("records every tile when nothing goes wrong", async () => {

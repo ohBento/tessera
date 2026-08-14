@@ -1419,7 +1419,7 @@
             <!-- Named for its reach. On the Unsorted wall there is no project
                  to scope to, so the same button in the same place takes the
                  whole document — which is a different promise. -->
-            + Snapshot{app.openProjectId ? "" : " (whole document)"}
+            + Snapshot{app.openProjectId && !onArchive() ? "" : " (whole document)"}
           </button>
         {/if}
 

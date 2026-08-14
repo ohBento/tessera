@@ -73,6 +73,7 @@ const {
   restoreTiles,
   classify,
   hashTiles,
+  snapshotKey,
   svgWithSize,
   importAsset,
 } = await import("./project");
@@ -249,6 +250,60 @@ describe("an SVG gets the size its viewBox already implies", () => {
     // Content-addressed on the bytes that landed, so the same icon imported
     // twice is still one file.
     expect(written[0][0]).toContain(name);
+  });
+
+  it("does not drop one folder's write because another folder asked next", async () => {
+    /* Superseding is only true within one document. The queue was a single
+     * slot, so a save for folder A still waiting when a save for B arrived was
+     * dropped outright — and its promise resolved as though it had been
+     * written. One folder is open at a time today, so this is the mechanism
+     * that exists to stop a write going missing, going missing in exactly the
+     * case it is for. */
+    files.clear();
+    const a = { ...emptyManifest(), order: ["a"] };
+    const b = { ...emptyManifest(), order: ["b"] };
+    await Promise.all([saveManifest("/docs/A", a), saveManifest("/docs/B", b)]);
+
+    const written = [...files.entries()].filter(([k]) => k.endsWith("manifest.json"));
+    expect(written).toHaveLength(2);
+    expect(written.find(([k]) => k.includes("/A/"))?.[1]).toContain('"a"');
+    expect(written.find(([k]) => k.includes("/B/"))?.[1]).toContain('"b"');
+    expect([...files.keys()].some((k) => k.endsWith(".tmp"))).toBe(false);
+  });
+
+  it("keeps a snapshot's name in the language it was typed in", async () => {
+    /* The list reads a snapshot's display name back off its filename, so what
+     * the filename drops, the user sees dropped: `\w` without the u flag is
+     * ASCII, and "Vor dem Löschen" came back as "Vor dem L_schen". The app
+     * renamed what somebody typed, in the language they type in.
+     * What must still go is what Windows refuses, and `~`, which separates the
+     * project id from the name in that same filename. */
+    expect(snapshotKey("Vor dem Löschen")).toBe("Vor dem Löschen");
+    expect(snapshotKey("Änderung 2 – Ärger")).toBe("Änderung 2 – Ärger".replace("–", "_"));
+    expect(snapshotKey("a/b")).toBe("a_b");
+    expect(snapshotKey("a:b")).toBe("a_b");
+    expect(snapshotKey("id~name")).toBe("id_name");
+  });
+
+  it("takes the extension off the name, not off the path", async () => {
+    /* `lastIndexOf(".")` answers -1 when there is none and `slice(-1)` is the
+     * last character rather than "", so the ".png" fallback was dead: a file
+     * called `klasse` was stored as `<hash>e`. And when only a directory
+     * carried a dot, the "extension" swallowed a path separator and the write
+     * landed in a folder that does not exist. */
+    files.clear();
+    const platform = await import("./platform");
+    const written: string[] = [];
+    vi.mocked(platform.readFile).mockResolvedValue(new Uint8Array([1, 2, 3]));
+    vi.mocked(platform.writeFile).mockImplementation(async (path) => {
+      written.push(String(path));
+    });
+
+    expect(await importAsset("/docs/FaceTexture", "C:/icons/klasse")).toMatch(/\.png$/);
+    expect(await importAsset("/docs/FaceTexture", "C:\\my.icons\\klasse")).toMatch(/\.png$/);
+    expect(await importAsset("/docs/FaceTexture", "C:/my.icons/face.PNG")).toMatch(/\.png$/);
+    // Nothing built a path with a separator inside the asset's own name.
+    for (const p of written) expect(p.split("assets/")[1]).not.toMatch(/[\\/]/);
   });
 });
 

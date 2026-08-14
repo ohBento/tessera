@@ -309,7 +309,8 @@ export async function hashTiles(dir: string, ids: string[]): Promise<Record<stri
  *  A queue rather than a lock, because a dropped save is worse than a late
  *  one: every caller still gets its turn, in order. */
 let writing: Promise<void> = Promise.resolve();
-let queuedWrite: { dir: string; m: Manifest } | null = null;
+/** The newest state waiting to be written, one entry per folder. */
+const queued = new Map<string, Manifest>();
 /** Set while a write is actually touching the disk.
  *
  *  The queue slot is emptied the moment a turn picks it up, which is before
@@ -322,7 +323,7 @@ let writingNow = false;
 /** Whether a manifest write is queued or in flight. Closing the window with
  *  one of either drops the last edit on the floor — the model has it, the disk
  *  never gets it. */
-export const savePending = () => queuedWrite !== null || writingNow;
+export const savePending = () => queued.size > 0 || writingNow;
 
 export function saveManifest(dir: string, m: Manifest): Promise<void> {
   /* Newer state supersedes older: a burst of edits — a slider being dragged —
@@ -330,14 +331,21 @@ export function saveManifest(dir: string, m: Manifest): Promise<void> {
    * document that is about to change again is work nobody reads. The last one
    * contains all of them, so an earlier caller's promise resolving on a later
    * write is not a compromise. */
-  queuedWrite = { dir, m };
+  /* One slot per folder. Superseding is only true within one document: a save
+     for folder A waiting its turn when a save for B arrives was dropped
+     outright, its promise resolving as though it had been written. There is
+     one folder open at a time today, so this is insurance rather than a
+     symptom — but it is the mechanism that exists to stop a write going
+     missing, and it went missing in exactly the case it is for. */
+  queued.set(dir, m);
   writing = writing
     .catch(() => {})
     .then(async () => {
-      const next = queuedWrite;
+      const [entry] = queued;
       // Already covered by a later call that ran ahead of this turn.
-      if (!next) return;
-      queuedWrite = null;
+      if (!entry) return;
+      const next = { dir: entry[0], m: entry[1] };
+      queued.delete(next.dir);
       writingNow = true;
       try {
         const path = await manifestPath(next.dir);
@@ -420,7 +428,18 @@ export function svgWithSize(text: string): string | null {
  *  after that, which is the point of hashing the bytes that get stored: the
  *  same icon imported twice still lands on one file. */
 export async function importAsset(dir: string, sourcePath: string): Promise<string> {
-  const ext = sourcePath.slice(sourcePath.lastIndexOf(".")).toLowerCase() || ".png";
+  /* The dot in the *name*, not the last dot anywhere in the path.
+     `lastIndexOf` answers -1 when there is none, and `slice(-1)` is the last
+     character rather than "", so the `|| ".png"` fallback was dead: a file
+     called `klasse` was stored as `<hash>e`. Worse when only a directory
+     carried the dot — `C:\my.icons\klasse` gave `.icons\klasse`, a path
+     separator inside the asset name, and the write landed in a folder that
+     does not exist. */
+  const name = sourcePath.slice(
+    Math.max(sourcePath.lastIndexOf("/"), sourcePath.lastIndexOf("\\")) + 1,
+  );
+  const dot = name.lastIndexOf(".");
+  const ext = dot > 0 ? name.slice(dot).toLowerCase() : ".png";
   let bytes = await readFile(sourcePath);
   if (ext === ".svg") {
     const sized = svgWithSize(new TextDecoder().decode(bytes));
@@ -597,7 +616,17 @@ export type SnapshotRef = { name: string; projectId: string };
  *  "a/b" and "a_b" are two names and one file, so a rename that only checked
  *  the typed text walked straight over the other snapshot — measured, and with
  *  no undo behind it. Anything that picks or accepts a name asks this. */
-export const snapshotKey = (name: string) => name.replace(/[^\w \-.]/g, "_");
+export const snapshotKey = (name: string) =>
+  /* Letters and digits of any language, plus space, dash, underscore and dot.
+     `\w` without the u flag is ASCII only, so every umlaut became an
+     underscore — "Vor dem Löschen" was filed and then *shown* as
+     "Vor dem L_schen", because the list reads the name back off the filename.
+     The app quietly renamed what the user typed, in the language the user
+     types in.
+     What still goes: the characters Windows refuses in a name, `~` because it
+     separates the project id from the name in that filename, and anything
+     else outside this set. */
+  name.replace(/[^\p{L}\p{N} \-._]/gu, "_");
 
 const sanitise = snapshotKey;
 

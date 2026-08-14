@@ -43,6 +43,20 @@ describe("capabilities", () => {
    * releases for the same reason: outside Tauri openUrl is a no-op, so every
    * test and every browser probe passed while the shipped app did nothing when
    * the link was pressed. Reported from 0.13.0 by hand. */
+  it("may read a picked file from anywhere and write only under Documents", () => {
+    /* Reading has to reach wherever a picture is picked from. Writing does not:
+     * everything this app writes lives in the game's folder or beside it, both
+     * under Documents. A `**` write grant is an arbitrary-file-write primitive
+     * handed to the webview for nothing in return. */
+    type Scoped = { identifier: string; allow: { path?: string }[] };
+    const scope = (id: string) =>
+      (capabilities.permissions as (string | Scoped)[])
+        .filter((p): p is Scoped => typeof p === "object" && p.identifier === id)
+        .flatMap((p) => p.allow.map((a) => a.path));
+    expect(scope("fs:allow-read-file")).toEqual(["**"]);
+    expect(scope("fs:allow-write-file")).toEqual(["$DOCUMENT/**"]);
+  });
+
   it("puts the release page inside the opener's scope, not just the command", () => {
     type Scoped = { identifier: string; allow: { url?: string; path?: string }[] };
     const patterns = (capabilities.permissions as (string | Scoped)[])

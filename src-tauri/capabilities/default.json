@@ -20,7 +20,7 @@
     },
     {
       "identifier": "fs:allow-write-file",
-      "allow": [{ "path": "**" }]
+      "allow": [{ "path": "$DOCUMENT/**" }]
     }
   ]
 }
