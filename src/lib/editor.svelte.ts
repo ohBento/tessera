@@ -363,7 +363,10 @@ export function wall(): { ids: string[]; gridLayers: Layer[] } {
 export async function archiveSelection(away: boolean) {
   const ids = [...app.selectedTiles];
   if (!ids.length) return;
-  await mutate("Archive tiles", () => {
+  /* Named after what it does, not after the control — "Undone: Archive tiles"
+     over five tiles coming back out of the archive says the opposite of what
+     just happened. Same rule the eye already follows. */
+  await mutate(away ? "Archive tiles" : "Bring tiles back", () => {
     setArchived(app.manifest, ids, away);
     clearAll();
   });
@@ -444,7 +447,9 @@ export async function removeFolder(folderId: string) {
 export async function fileTile(tileId: string, folderId: string) {
   const p = openProject();
   if (!p) return;
-  await mutate("File tile", () => (folderId ? putInFolder(p, folderId, tileId) : takeOutOfFolder(p, tileId)));
+  await mutate(folderId ? "File tile" : "Take tile out of its folder", () =>
+    folderId ? putInFolder(p, folderId, tileId) : takeOutOfFolder(p, tileId),
+  );
 }
 
 /** Files every picked tile into one group, in a single step.
@@ -2210,7 +2215,9 @@ export const tileProject = (tileId: string) => projectOf(app.manifest, tileId);
 export async function toggleLayerLocked(id: string, tileId = app.selectedTile) {
   const layer = anyLayer(id, tileId);
   if (!layer) return;
-  await mutate("Lock or unlock layer", () => (layer.locked = !layer.locked));
+  // Undo has to say which way it went, and this is the one step where being
+  // vague is worst: a lock and an unlock look identical on the wall.
+  await mutate(layer.locked ? "Unlock layer" : "Lock layer", () => (layer.locked = !layer.locked));
 }
 
 /* What "copy the properties" leaves behind, when both layers are of a kind.

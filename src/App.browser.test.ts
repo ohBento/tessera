@@ -41,6 +41,10 @@ import {
   deleteLayer,
   dropTileLayer,
   duplicateLayer,
+  fileSelectionInto,
+  fileTile,
+  folders,
+  newFolderHere,
   freeCount,
   history,
   historySteps,
@@ -2273,6 +2277,41 @@ describe("three the demolition took and nobody missed", () => {
     press("?");
     await tick();
     expect(sheetOpen("Keyboard and mouse")).toBe(true);
+  });
+
+  it("files a drawerful of tiles as one step, and says which way it went", async () => {
+    /* The drawer's "+" filed the tiles one at a time — twenty tiles, twenty
+     * checkpoints, twenty saves racing each other, and nineteen more presses of
+     * Ctrl+Z than the gesture deserved. The context menu had used the bulk
+     * writer for this all along.
+     *
+     * And three labels named one direction for an action that goes both ways:
+     * "Undone: Archive tiles" over tiles coming back out of the archive says
+     * the opposite of what happened. */
+    await enterInbox();
+    const ids = app.folderIds.slice(0, 3);
+    app.selectedTiles = [...ids];
+    await newProjectFrom("Konto");
+    const p = projects()[0].id;
+    openProjectView(p);
+    await newFolderHere("Fertig");
+    const folder = folders()[0];
+
+    app.selectedTiles = [...ids];
+    const steps = historySteps().length;
+    await fileSelectionInto(folder.id);
+    expect(historySteps().length).toBe(steps + 1);
+    expect(folders()[0].tiles.sort()).toEqual([...ids].sort());
+    // One press puts all three back out.
+    await undoEdit();
+    expect(folders()[0].tiles).toEqual([]);
+
+    // The label follows the direction.
+    app.selectedTiles = [ids[0]];
+    await fileTile(ids[0], folder.id);
+    expect(history.past.at(-1)?.label).toBe("File tile");
+    await fileTile(ids[0], "");
+    expect(history.past.at(-1)?.label).toBe("Take tile out of its folder");
   });
 
   it("lists two snapshots of one name without taking the sidebar down", async () => {

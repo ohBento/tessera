@@ -497,7 +497,13 @@
 
   /** Whether there is anywhere to put a new layer: the picked tiles, or
    *  nothing at all. A layer has to belong to something. */
-  const canInsert = $derived(app.selectedTiles.length > 0);
+  /* Not on the overview. Leaving a wall does not drop its selection — that is
+     deliberate, so coming back finds the work where it was left — and the tool
+     rail read the selection alone. So the T button on the overview added a
+     caption to six tiles nobody could see, with its own tooltip saying so, one
+     undo step and nothing on screen. Every header button was already guarded
+     this way; the rail was not. */
+  const canInsert = $derived(app.selectedTiles.length > 0 && !home);
   const addImage = () => void addTileImage();
   const addText = () => void addTileText();
   const addShape = (kind: ShapeKind, icon?: string) => void addTileShape(kind, icon);
@@ -533,6 +539,12 @@
        clicking tile A while B and C were selected quietly acted on B and C.
        GridCanvas answers which tile is there, since only it knows the
        viewport; right-clicking bare wall with a selection leaves it alone. */
+    /* Not on the overview. The menu is bound to the stage, and on the overview
+       the stage holds the project cards — so a right-click on empty space there
+       opened the full tile menu ("Archive 6 tiles", "Clear all layers on 6
+       tiles") aimed at a wall that is not on screen, with no tile under the
+       cursor to re-target it. */
+    if (home) return;
     const under = grid?.tileAtEvent(e);
     if (under && !app.selectedTiles.includes(under)) app.selectedTiles = [under];
     if (!app.selectedTiles.length) return;
@@ -828,7 +840,11 @@
             title={project ? "Double-click renames" : undefined}
             disabled={!app.dir}
           >
-            {project?.name ?? "Unsorted"}
+            <!-- The archive is not a project, so `openProject` answers nothing for it
+                 and both of these read "Unsorted" — the same words the actually
+                 unsorted wall uses, while the sidebar said "On this wall". Three
+                 labels disagreeing about where you are. -->
+            {project?.name ?? (onArchive() ? "Archive" : "Unsorted")}
           </button>
         {/if}
       {/if}
@@ -978,7 +994,8 @@
              the line that made "Home" feel like it had not left the project. -->
         {projects().length} project(s) &middot; {inbox().length} unassigned
       {:else if app.dir}
-        {openProject()?.name ?? "Unsorted"} &middot; {visibleIds().length}
+        {openProject()?.name ?? (onArchive() ? "Archive" : "Unsorted")} &middot; {visibleIds()
+          .length}
         {visibleIds().length === 1 ? "tile" : "tiles"} &middot; drag selects, Ctrl adds, Alt+drag
         swaps
       {/if}
@@ -1524,9 +1541,7 @@
               <button
                 title="Put the picked tiles in here"
                 disabled={!app.selectedTiles.length}
-                onclick={() => {
-                  for (const id of app.selectedTiles) void fileTile(id, folder.id);
-                }}>+</button
+                onclick={() => void fileSelectionInto(folder.id)}>+</button
               >
               <!-- Dissolve, not delete: the tiles keep their slots and every
                    layer on them. That is the whole difference from the group
