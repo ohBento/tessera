@@ -2678,6 +2678,46 @@ describe("two guards the wall was given and nothing checked", () => {
     expect(after.x).toBeCloseTo(from.x + 200 / TILE_W, 4);
   });
 
+  it("walks Enter through one tile's fields and stops at the last", async () => {
+    /* It used to hop to the next tile, which meant opening a row somewhere else
+     * in a list of forty-four while the one under the cursor closed — the caret
+     * arrived in a portrait nobody had chosen, and with two captions on a tile
+     * it skipped the second one on the way. It stays on its tile now and stops
+     * at the end; choosing the next portrait is what the list is for. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileText();
+    await addTileText();
+    reveal("tiles");
+    reveal(tile);
+    await tick();
+
+    const fields = () => [
+      ...document.querySelectorAll<HTMLInputElement>(`[data-tile="${tile}"] .field input`),
+    ];
+    await until(() => fields().length === 2);
+    const [first, second] = fields();
+
+    first.focus();
+    first.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await tick();
+    expect(document.activeElement).toBe(second);
+
+    // The last field of the tile is where it stops: no other row opens.
+    second.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await tick();
+    await new Promise((r) => setTimeout(r, 60));
+    expect(document.activeElement).toBe(second);
+
+    // And Shift+Enter walks back the same way.
+    second.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true }),
+    );
+    await tick();
+    expect(document.activeElement).toBe(first);
+  });
+
   it("keeps a tile's wording field when the caption is put in a group", async () => {
     /* The row's own fields are built from what the tile draws, and that reading
      * stopped at the top level. So grouping a nameplate — the rectangle and the

@@ -100,51 +100,29 @@
   const badge = $derived(tileIcons(id)[0]);
 
 
-  /** Enter walks the tile list: this row closes, the next one opens, and the
-   *  cursor lands in its wording field. Shift+Enter goes back.
+  /** Enter walks the wording fields of this tile, and stops at its last one.
    *
-   *  Naming a wall is the one job here that is forty-four of the same thing,
-   *  and it was forty-four reaches for the mouse — the list is an accordion, so
-   *  the next row has no field to jump into until something opens it. The row
-   *  is left closed behind you, which is what keeps the next one on screen
-   *  instead of a metre down the page.
+   *  It used to hop to the next tile: naming a wall is forty-four of the same
+   *  thing, and the list is an accordion, so the next row had to be opened
+   *  before there was a field to land in. What that cost was control — the row
+   *  under the cursor closed, another opened somewhere else in a list of
+   *  forty-four, and the cursor arrived in a portrait nobody had chosen. With
+   *  two captions on a tile it also skipped the second one.
    *
-   *  Within the list the row is in: a drawer's tiles walk that drawer, loose
-   *  ones walk the loose pile. Nothing wraps at the end — a second pass that
-   *  starts itself would type over the first name. */
-  async function stepName(e: KeyboardEvent, from: string, group: string) {
+   *  So it stays where it is. Reaching the last field of a tile does nothing at
+   *  all: the caret stays put and the next tile is chosen the way every other
+   *  tile is chosen. Shift+Enter walks back the same way. */
+  function stepName(e: KeyboardEvent) {
     e.preventDefault();
     const here = e.currentTarget as HTMLInputElement;
-    /* The next field on this tile first. One caption per portrait was the quiet
-       assumption — with two, Enter jumped straight past the second one to the
-       next tile, and the only way to it was the mouse. The row's own fields are
-       in the order the tile lists them, so "the next one" is the one after this
-       in that list. */
-    const own = [...(here.closest(".group")?.querySelectorAll<HTMLInputElement>(".field input") ?? [])];
-    const step = e.shiftKey ? -1 : 1;
-    const sibling = own[own.indexOf(here) + step];
-    if (sibling) {
-      sibling.focus();
-      sibling.select();
-      return;
-    }
-    here.blur();
-    const list = group ? (folders().find((f) => f.id === group)?.tiles ?? []) : looseIds();
-    const next = list[list.indexOf(from) + (e.shiftKey ? -1 : 1)];
-    if (!next) return;
-    toggleTileRow(next);
-    await tick();
-    /* Going back, the last field of that tile rather than the first: Shift+Enter
-       is the way back through the walk, and landing on the first of two fields
-       would skip the one just above. */
-    const fields = [
-      ...document.querySelectorAll<HTMLInputElement>(`[data-tile="${next}"] .field input`),
+    // The tile's own fields, in the order the row lists them.
+    const own = [
+      ...(here.closest(".group")?.querySelectorAll<HTMLInputElement>(".field input") ?? []),
     ];
-    const field = step < 0 ? fields.at(-1) : fields[0];
-    field?.focus();
-    field?.select();
-    // `nearest`, so a row already in view is not yanked to the top of the pane.
-    field?.closest(".group")?.scrollIntoView({ block: "nearest" });
+    const next = own[own.indexOf(here) + (e.shiftKey ? -1 : 1)];
+    if (!next) return;
+    next.focus();
+    next.select();
   }
 </script>
 
@@ -402,7 +380,7 @@
             value={caption.text}
             oninput={(e) =>
               void setTileLayerField([id], caption.id, "text", e.currentTarget.value)}
-            onkeydown={(e) => e.key === "Enter" && void stepName(e, id, inGroup)}
+            onkeydown={(e) => e.key === "Enter" && stepName(e)}
           />
         </label>
       {/each}

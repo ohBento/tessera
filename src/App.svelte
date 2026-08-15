@@ -381,33 +381,6 @@
      sites, so the answer cannot differ between them. */
 
 
-  /** Enter walks the tile list: this row closes, the next one opens, and the
-   *  cursor lands in its wording field. Shift+Enter goes back.
-   *
-   *  Naming a wall is the one job here that is forty-four of the same thing,
-   *  and it was forty-four reaches for the mouse — the list is an accordion, so
-   *  the next row has no field to jump into until something opens it. The row
-   *  is left closed behind you, which is what keeps the next one on screen
-   *  instead of a metre down the page.
-   *
-   *  Within the list the row is in: a drawer's tiles walk that drawer, loose
-   *  ones walk the loose pile. Nothing wraps at the end — a second pass that
-   *  starts itself would type over the first name. */
-  async function stepName(e: KeyboardEvent, from: string, inGroup: string) {
-    e.preventDefault();
-    (e.currentTarget as HTMLInputElement).blur();
-    const list = inGroup ? (folders().find((f) => f.id === inGroup)?.tiles ?? []) : looseIds();
-    const next = list[list.indexOf(from) + (e.shiftKey ? -1 : 1)];
-    if (!next) return;
-    toggleTileRow(next);
-    await tick();
-    const field = document.querySelector<HTMLInputElement>(`[data-tile="${next}"] .field input`);
-    field?.focus();
-    field?.select();
-    // `nearest`, so a row already in view is not yanked to the top of the pane.
-    field?.closest(".group")?.scrollIntoView({ block: "nearest" });
-  }
-
   /** The sidebar's scroller, and whether it has travelled far enough that
    *  getting back to the top is worth a button rather than a flick. */
   let pane: HTMLElement | undefined = $state();
