@@ -555,11 +555,10 @@ export async function newProjectFrom(name: string) {
  *  was undone by tidying them up. */
 const drawnOn = (tileId: string) => [...walkLayers(resolveLayers(app.manifest, tileId))];
 
-/** The live captions on one tile — what its wording fields offer to edit.
+/** The live captions on one tile — what it says, for the row's headline.
  *
- *  By tile id, not by selection: the fields live in that tile's own row now,
- *  so there is no question of which tile they mean and no way for the panel to
- *  be somewhere else on the screen than the tile it belongs to. */
+ *  By tile id, not by selection: it answers for one named tile and never for
+ *  whatever happens to be picked. */
 export const tileCaptions = (tileId: string): TextLayer[] =>
   drawnOn(tileId).filter((l): l is TextLayer => l.kind === "text");
 

@@ -126,7 +126,7 @@
   <label
     class="field"
     title={reach > 1
-      ? `Types onto all ${reach} selected tiles. The Text field in a tile's own row types onto that one tile.`
+      ? `Types onto all ${reach} selected tiles.`
       : `{{id}} becomes this portrait's id on the wall`}
   >
     <span>Text</span>

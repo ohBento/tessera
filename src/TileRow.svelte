@@ -43,7 +43,6 @@
     toggleLayerLocked,
     toggleTile,
     setTileLayerField,
-    tileCaptions,
     tileHeadline,
     tileIcons,
     tileImageChoices,
@@ -100,30 +99,6 @@
   const badge = $derived(tileIcons(id)[0]);
 
 
-  /** Enter walks the wording fields of this tile, and stops at its last one.
-   *
-   *  It used to hop to the next tile: naming a wall is forty-four of the same
-   *  thing, and the list is an accordion, so the next row had to be opened
-   *  before there was a field to land in. What that cost was control — the row
-   *  under the cursor closed, another opened somewhere else in a list of
-   *  forty-four, and the cursor arrived in a portrait nobody had chosen. With
-   *  two captions on a tile it also skipped the second one.
-   *
-   *  So it stays where it is. Reaching the last field of a tile does nothing at
-   *  all: the caret stays put and the next tile is chosen the way every other
-   *  tile is chosen. Shift+Enter walks back the same way. */
-  function stepName(e: KeyboardEvent) {
-    e.preventDefault();
-    const here = e.currentTarget as HTMLInputElement;
-    // The tile's own fields, in the order the row lists them.
-    const own = [
-      ...(here.closest(".group")?.querySelectorAll<HTMLInputElement>(".field input") ?? []),
-    ];
-    const next = own[own.indexOf(here) + (e.shiftKey ? -1 : 1)];
-    if (!next) return;
-    next.focus();
-    next.select();
-  }
 </script>
 
 <!-- The "place this" button stood here. It handed the wall a tile and a layer
@@ -364,26 +339,12 @@
         null,
         "",
       )}
-      <!-- What this tile alone says and shows. In the row rather
-           than in a panel below the list: with forty-four rows,
-           editing the first one meant scrolling past all of them
-           and back. Here the fields cannot be further away than
-           the row they belong to. -->
-      {#each tileCaptions(id) as caption (caption.id)}
-        <label class="field indent">
-          <span>{layerLabel(caption)}</span>
-          <!-- The layer's own words, edited in place. There used to be a
-               default underneath and an override on top of it, with a button
-               to drop back to the default; the layer belongs to this tile
-               now, so there is one value and nothing to fall back to. -->
-          <input
-            value={caption.text}
-            oninput={(e) =>
-              void setTileLayerField([id], caption.id, "text", e.currentTarget.value)}
-            onkeydown={(e) => e.key === "Enter" && stepName(e)}
-          />
-        </label>
-      {/each}
+      <!-- A wording field stood here, one per caption. It was a single-line
+           input, so the one thing a caption most often needs — a second line —
+           could not be typed into it; the panel's Text box is a textarea and
+           can. Two fields for one value, and only one of them able to hold
+           what the layer accepts, so the row keeps the pictures and icons and
+           leaves the words to the panel. -->
 
       {#each tileImages(id) as pic (pic.id)}
         <p class="sub">{layerLabel(pic)}</p>

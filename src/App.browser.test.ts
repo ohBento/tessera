@@ -419,11 +419,10 @@ describe("the wall", () => {
   });
 
   it("says on the panel how many tiles it writes to", async () => {
-    /* The panel's Text field writes to every selected tile carrying the layer;
-     * the Text field in a tile's own row writes to that one tile. Nothing said
-     * which was which, and with forty-four picked one keystroke in the wrong
-     * field replaces forty-four names typed by hand. The count is on the
-     * heading, where it can be read before something is changed. */
+    /* The panel's Text field writes to every selected tile carrying the layer.
+     * Nothing said how many that was, and with forty-four picked one keystroke
+     * replaces forty-four names typed by hand. The count is on the heading,
+     * where it can be read before something is changed. */
     await enterInbox();
     const [a, b, c] = app.folderIds;
     app.selectedTiles = [a, b, c];
@@ -2678,44 +2677,32 @@ describe("two guards the wall was given and nothing checked", () => {
     expect(after.x).toBeCloseTo(from.x + 200 / TILE_W, 4);
   });
 
-  it("walks Enter through one tile's fields and stops at the last", async () => {
-    /* It used to hop to the next tile, which meant opening a row somewhere else
-     * in a list of forty-four while the one under the cursor closed — the caret
-     * arrived in a portrait nobody had chosen, and with two captions on a tile
-     * it skipped the second one on the way. It stays on its tile now and stops
-     * at the end; choosing the next portrait is what the list is for. */
+  it("leaves the wording to the panel, not the tile's row", async () => {
+    /* The row carried a wording field per caption and the panel carries one
+     * too. The row's was a single-line input, so the one thing a caption most
+     * often wants — a second line — could only be typed in the panel. Two
+     * fields for one value with only one of them able to hold it, so the row's
+     * is gone; this holds it gone. */
     await enterInbox();
     const tile = app.folderIds[0];
     app.selectedTiles = [tile];
     await addTileText();
-    await addTileText();
     reveal("tiles");
     reveal(tile);
     await tick();
+    await until(() => !!document.querySelector(`[data-tile="${tile}"]`));
 
-    const fields = () => [
-      ...document.querySelectorAll<HTMLInputElement>(`[data-tile="${tile}"] .field input`),
-    ];
-    await until(() => fields().length === 2);
-    const [first, second] = fields();
+    expect(document.querySelectorAll(`[data-tile="${tile}"] .field input`)).toHaveLength(0);
 
-    first.focus();
-    first.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    // The panel still has it, and it takes more than one line.
+    selectLayer(tileLayers(tile).at(-1)!.id, tile);
+    reveal("props");
     await tick();
-    expect(document.activeElement).toBe(second);
-
-    // The last field of the tile is where it stops: no other row opens.
-    second.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    await tick();
-    await new Promise((r) => setTimeout(r, 60));
-    expect(document.activeElement).toBe(second);
-
-    // And Shift+Enter walks back the same way.
-    second.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true }),
-    );
-    await tick();
-    expect(document.activeElement).toBe(first);
+    const wording = () =>
+      [...document.querySelectorAll<HTMLTextAreaElement>("aside label.field textarea")].filter(
+        (t) => t.closest("label")!.querySelector("span")!.textContent === "Text",
+      );
+    await until(() => wording().length === 1);
   });
 
   it("keeps a tile's wording field when the caption is put in a group", async () => {
