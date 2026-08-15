@@ -1047,10 +1047,21 @@
       <!-- Lining up, against the tile and not against each other: on a wall
            every portrait wears the same design, so "the same place on all of
            them" is the thing being asked for, and the cell is the only thing
-           all of them share. The pair per row follows the strip's two columns —
-           the horizontal half on the left, the vertical on the right. -->
+           all of them share.
+
+           A row is a pair of opposites — the two sides, then the two ends, then
+           the two middles — rather than the strip's usual horizontal-left,
+           vertical-right split. Opposites are what the hand reaches for here:
+           having gone too far left, the way back is the button beside it. -->
       {@render tool(`Line up on the left${alignWhere}`, "⇤", () => void alignPicked("left"), !canAlign)}
+      {@render tool(`Line up on the right${alignWhere}`, "⇥", () => void alignPicked("right"), !canAlign)}
       {@render tool(`Line up at the top${alignWhere}`, "⤒", () => void alignPicked("top"), !canAlign)}
+      {@render tool(
+        `Line up at the bottom${alignWhere}`,
+        "⤓",
+        () => void alignPicked("bottom"),
+        !canAlign,
+      )}
       {@render tool(
         `Centre sideways${alignWhere}`,
         "↔",
@@ -1058,26 +1069,19 @@
         !canAlign,
       )}
       {@render tool(`Centre upright${alignWhere}`, "↕", () => void alignPicked("centerY"), !canAlign)}
-      {@render tool(`Line up on the right${alignWhere}`, "⇥", () => void alignPicked("right"), !canAlign)}
-      {@render tool(
-        `Line up at the bottom${alignWhere}`,
-        "⤓",
-        () => void alignPicked("bottom"),
-        !canAlign,
-      )}
       <!-- Spreading needs a middle to spread: with two layers the outermost
            two are all there is and nothing would move, so the button is greyed
            until a third is picked. -->
       {@render tool(
-        "Equal gaps sideways — pick three or more layers",
-        "⋯",
-        () => void spreadPicked("x"),
-        !canSpread,
-      )}
-      {@render tool(
         "Equal gaps downwards — pick three or more layers",
         "⋮",
         () => void spreadPicked("y"),
+        !canSpread,
+      )}
+      {@render tool(
+        "Equal gaps sideways — pick three or more layers",
+        "⋯",
+        () => void spreadPicked("x"),
         !canSpread,
       )}
       <span class="gap"></span>
