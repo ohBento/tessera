@@ -2,7 +2,15 @@
 import { open as pickFile } from "./platform";
 
 import { saveTiles } from "./export";
-import { coverScale, gridSize, mosaicBakeCrops } from "./geometry";
+import {
+  alignBoxes,
+  coverScale,
+  distributeBoxes,
+  gridSize,
+  mosaicBakeCrops,
+  type AlignEdge,
+  type Box,
+} from "./geometry";
 import {
   canRedo,
   canUndo,
@@ -97,7 +105,7 @@ import {
   tauriDeps,
 } from "./project";
 import { TILE_H } from "./bmp";
-import { textWidth, type SceneDeps, type Tagged } from "./scene";
+import { layerSize, textWidth, type SceneDeps, type Tagged } from "./scene";
 
 export const app = $state({
   dir: "",
@@ -1466,6 +1474,97 @@ export async function nudgeLayer(obj: Tagged, dx: number, dy: number) {
     }
   });
 }
+
+/* --- Lining up and spreading out. The arithmetic is in geometry.ts, canvas-free
+ * and tested there; what belongs here is which layers a press means, and the
+ * fact that a layer is drawn at its own coordinate plus every group it sits
+ * in. --- */
+
+/** The tile itself, as something to line up against: x and y are already
+ *  fractions of it, so the whole cell is the unit square. */
+const TILE_BOX: Box = { left: 0, top: 0, width: 1, height: 1 };
+
+/** The picked layers of one tile, each with the box it is drawn in.
+ *
+ *  Two kinds are left out, because moving them would not be what the button
+ *  says: a locked layer is held in place on purpose, and a wall-spanning
+ *  picture is placed against the whole grid rather than against this tile, so
+ *  lining it up on a tile edge would send it somewhere nobody pointed at. */
+function pickedBoxes(tileId: string): { id: string; box: Box }[] {
+  const list = app.manifest.tiles[tileId]?.layers ?? [];
+  const out: { id: string; box: Box }[] = [];
+  for (const id of pickedLayers()) {
+    const l = findLayer(list, id);
+    if (!l || l.locked || (l.kind === "image" && l.space === "grid")) continue;
+    const size = layerSize(l);
+    /* Where it is drawn, not what it stores. The delta comes back against this
+       box and is added to the layer's own x, which works out the same either
+       way: a group's displacement is a constant here, so it cancels. */
+    const shift = nestingShift(list, id) ?? { dx: 0, dy: 0 };
+    out.push({
+      id,
+      box: {
+        left: l.x + shift.dx - size.w / 2,
+        top: l.y + shift.dy - size.h / 2,
+        width: size.w,
+        height: size.h,
+      },
+    });
+  }
+  return out;
+}
+
+/** Moves the picked layers by whatever `plan` works out, on every tile the pick
+ *  reaches — one undo step for the lot.
+ *
+ *  Worked out per tile rather than once and copied: the same caption is not the
+ *  same width on two portraits, so a delta that lines it up here would leave it
+ *  a few pixels off there. Structural, because nothing on the canvas has moved
+ *  yet — unlike a drag, there is no correct object to preserve. */
+async function movePicked(
+  label: string,
+  plan: (boxes: Box[]) => { dx: number; dy: number }[],
+) {
+  const work = bulkTargets(app.selected).map((tile) => ({ tile, picks: pickedBoxes(tile) }));
+  const steps = work.map(({ picks }) => plan(picks.map((p) => p.box)));
+  // Nothing to do is not an undo step: already-aligned layers must not fill the
+  // history with entries that change nothing.
+  if (!steps.some((s) => s.some((d) => d.dx || d.dy))) return;
+  await mutate(label, () => {
+    work.forEach(({ tile, picks }, w) => {
+      const list = app.manifest.tiles[tile]?.layers ?? [];
+      picks.forEach(({ id }, i) => {
+        const l = findLayer(list, id);
+        if (!l) return;
+        l.x += steps[w][i].dx;
+        l.y += steps[w][i].dy;
+      });
+    });
+  });
+}
+
+/** Undo has to name the edge: six buttons that all read "Align" tell you
+ *  nothing about which one you are taking back. */
+const EDGE_WORD: Record<AlignEdge, string> = {
+  left: "on the left",
+  centerX: "down the middle",
+  right: "on the right",
+  top: "at the top",
+  centerY: "across the middle",
+  bottom: "at the bottom",
+};
+
+/** Lines the picked layers up on one edge of their tile. */
+export const alignPicked = (edge: AlignEdge) =>
+  movePicked(`Line up ${EDGE_WORD[edge]}`, (boxes) => alignBoxes(boxes, edge, TILE_BOX));
+
+/** Equal gaps between the picked layers. The outermost two keep their places
+ *  and everything between them is spread out evenly; fewer than three have no
+ *  middle to spread, and the button says so by being greyed out. */
+export const spreadPicked = (axis: "x" | "y") =>
+  movePicked(`Spread out ${axis === "x" ? "sideways" : "downwards"}`, (boxes) =>
+    distributeBoxes(boxes, axis),
+  );
 
 /** Puts a layer exactly where another one ended up — placement and size, not
  *  identity: its picture, wording, colour and mask are its own.

@@ -72,6 +72,9 @@
     copyLayerProps,
     pasteLayerProps,
     pickedLayers,
+    alignPicked,
+    spreadPicked,
+    bulkTargets,
     groupPicked,
     ungroupLayer,
     groupHolding,
@@ -480,6 +483,18 @@
   const addImage = () => void addTileImage();
   const addText = () => void addTileText();
   const addShape = (kind: ShapeKind, icon?: string) => void addTileShape(kind, icon);
+  /* Lining up needs something picked, and spreading needs a middle: two layers
+     are both outermost, so nothing between them can be spread. */
+  const canAlign = $derived(!home && !!app.selected);
+  const canSpread = $derived(!home && pickedLayers().length > 2);
+  /** How many portraits a press reaches, worked out the same way a drag is: it
+   *  is the difference between straightening one caption and straightening
+   *  forty-four, and that is worth reading before pressing. */
+  const alignWhere = $derived(
+    canAlign && bulkTargets(app.selected).length > 1
+      ? ` — on ${bulkTargets(app.selected).length} tiles`
+      : "",
+  );
   /** What the insert buttons say they will do, so a greyed one has a readable
    *  reason and a live one names what it is about to write to. */
   const insertWhere = $derived(
@@ -1028,6 +1043,43 @@
       <!-- The fourth shape. A picker rather than a straight insert, because
            which class it is is the whole question. -->
       {@render tool(`Class icon${insertWhere}`, "✦", () => (iconsOpen = true), !canInsert)}
+      <span class="gap"></span>
+      <!-- Lining up, against the tile and not against each other: on a wall
+           every portrait wears the same design, so "the same place on all of
+           them" is the thing being asked for, and the cell is the only thing
+           all of them share. The pair per row follows the strip's two columns —
+           the horizontal half on the left, the vertical on the right. -->
+      {@render tool(`Line up on the left${alignWhere}`, "⇤", () => void alignPicked("left"), !canAlign)}
+      {@render tool(`Line up at the top${alignWhere}`, "⤒", () => void alignPicked("top"), !canAlign)}
+      {@render tool(
+        `Centre sideways${alignWhere}`,
+        "↔",
+        () => void alignPicked("centerX"),
+        !canAlign,
+      )}
+      {@render tool(`Centre upright${alignWhere}`, "↕", () => void alignPicked("centerY"), !canAlign)}
+      {@render tool(`Line up on the right${alignWhere}`, "⇥", () => void alignPicked("right"), !canAlign)}
+      {@render tool(
+        `Line up at the bottom${alignWhere}`,
+        "⤓",
+        () => void alignPicked("bottom"),
+        !canAlign,
+      )}
+      <!-- Spreading needs a middle to spread: with two layers the outermost
+           two are all there is and nothing would move, so the button is greyed
+           until a third is picked. -->
+      {@render tool(
+        "Equal gaps sideways — pick three or more layers",
+        "⋯",
+        () => void spreadPicked("x"),
+        !canSpread,
+      )}
+      {@render tool(
+        "Equal gaps downwards — pick three or more layers",
+        "⋮",
+        () => void spreadPicked("y"),
+        !canSpread,
+      )}
       <span class="gap"></span>
     </div>
 

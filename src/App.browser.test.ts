@@ -2207,6 +2207,72 @@ describe("what the wall lost with the layout editor", () => {
   });
 });
 
+describe("lining layers up", () => {
+  const press = (title: string) => {
+    const button = [...document.querySelectorAll("button")].find((b) =>
+      b.title.startsWith(title),
+    ) as HTMLButtonElement | undefined;
+    expect(button).toBeTruthy();
+    expect(button!.disabled).toBe(false);
+    button!.click();
+  };
+  const boxed = (tile: string, id: string) =>
+    findLayer(app.manifest.tiles[tile]!.layers, id) as unknown as { x: number; w: number };
+
+  it("puts the picked layers against the tile's edge from the toolbar", async () => {
+    /* The arithmetic has its own tests in geometry.ts; what this holds is the
+     * wiring — that the button reaches the layers the pick names, and that
+     * both of them move, not just the one the panel is showing. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const a = tileLayers(tile).at(-1)!;
+    await addTileShape("ellipse");
+    const b = tileLayers(tile).at(-1)!;
+    await setTileLayerField([tile], a.id, "x", 0.3);
+    await setTileLayerField([tile], b.id, "x", 0.75);
+    selectLayer(a.id, tile);
+    alsoSelect(b.id, tile);
+    await tick();
+
+    press("Line up on the left");
+    await until(() => boxed(tile, a.id).x !== 0.3);
+    // Left edge on the tile's left edge: a layer's x is its centre.
+    expect(boxed(tile, a.id).x).toBeCloseTo(boxed(tile, a.id).w / 2, 5);
+    expect(boxed(tile, b.id).x).toBeCloseTo(boxed(tile, b.id).w / 2, 5);
+    expect(undoLabel()).toBe("Line up on the left");
+  });
+
+  it("lines a grouped layer up where it is drawn, not where it is stored", async () => {
+    /* A group's x/y is a displacement its children are drawn by, so a child's
+     * own coordinate is not where it is on the tile. Aligning on the stored
+     * number would leave it hanging off the edge by the group's offset —
+     * exactly the jump every other boundary in this app has to fold in. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const one = tileLayers(tile).at(-1)!;
+    await addTileShape("ellipse");
+    const two = tileLayers(tile).at(-1)!;
+    selectLayer(one.id, tile);
+    alsoSelect(two.id, tile);
+    await groupPicked();
+    const group = tileLayers(tile).find((l) => l.kind === "group")!;
+    // A fifth of a tile to the right: 0.5 is the neutral, undisplaced position.
+    await setTileLayerField([tile], group.id, "x", 0.7);
+
+    selectLayer(one.id, tile);
+    await tick();
+    press("Line up on the left");
+    await until(() => boxed(tile, one.id).x !== 0.5);
+
+    const child = boxed(tile, one.id);
+    expect(child.x + 0.2).toBeCloseTo(child.w / 2, 5);
+  });
+});
+
 describe("the wall follows the wheel", () => {
   /* The bug this pins was reported as "the zoom only takes effect once I click
    * something else", with panning moving in steps for the same reason. Neither
