@@ -1856,14 +1856,21 @@ describe("carrying one layer's properties to another", () => {
     await tick();
 
     reveal("tiles");
-    await tick();
-    const row = document.querySelector(`[data-tile="${tile}"]`) as HTMLElement;
-    (row.querySelector("button.twisty") as HTMLButtonElement).click();
+    reveal(tile);
     await tick();
     await new Promise((r) => setTimeout(r, 200));
 
-    const names = [...row.querySelectorAll("button.name")].map((b) => b.textContent!.trim());
-    expect(names.length).toBeGreaterThan(0);
+    /* Both rows, drawn. The old assertion counted every `button.name` under the
+     * tile — which includes the tile's own — so it was satisfied by the header
+     * alone and passed while the list below it drew nothing at all. Svelte threw
+     * on the repeated key instead of drawing, exactly as reported, and the test
+     * written for that report could not see it. */
+    const under = (sel: string) => document.querySelectorAll(`[data-tile="${tile}"] ${sel}`).length;
+    // Both stacked rows, and — the half that used to throw — a colour gallery
+    // for each of the two shapes the tile carries under the one id.
+    expect(under("ul.indent > li")).toBe(2);
+    expect(under("p.sub")).toBe(2);
+    expect(under(".gallery")).toBe(2);
   });
 
   it("says nothing when the tiles already carry that very group", async () => {

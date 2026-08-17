@@ -20,7 +20,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { migrate, walkLayers, type Layer, type Manifest, type Paint } from "./model";
 
 const DIR =
@@ -56,9 +56,20 @@ const walk = (ls: Layer[]): Layer[] => [...walkLayers(ls)];
 const byId = (t: { layers: Layer[] }) => new Map(walk(t.layers).map((l) => [l.id, l]));
 
 describe.skipIf(!existsSync(FILE))("the v8 migration over the document on this machine", () => {
-  const raw = JSON.parse(readFileSync(FILE, "utf8")) as V7;
-  const after = migrate(JSON.parse(readFileSync(FILE, "utf8"))) as Manifest;
-  const ids = Object.keys(raw.tiles);
+  /* Read in a hook, not in the body. `describe.skipIf` skips the tests but still
+     runs the callback that registers them, so reading the file out here read it
+     on every machine — including the ones the skip exists for. It threw before a
+     single test was collected, which fails the file rather than skipping it, and
+     the suite was green here and red everywhere else. A hook does not run for a
+     skipped suite, which is what makes this the guard the skip was meant to be. */
+  let raw: V7;
+  let after: Manifest;
+  let ids: string[];
+  beforeAll(() => {
+    raw = JSON.parse(readFileSync(FILE, "utf8")) as V7;
+    after = migrate(JSON.parse(readFileSync(FILE, "utf8"))) as Manifest;
+    ids = Object.keys(raw.tiles);
+  });
 
   it("reads a v7 document and answers v8", () => {
     expect(raw.version).toBe(7);
