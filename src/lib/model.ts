@@ -76,6 +76,22 @@ type Common = {
    * through the layer rather than a piece cut out of it. Absent means the
    * ordinary way round. */
   maskInvert?: boolean;
+  /* How this layer is mixed with what is already on the tile beneath it — the
+   * portrait, and any layer further down the stack. Both at once, because they
+   * are the same pixels: the objects are drawn onto one canvas in order, so
+   * "the backdrop" is whatever has been drawn so far. Which of the two a layer
+   * meets is decided by where it sits in the stack, not by a setting.
+   *
+   * Absent is "source-over" — plain stacking, what every layer written before
+   * this does. Canvas' own names, stored untranslated: they go straight to
+   * `globalCompositeOperation`, and a private vocabulary would only be a table
+   * to keep in step with the browser's.
+   *
+   * On Common because that is where the shared look lives, but a group has no
+   * object of its own on the canvas — it is a displacement its members are
+   * drawn by — so setting one there would mix nothing. The panel offers it for
+   * pictures, captions and shapes only. */
+  blend?: GlobalCompositeOperation;
   /* A colour for the row in the list, and for the rows of everything inside it
    * when this is a group. Nothing draws it: the wall, the export and every
    * other field of the layer are untouched. It is there so a stack of a dozen

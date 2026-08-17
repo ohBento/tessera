@@ -2393,6 +2393,7 @@ const ACROSS_KINDS = new Set([
   "shadowColor",
   "maskId",
   "maskInvert",
+  "blend",
 ]);
 
 /** The layer whose properties were copied, if any — a snapshot, not a
