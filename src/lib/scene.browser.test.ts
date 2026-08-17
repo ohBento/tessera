@@ -10,19 +10,19 @@ import {
   emptyManifest,
   emptyTile,
   migrate,
+  newGroupLayer,
   newImageLayer,
   newProject,
   newShapeLayer,
   newTextLayer,
-  type Frame,
-  type Layout,
+  type Layer,
   type Paint,
   type ShapeLayer,
   type TextLayer,
   type ImageLayer,
   type Manifest,
 } from "./model";
-import { buildGrid, buildLayout, cellAt, gridSize, type Wall } from "./scene";
+import { buildGrid, cellAt, gridSize, readBack, type Tagged, type Wall } from "./scene";
 import { testDeps } from "../test/images";
 
 const HEADER = 54;
@@ -63,35 +63,6 @@ function gridBlock(m: Manifest, x: number, y: number, scale: number) {
   return l;
 }
 
-describe("locks on the wall", () => {
-  /* The lock is not a decoration: a nudge on the wall is either thrown away by
-   * the next "Stempel aktualisieren" or silently kept, depending on which half
-   * of the stamp it landed on. The flag has to travel with the object, because
-   * GridCanvas hands out grabbability by its own rule (only the layer chosen in
-   * the list) and used to overwrite the lock doing it. */
-  it("tags what a Layout owns as locked", async () => {
-    const m = manifest(3);
-    const mine = newImageLayer("block:#00ff00");
-    const stamp = newImageLayer("block:#ff00ff");
-    stamp.layoutId = "L1";
-    m.tiles[order(m)[0]].layers.push(mine, stamp);
-
-    const canvas = new fabric.StaticCanvas(undefined, { width: 100, height: 100 });
-    try {
-      await buildGrid(canvas, view(m), m, testDeps, true);
-      const by = (id: string) =>
-        canvas.getObjects().find((o) => (o as { layerId?: string }).layerId === id) as
-          | (fabric.Object & { locked?: boolean })
-          | undefined;
-      expect(by(stamp.id)?.locked).toBe(true);
-      expect(by(stamp.id)?.selectable).toBe(false);
-      expect(by(mine.id)?.locked).toBe(false);
-      expect(by(mine.id)?.selectable).toBe(true);
-    } finally {
-      await canvas.dispose();
-    }
-  });
-});
 
 describe("colour grading", () => {
   it("desaturates a picture's pixels, not just its metadata", async () => {
@@ -193,6 +164,96 @@ describe("picture frames", () => {
     expect(pixel(plain, justInside, TILE_H / 2)[0]).toBeGreaterThan(200);
     // Inside the frame the picture is untouched, so the layer keeps its size.
     expect(pixel(bordered, TILE_W / 2, TILE_H / 2)).toEqual(pixel(plain, TILE_W / 2, TILE_H / 2));
+  });
+
+  it("grades a framed picture once, not twice", async () => {
+    /* Framing bakes the picture into a canvas of its own and hands that to
+     * Fabric — and `setElement` re-runs the filter chain whenever the object
+     * still has one. The grading was already in the pixels being handed over,
+     * so it landed a second time: +20% brightness rendered as +40%, a 30° hue
+     * turn as 60°, and the border drawn just before was graded along with the
+     * picture, so a green frame on a hue-turned photograph came out some other
+     * colour. Both canvases agreed about it, which is why it never looked like
+     * a bug — it was simply twice what was asked for, on screen and in the
+     * file written to the game.
+     *
+     * Measured in the middle of the picture, where the frame is not. */
+    const middle = (bytes: Uint8Array) => pixel(bytes, TILE_W / 2, TILE_H / 2);
+    const plainly = middle(await framed({ brightness: 0.2 }));
+    const bordered = middle(await framed({ brightness: 0.2, borderWidth: 0.02 }));
+
+    // Same picture, same dial: the frame is not a second helping of it.
+    for (let i = 0; i < 3; i++) expect(bordered[i]).toBeCloseTo(plainly[i], -0.5);
+    /* And the dial did something, or the two would agree for the wrong reason.
+     * Read on green: the block is magenta, so red and blue are already at the
+     * ceiling and brightness has nowhere to move them. */
+    const ungraded = middle(await framed({}));
+    expect(plainly[1]).toBeGreaterThan(ungraded[1] + 20);
+  });
+
+  it("exports what is behind a transparent picture, not black", async () => {
+    /* The BMP the game reads has no alpha — encodeBmp32 forces every pixel
+     * opaque — so whatever a transparent pixel says its colour is, is what
+     * lands in the file. The export canvas had no ground of its own, so an
+     * untouched pixel said "transparent black" and came out black, while the
+     * editor showed its own dark grey behind the same picture. A PNG with
+     * transparency therefore looked right on the wall and had holes in it in
+     * the game.
+     *
+     * Measured on a tile whose whole background is a transparent picture, so
+     * the only thing under it is the ground being tested. */
+    const m = manifest(1);
+    const [id] = order(m);
+    // A disc leaves the corners transparent; the base fills the tile with it.
+    m.tiles[id].base = { asset: "disc:#ff0000", crop: { x: 0, y: 0, w: 200, h: 200 } };
+    const bytes = (await renderTiles(view(m), m, testDeps)).get(id)!;
+
+    const [r, g, b, a] = pixel(bytes, 4, 4);
+    expect(a).toBe(255);
+    // The editor's own ground, not black.
+    expect([r, g, b]).toEqual([0x17, 0x17, 0x1a]);
+  });
+
+  it("reports a caption's own width, without the outline round it", async () => {
+    /* What a finished gesture reads back is what the write stores, and
+     * `getScaledWidth` counts the stroke: a Textbox carries its outline as one,
+     * with no `strokeUniform`. So an outlined caption reported itself wider
+     * than it is, the write took that as its wrap width, and every plain move
+     * made it a little wider again — ten repositionings at full outline and
+     * the words wrap somewhere else than they were typed to. */
+    const m = manifest(1);
+    const [id] = order(m);
+    const caption = { ...newTextLayer(), id: "cap", w: 0.5, strokeWidth: 0.02, text: "Aria" };
+    m.tiles[id].layers.push(caption);
+
+    const canvas = new fabric.StaticCanvas(undefined, { width: TILE_W, height: TILE_H });
+    await buildGrid(canvas, view(m), m, testDeps);
+    const obj = canvas.getObjects().find((o) => (o as Tagged).layerId === "cap")!;
+    expect(readBack(obj as Tagged, 1, 0).scale).toBeCloseTo(0.5, 6);
+  });
+
+  it("still reports the trim it baked in", async () => {
+    /* Framing means baking the trimmed window into a canvas of its own and
+     * handing that to Fabric, so from then on the object *is* the window: it
+     * reports no crop, and the write path reads that as the trim having been
+     * let go and deletes it. Turning on a border and then nudging the picture
+     * threw the trim away — on every selected tile at once, and with the
+     * editor showing nothing until the next rebuild.
+     *
+     * Asked of readBack, which is what a finished gesture reads. */
+    const m = manifest(1);
+    const [id] = order(m);
+    const crop = { l: 0.1, r: 0.1, t: 0.1, b: 0.1 };
+    const l = newImageLayer("block:#ff00ff");
+    l.scale = 0.8;
+    l.crop = { ...crop };
+    l.borderWidth = 0.02;
+    m.tiles[id].layers.push(l);
+
+    const canvas = new fabric.StaticCanvas(undefined, { width: TILE_W, height: TILE_H });
+    await buildGrid(canvas, view(m), m, testDeps);
+    const obj = canvas.getObjects().find((o) => (o as Tagged).layerId === l.id)!;
+    expect(readBack(obj as Tagged, 1, 0).crop).toEqual(crop);
   });
 
   it("bends the frame round the corners instead of losing them", async () => {
@@ -446,6 +507,59 @@ describe("export matches what the editor shows", () => {
     }
     expect(differing).toBe(0);
   });
+
+  it("agrees with the canvas the editor actually builds", async () => {
+    /* The test above compares one buildGrid against another, so it cannot see a
+     * difference between the *editor's* canvas and the export's — and that is
+     * exactly where the two had drifted: the editor paints on #17171a and the
+     * export canvas had no ground at all, so transparent pixels handed over
+     * their straight colour and the BMP came out with black holes where the
+     * wall showed dark grey. Nothing in the suite compared the two.
+     *
+     * Built the way GridCanvas builds it: interactive, with the same ground.
+     * A tile whose whole background is a picture with transparent corners, so
+     * what is being compared is the ground showing through. */
+    const m = manifest(4);
+    const [id] = order(m);
+    const target = 0;
+    m.tiles[id].base = { asset: "disc:#ff0000", crop: { x: 0, y: 0, w: 200, h: 200 } };
+    const caption = { ...newTextLayer(), id: "cap", text: "Aria", y: 0.7 };
+    m.tiles[id].layers.push(caption);
+
+    const exported = (await renderTiles(view(m), m, testDeps)).get(id)!;
+
+    const grid = gridSize(4);
+    const editor = new fabric.Canvas(undefined, {
+      width: grid.w,
+      height: grid.h,
+      enableRetinaScaling: false,
+      backgroundColor: "#17171a",
+    });
+    let shown: Uint8ClampedArray;
+    try {
+      await buildGrid(editor, view(m), m, testDeps, true);
+      editor.renderAll();
+      const at = cellAt(target);
+      shown = editor.getElement().getContext("2d")!.getImageData(at.x, at.y, TILE_W, TILE_H).data;
+    } finally {
+      await editor.dispose();
+    }
+
+    let differing = 0;
+    for (let i = 0; i < TILE_W * TILE_H; i++) {
+      const [r, g, b] = pixel(exported, i % TILE_W, Math.floor(i / TILE_W));
+      const o = i * 4;
+      // Composited against the same ground on both sides, so anti-aliased
+      // edges land on the same colour rather than within a tolerance of it.
+      if (
+        Math.abs(r - shown[o]) > 1 ||
+        Math.abs(g - shown[o + 1]) > 1 ||
+        Math.abs(b - shown[o + 2]) > 1
+      )
+        differing++;
+    }
+    expect(differing).toBe(0);
+  });
 });
 
 describe("a mask on a tile", () => {
@@ -476,48 +590,6 @@ describe("a mask on a tile", () => {
     expect(pixel(tiles[0], TILE_W - 3, TILE_H / 2)).toEqual([0, 255, 0, 255]);
   });
 
-  it("cuts the layer to the shape that travelled with it", async () => {
-    /* The whole point of letting a masked picture be editable on the wall. The
-     * cut cannot be a clipPath here — every tile object already carries one for
-     * its own cell — so it is baked into the pixels, and this is what says the
-     * bake happened. Measured through renderTiles, the path that writes the
-     * BMP: the editor showing a cut while the game file carries the layer whole
-     * is exactly the failure worth pinning. */
-    const m = manifest(2);
-    const id = order(m)[0];
-
-    const shape = newShapeLayer("rect");
-    shape.id = "cut";
-    // The left half of the tile, edge to edge vertically.
-    shape.x = 0.25;
-    shape.y = 0.5;
-    shape.w = 0.5;
-    shape.h = 1;
-    shape.live = true;
-    shape.layoutId = "L1";
-
-    const live = newImageLayer("block:#00ff00");
-    live.x = 0.5;
-    live.y = 0.5;
-    live.scale = 1;
-    live.live = true;
-    live.layoutId = "L1";
-    live.maskId = "cut";
-    m.tiles[id].layers.push(shape, live);
-
-    const tiles = [...(await renderTiles(view(m), m, testDeps)).values()];
-    const [left, right] = [
-      pixel(tiles[0], 2, TILE_H / 2),
-      pixel(tiles[0], TILE_W - 3, TILE_H / 2),
-    ];
-
-    // Inside the shape the picture is there; outside it the tile's own
-    // background shows through, which is what a cut means.
-    expect(left).toEqual([0, 255, 0, 255]);
-    expect(right).not.toEqual([0, 255, 0, 255]);
-    // And the shape itself never draws: a stencil has stopped being a picture.
-    expect(right[3]).toBe(255);
-  });
 
   it("keeps a class icon an icon on a tile", async () => {
     /* A tile layer is clipped to its own cell, and Fabric allows one clipPath —
@@ -551,291 +623,46 @@ describe("a mask on a tile", () => {
     ]);
   });
 
-  it("holds a left-aligned caption's left edge across tiles", async () => {
-    /* A caption with no width of its own hugs its words, and the box is centred
-     * on x — so a tile that says more grows the box in both directions and the
-     * text starts further left than on its neighbour. Down a wall of names that
-     * reads as a caption that will not line up.
-     *
-     * Left-aligned means the left edge is the fixed one. Measured as the first
-     * column of ink on each tile: they have to match. */
-    const m = manifest(2);
-    const [first, second] = order(m);
 
-    for (const id of [first, second]) {
-      const cap = { ...newTextLayer(), id: "cap", live: true, layoutId: "L1" };
-      cap.x = 0.5;
-      cap.y = 0.5;
-      cap.size = 0.08;
-      cap.align = "left";
-      cap.color = "#00ff00";
-      m.tiles[id].layers.push(cap);
-    }
-    m.tiles[first].text = { cap: "Ii" };
-    m.tiles[second].text = { cap: "IiIiIiIiIi" };
 
-    const tiles = [...(await renderTiles(view(m), m, testDeps)).values()];
-    const leftEdge = (t: (typeof tiles)[number]) => {
-      for (let x = 0; x < TILE_W; x++)
-        for (let y = 0; y < TILE_H; y++) {
-          const [r, g, b] = pixel(t, x, y);
-          if (r < 80 && g > 200 && b < 80) return x;
-        }
-      return -1;
-    };
-    const [a, b] = [leftEdge(tiles[0]), leftEdge(tiles[1])];
-    expect(a).toBeGreaterThan(0);
-    // Within a pixel: the two are measured from different glyph runs.
-    expect(Math.abs(a - b)).toBeLessThanOrEqual(1);
-  });
 
-  it("shows each tile its own part of the picture", async () => {
-    /* Masking a picture is how you show one part of it, and which part is right
-     * depends on the picture — a face sits centre in one portrait and left in
-     * the next. The Layout owns the frame, the tile owns what sits inside it.
-     *
-     * Two tiles, same layer, same picture, one of them nudged: the pixels
-     * cannot match. Measured through the export path, so what is asserted is
-     * what the game would get. */
-    const m = manifest(2);
-    const [first, second] = order(m);
 
-    for (const id of [first, second]) {
-      const pic = { ...newImageLayer("probe"), id: "pic", live: true, layoutId: "L1" };
-      pic.x = 0.5;
-      pic.y = 0.5;
-      pic.scale = 0.4;
-      m.tiles[id].layers.push(pic);
-    }
-    m.tiles[second].frame = { pic: { x: 0.2, y: 0, z: 1, a: 0 } };
 
-    const tiles = [...(await renderTiles(view(m), m, testDeps)).values()];
-    const strip = (t: (typeof tiles)[number]) => {
-      const out: number[] = [];
-      for (let x = 0; x < TILE_W; x += 8) out.push(pixel(t, x, Math.round(TILE_H / 2))[0]);
-      return out;
-    };
-    expect(strip(tiles[0])).not.toEqual(strip(tiles[1]));
-  });
-
-  it("gives each tile its own class", async () => {
-    /* The reason the icons exist: one layer, placed and coloured once, and
-     * every portrait naming its own class. Two tiles carrying the same layer
-     * have to come out differently — if they matched, the per-tile choice
-     * would be decorative and the wall would wear one class throughout. */
-    const m = manifest(2);
-    const [first, second] = order(m);
-
-    for (const id of [first, second]) {
-      const icon = { ...newShapeLayer("icon", "Ranger"), id: "badge", live: true, layoutId: "L1" };
-      icon.x = 0.5;
-      icon.y = 0.5;
-      icon.w = 0.8;
-      icon.h = 0.8;
-      icon.fill = "#00ff00";
-      m.tiles[id].layers.push(icon);
-    }
-    // The first tile keeps the layer's own class, the second names another.
-    m.tiles[second].swap = { badge: "Witch" };
-
-    const tiles = [...(await renderTiles(view(m), m, testDeps)).values()];
-    const ink = (t: (typeof tiles)[number]) => {
-      let n = 0;
-      for (let y = 0; y < TILE_H; y += 4)
-        for (let x = 0; x < TILE_W; x += 4) {
-          const [r, g, b] = pixel(t, x, y);
-          if (r === 0 && g === 255 && b === 0) n++;
-        }
-      return n;
-    };
-    const [a, b] = [ink(tiles[0]), ink(tiles[1])];
-    expect(a).toBeGreaterThan(0);
-    expect(b).toBeGreaterThan(0);
-    // Different artwork covers a different amount of the tile.
-    expect(a).not.toBe(b);
-  });
-
-  it("cuts each tile to its own class", async () => {
-    /* The pair the icons were built for: one block of colour, cut to the class
-     * of whoever the portrait is. The cutter is the layer the tile names a
-     * class for, and the tile row offers that picker — but the mask path read
-     * the Layout's class for every tile and threw the choice away, so
-     * forty-four portraits wore one class and nothing said so.
-     *
-     * Two tiles, two classes, same cutter: the surviving pixels cannot match. */
-    const m = manifest(2);
-    const [first, second] = order(m);
-
-    for (const id of [first, second]) {
-      const icon = newShapeLayer("icon", "Ranger");
-      icon.id = "cut";
-      icon.x = 0.5;
-      icon.y = 0.5;
-      icon.w = 1;
-      icon.h = 1;
-      icon.live = true;
-      icon.layoutId = "L1";
-
-      const block = newImageLayer("block:#00ff00");
-      block.id = "block";
-      block.x = 0.5;
-      block.y = 0.5;
-      block.scale = 1;
-      block.live = true;
-      block.layoutId = "L1";
-      block.maskId = "cut";
-      m.tiles[id].layers.push(icon, block);
-    }
-    m.tiles[second].swap = { cut: "Witch" };
-
-    const tiles = [...(await renderTiles(view(m), m, testDeps)).values()];
-    const kept = (t: (typeof tiles)[number]) => {
-      let n = 0;
-      for (let y = 0; y < TILE_H; y += 4)
-        for (let x = 0; x < TILE_W; x += 4) {
-          const [r, g, b] = pixel(t, x, y);
-          if (r === 0 && g === 255 && b === 0) n++;
-        }
-      return n;
-    };
-    const [a, b] = [kept(tiles[0]), kept(tiles[1])];
-    expect(a).toBeGreaterThan(0);
-    expect(b).toBeGreaterThan(0);
-    expect(a).not.toBe(b);
-  });
-
-  it("cuts a picture to a class icon", async () => {
-    /* An icon is not drawn like the other shapes — it is a rectangle of paint
-     * clipped to the artwork — so being a cutter is the one place that could
-     * quietly fail: the mask path rasterises the cutter on its own offscreen
-     * canvas, and a clip that only survives on the live canvas would come back
-     * blank there and take the whole layer with it. Blank is the failure this
-     * pins: something has to be left, and something has to be gone. */
-    const m = manifest(2);
-    const id = order(m)[0];
-
-    const icon = newShapeLayer("icon", "Ranger");
-    icon.id = "cut";
-    icon.x = 0.5;
-    icon.y = 0.5;
-    icon.w = 1;
-    icon.h = 1;
-    icon.live = true;
-    icon.layoutId = "L1";
-
-    const live = newImageLayer("block:#00ff00");
-    live.x = 0.5;
-    live.y = 0.5;
-    live.scale = 1;
-    live.live = true;
-    live.layoutId = "L1";
-    live.maskId = "cut";
-    m.tiles[id].layers.push(icon, live);
-
-    const tiles = [...(await renderTiles(view(m), m, testDeps)).values()];
-    let kept = 0;
-    for (let y = 0; y < TILE_H; y += 4) {
-      for (let x = 0; x < TILE_W; x += 4) {
-        const [r, g, b] = pixel(tiles[0], x, y);
-        if (r === 0 && g === 255 && b === 0) kept++;
-      }
-    }
-    const sampled = Math.ceil(TILE_H / 4) * Math.ceil(TILE_W / 4);
-    // Some of the picture survives — the icon is not an empty stencil.
-    expect(kept).toBeGreaterThan(0);
-    // And most of it does not: a class icon is line art, not a full tile.
-    expect(kept).toBeLessThan(sampled / 2);
-  });
-
-  it("cuts a picture to this tile's own wording", async () => {
-    /* The pay-off of letting a per-tile caption be a cutter: one picture, cut
-     * by the letters each portrait carries. Two tiles with different words have
-     * to come out differently — if they matched, the cut would be against the
-     * layer's default text and the whole feature would be decorative. */
-    const m = manifest(2);
-    const [first, second] = order(m);
-
-    for (const [id, word] of [
-      [first, "IIIIIIIIIIIIII"],
-      [second, " "],
-    ] as const) {
-      const words = { ...newTextLayer(), id: "w", live: true, layoutId: "L1" };
-      words.x = 0.5;
-      words.y = 0.5;
-      words.size = 0.5;
-      const pic = { ...newImageLayer("block:#00ff00"), id: "p", live: true, layoutId: "L1" };
-      pic.x = 0.5;
-      pic.y = 0.5;
-      pic.scale = 1;
-      pic.maskId = "w";
-      m.tiles[id].layers.push(words, pic);
-      // The wording is the tile's, not the layer's — that is the whole point.
-      m.tiles[id].text = { w: word };
-    }
-
-    const tiles = [...(await renderTiles(view(m), m, testDeps)).values()];
-    const green = (bmp: Uint8Array) => {
-      let n = 0;
-      for (let x = 0; x < TILE_W; x += 4) {
-        const [r, g, b] = pixel(bmp, x, Math.round(TILE_H / 2));
-        if (r === 0 && g === 255 && b === 0) n++;
-      }
-      return n;
-    };
-
-    // Letters on the first tile let the picture through; a blank one does not.
-    expect(green(tiles[0])).toBeGreaterThan(0);
-    expect(green(tiles[1])).toBe(0);
-  });
 });
 
-describe("the Layout editor and the wall agree about a mask", () => {
-  /* The gap a reviewer named: masks were tested in the Layout (through
-   * renderLayout) and on the tile (through renderTiles), and the two sets of
-   * numbers never met. They disagreed on four things at once — an inverted
-   * mask came out as its exact complement, and the cutter's opacity, outline
-   * and shadow changed the cut on one side only.
+describe("a mask is a form, not a paint", () => {
+  /* The gap a reviewer named: masks were measured in the Layout and on the
+   * tile, and the two sets of numbers never met. They disagreed on four things
+   * at once — an inverted mask came out as its exact complement, and the
+   * cutter's opacity, outline and shadow changed the cut on one side only.
    *
-   * The Layout editor is the only preview there is, so it decides: a mask is a
-   * form, not a paint. */
-  const layoutCanvas = async (layout: Layout) => {
-    const canvas = new fabric.StaticCanvas(undefined, {
-      width: TILE_W,
-      height: TILE_H,
-      enableRetinaScaling: false,
-    });
-    await buildLayout(canvas, layout, testDeps);
-    return canvas;
-  };
+   * There is one render path now, so there is nothing left to compare it
+   * against. What the comparison was really pinning is stated here directly:
+   * how much of the tile a cut layer covers, and what must not change it. Two
+   * renders of the wall where there used to be a sheet and a wall — which is a
+   * stronger test, because both sides can now be wrong together and still fail.
+   */
 
-  /** How many pixels the layer covers, counted off the alpha channel. */
-  const coverInLayout = (canvas: fabric.StaticCanvas) => {
-    const ctx = canvas.getElement().getContext("2d", { willReadFrequently: true })!;
-    const px = ctx.getImageData(0, 0, TILE_W, TILE_H).data;
-    let n = 0;
-    for (let i = 3; i < px.length; i += 4) if (px[i] > 128) n++;
-    return n;
-  };
-
-  /** The same count off an exported tile — a BMP has no alpha to speak of, so
-   *  the layer's own colour is what says "covered". */
-  const coverOnTile = (bmp: Uint8Array) => {
+  /** How much of an exported tile the green picture covers. A BMP has no alpha
+   *  to speak of, so the layer's own colour is what says "covered".
+   *
+   *  "Green wins here", not "green exactly": a cutter's shadow used to widen
+   *  the cut by a soft ring, and a test that only counted pure green could not
+   *  see the ring at all — it passed whatever the code did. */
+  const covered = (bmp: Uint8Array) => {
     let n = 0;
     for (let y = 0; y < TILE_H; y += 3) {
       for (let x = 0; x < TILE_W; x += 3) {
         const [r, g, b] = pixel(bmp, x, y);
-        /* "Green wins here", not "green exactly": a cutter's shadow used to
-           widen the cut by a soft ring, and a test that only counted pure green
-           could not see the ring at all — it passed whatever the code did. */
         if (g > r + 40 && g > b + 40) n++;
       }
     }
     return n * 9;
   };
 
-  /** One Layout and one wall built from the same two layers, so the only
-   *  difference left is the render path. */
-  async function bothWays(tweak: (cutter: ShapeLayer, pic: ImageLayer) => void) {
+  /** A tile-wide green picture cut to a rect covering a quarter of the tile,
+   *  exported and counted. `tweak` is the difference under test. */
+  async function cutOnTile(tweak: (cutter: ShapeLayer, pic: ImageLayer) => void) {
     const cutter = { ...newShapeLayer("rect"), id: "cut" };
     cutter.x = 0.5;
     cutter.y = 0.5;
@@ -848,91 +675,63 @@ describe("the Layout editor and the wall agree about a mask", () => {
     pic.maskId = "cut";
     tweak(cutter, pic);
 
-    const layout: Layout = { id: "L1", name: "L", layers: [cutter, pic] };
-
     const m = manifest(2);
     const id = order(m)[0];
-    m.tiles[id].layers.push(
-      { ...cutter, live: true, layoutId: "L1" },
-      { ...pic, live: true, layoutId: "L1" },
-    );
-
+    m.tiles[id].layers.push(cutter, pic);
     const tiles = [...(await renderTiles(view(m), m, testDeps)).values()];
-    return { layout: coverInLayout(await layoutCanvas(layout)), tile: coverOnTile(tiles[0]) };
+    return covered(tiles[0]);
   }
 
-  /** Within a few per cent: the two paths antialias differently at the edge,
-   *  and a 1px band around a 312x402 rectangle is about 1400 pixels. */
+  /** Within a few per cent: antialiasing at the edge of a 312x402 rectangle is
+   *  a 1px band of about 1400 pixels. */
   const close = (a: number, b: number) => Math.abs(a - b) < Math.max(a, b) * 0.05;
 
-  it("survives the transform Fabric resets on a clipPath", async () => {
-    /* Fabric owns the transform of whatever it is handed as a clipPath and
-     * resets it the moment a drag starts. Measured in the running app: a class
-     * icon's stencil sat at scale 0.22 at rest and was 1 after the first
-     * mousemove, so the mask covered the whole sheet and the layer it was
-     * cutting came out whole — reported as "the icon is zoomed" and as masks
-     * that stopped working at all.
-     *
-     * The stencil is wrapped in a group of its own now, so the reset lands on
-     * the wrapper and the fitted scale inside survives. This does to the mask
-     * exactly what Fabric does, and then asks what is left on screen. */
-    const cutter = { ...newShapeLayer("icon", "Placeholder"), id: "cut" };
-    cutter.x = 0.5;
-    cutter.y = 0.5;
-    cutter.w = 0.3;
-    cutter.h = 0.3;
-    const pic = { ...newImageLayer("block:#00ff00"), id: "pic" };
-    pic.x = 0.5;
-    pic.y = 0.5;
-    pic.scale = 1;
-    pic.maskId = "cut";
-
-    const canvas = await layoutCanvas({ id: "L1", name: "L", layers: [cutter, pic] });
-    const before = coverInLayout(canvas);
-
-    const masked = canvas.getObjects().find((o) => o.clipPath?.absolutePositioned)!;
-    masked.clipPath!.set({ scaleX: 1, scaleY: 1 });
-    canvas.renderAll();
-    const afterReset = coverInLayout(canvas);
-
-    // A class icon is line art: it can never cover most of a tile.
-    expect(before).toBeGreaterThan(0);
-    expect(before).toBeLessThan(TILE_W * TILE_H * 0.25);
-    expect(afterReset).toBeLessThan(TILE_W * TILE_H * 0.25);
-  });
-
-  it("cuts the same piece out, plain", async () => {
-    const { layout, tile } = await bothWays(() => {});
-    expect(layout).toBeGreaterThan(0);
-    expect(close(layout, tile)).toBe(true);
+  it("leaves the cutter's own area standing and nothing else", async () => {
+    const cut = await cutOnTile(() => {});
+    // Half the width by half the height of the tile.
+    expect(close(cut, TILE_W * 0.5 * (TILE_H * 0.5))).toBe(true);
   });
 
   it("keeps the outside, not the inside, when the mask is inverted", async () => {
     /* The one that was exactly backwards: the editor showed a hole, the tile
-     * and the BMP showed only the filled middle. */
-    const { layout, tile } = await bothWays((_, pic) => (pic.maskInvert = true));
-    expect(layout).toBeGreaterThan(0);
-    expect(close(layout, tile)).toBe(true);
+     * and the BMP showed only the filled middle.
+     *
+     * Measured against the same picture uncut rather than against the tile:
+     * the block is square and drawn a tile wide, so at 624x804 it never covers
+     * the top and bottom bands. What must hold is that the two cuts are each
+     * other's complement — together they are the whole picture and no more. */
+    const uncut = await cutOnTile((_, pic) => delete pic.maskId);
+    const plain = await cutOnTile(() => {});
+    const inverted = await cutOnTile((_, pic) => (pic.maskInvert = true));
+    expect(plain).toBeGreaterThan(0);
+    expect(inverted).toBeGreaterThan(0);
+    expect(close(plain + inverted, uncut)).toBe(true);
   });
 
   it("lets neither the cutter's opacity nor its outline change the cut", async () => {
     // A mask is a form: half-transparent does not mean half-cut, and an
     // outline is not part of the shape.
-    const { layout, tile } = await bothWays((cutter) => {
+    const plain = await cutOnTile(() => {});
+    const dressed = await cutOnTile((cutter) => {
       cutter.opacity = 0.5;
       cutter.borderWidth = 0.03;
       cutter.borderColor = "#ffffff";
     });
-    expect(close(layout, tile)).toBe(true);
+    expect(close(plain, dressed)).toBe(true);
   });
 
   /* A cutter's shadow is stripped by silhouette() too, and deliberately has no
      test: the halo survives the cut only at low alpha, and against the tile's
-     own background no threshold told the two paths apart — the assertion passed
+     own background no threshold told the cases apart — the assertion passed
      whatever the code did. A green light that cannot go red is worse than none.
-     The opacity-and-outline case above covers the same rule with real teeth. */
-});
+     The opacity-and-outline case above covers the same rule with real teeth.
 
+     Gone with the sheet: a test that reset a clipPath's transform the way
+     Fabric does at the start of a drag, and asked what was left. A cut layer
+     on a tile is composited to pixels before it reaches the canvas, so there is
+     no live clipPath for Fabric to reset — the stand-in is what moves one now,
+     and App.browser covers that. */
+});
 describe("a caption's own width", () => {
   /* The left drift this replaces: the box hugged its words and sat centred on
    * x, so it grew in both directions — and Fabric widens a Textbox to its
@@ -979,6 +778,51 @@ describe("a caption's own width", () => {
     expect(edges.every((x) => x >= 0)).toBe(true);
     // Same column every time, whatever the words do inside the box.
     expect(Math.max(...edges) - Math.min(...edges)).toBeLessThanOrEqual(1);
+  });
+
+  it("runs a gradient across the caption, not across the tile", async () => {
+    /* Fabric anchors a pixel gradient at the object's own top-left and spans
+     * its width. The ramp was built 624 wide — the tile — so a caption a
+     * hundred pixels across showed only its first sixth: a red-to-blue fade
+     * read as flat red, and Angle, Balance and Reach barely moved anything.
+     *
+     * Measured as the difference between the two ends of the word, which is
+     * the whole claim: a gradient that arrives has two different colours in
+     * it. */
+    const m = manifest(2);
+    const id = order(m)[0];
+    /* On a flat black tile: the mock portrait underneath is a painted test
+       picture and would otherwise answer for the letters. */
+    m.tiles[id].base = { asset: "block:#000000", crop: { x: 0, y: 0, w: 200, h: 200 } };
+    m.tiles[id].layers.push({
+      ...caption({ w: 0.5, align: "center" }),
+      text: "IIIIIIII",
+      color: { from: "#ff0000", to: "#0000ff", angle: 0 },
+    });
+    const [bmp] = [...(await renderTiles(view(m), m, testDeps)).values()];
+
+    /* The leftmost and rightmost columns carrying ink, and what colour they
+     * carry. Anything that is not the tile's own portrait counts as ink here,
+     * which the strong primaries make safe. */
+    const ink: { x: number; px: number[] }[] = [];
+    for (let x = 0; x < TILE_W; x++) {
+      for (let y = 0; y < TILE_H; y += 2) {
+        const px = pixel(bmp, x, y);
+        // The letters are the only strongly red or strongly blue thing here.
+        if (px[0] > 120 && px[1] < 90) ink.push({ x, px });
+        else if (px[2] > 120 && px[1] < 90) ink.push({ x, px });
+      }
+    }
+    expect(ink.length).toBeGreaterThan(0);
+    const first = ink.reduce((a, b) => (a.x <= b.x ? a : b));
+    const last = ink.reduce((a, b) => (a.x >= b.x ? a : b));
+    /* Red at one end and blue at the other, not red fading to purple: a ramp
+     * built for the tile only ever showed the caption its first stretch. */
+    /* How far the ramp travels between the first and last inked column. Built
+       for the caption it swings 176 of a possible 255; built for the tile, the
+       letters only ever saw a slice of it and the same measurement gives 70. */
+    const swing = first.px[0] - first.px[2] - (last.px[0] - last.px[2]);
+    expect(swing).toBeGreaterThan(130);
   });
 
   it("wraps at the width it was given, not at the tile's edge", async () => {
@@ -1107,237 +951,113 @@ describe("a caption held to a height", () => {
   });
 });
 
-describe("a tile's own shape", () => {
-  /* A shape carries no per-tile content of its own, so for a long time a tile
-   * could say nothing about it at all. What it owns now is the colour and, for
-   * a rectangle, ellipse or polygon, the two axes separately — a bar drawn
-   * longer on one portrait is a decision, unlike a face stretched on one. */
-  const wall = async (paint?: Paint, frame?: Frame) => {
-    const m = manifest(1);
+
+
+
+describe("a caption says what the tile is", () => {
+  /* "{{id}}" resolving per tile is a real feature with nothing on screen to
+   * announce it: one caption added to forty portraits reads as forty different
+   * names. layerText is unit-tested, but what matters is that the wall draws
+   * the resolved words — the sheet used to be where that was checked, against a
+   * tile composed underneath it, and the sheet is gone.
+   *
+   * Gone with it, and not replaced: the layers being edited kept showing the
+   * design's own placeholder while their neighbours showed the wall, and a
+   * half-finished render could stand down rather than swap the canvas out from
+   * under a drag. Both were the sheet answering for a tile it was drawn over.
+   * The wall draws the tile itself, so neither question exists. */
+  it("draws the tile's own id where the caption only has a placeholder", async () => {
+    const m = manifest(2);
     const id = order(m)[0];
-    const block: ShapeLayer = {
-      ...newShapeLayer("rect"),
-      id: "bar",
-      x: 0.5,
-      y: 0.5,
-      w: 0.4,
-      h: 0.2,
-      fill: "#00ff00",
-      live: true,
-      layoutId: "L1",
-    };
-    m.tiles[id].layers.push(block);
-    if (paint) m.tiles[id].paint = { [block.id]: paint };
-    if (frame) m.tiles[id].frame = { [block.id]: frame };
-    const [bmp] = [...(await renderTiles(view(m), m, testDeps)).values()];
-    return bmp;
-  };
+    const caption = { ...newTextLayer(), id: "cap", text: "{{id}}" };
+    m.tiles[id].layers.push(caption);
 
-  /** How many sampled pixels carry this channel strongly. */
-  const ink = (bmp: Uint8Array, channel: 0 | 1 | 2) => {
-    let n = 0;
-    for (let y = 0; y < TILE_H; y += 4)
-      for (let x = 0; x < TILE_W; x += 4) if (pixel(bmp, x, y)[channel] > 128) n++;
-    return n;
-  };
-
-  it("paints it the colour the tile chose, in the file the game reads", async () => {
-    /* Read at the bar's own centre rather than counted over the tile: the test
-       portraits behind it are reddish, so a count of "how much red" answers
-       about the face as much as about the bar. */
-    const middle = (bmp: Uint8Array) => pixel(bmp, TILE_W / 2, TILE_H / 2);
-    expect(middle(await wall())).toEqual([0, 255, 0, 255]);
-    expect(middle(await wall("#ff0000"))).toEqual([255, 0, 0, 255]);
-  });
-
-  it("stretches one axis without the other", async () => {
-    /* The rule the placing tool enforces for every other kind — one zoom, both
-     * axes — is lifted here alone, and `zh` is what carries it. Without the
-     * second factor a wider bar would have grown taller too. */
-    const plain = await wall();
-    const wider = await wall(undefined, { x: 0, y: 0, z: 2, a: 0, zh: 1 });
-    const rows = (bmp: Uint8Array) => {
-      let n = 0;
-      for (let y = 0; y < TILE_H; y += 4) if (pixel(bmp, TILE_W / 2, y)[1] > 128) n++;
-      return n;
-    };
-    expect(ink(wider, 1)).toBeGreaterThan(ink(plain, 1) * 1.6);
-    // Twice as wide and exactly as tall: the column through the middle is
-    // untouched.
-    expect(rows(wider)).toBe(rows(plain));
-  });
-
-  it("reads a placement written before the second axis as the same zoom", async () => {
-    /* Every frame stored before `zh` existed meant "both axes together", and
-     * absent has to keep meaning that — otherwise upgrading would silently
-     * square off every shape anyone had already placed. */
-    const both = await wall(undefined, { x: 0, y: 0, z: 1.5, a: 0 });
-    const spelt = await wall(undefined, { x: 0, y: 0, z: 1.5, a: 0, zh: 1.5 });
-    expect(ink(both, 1)).toBe(ink(spelt, 1));
-    expect(ink(both, 1)).toBeGreaterThan(0);
-  });
-});
-
-describe("a tile's own placement of a cut layer", () => {
-  /* The badge is the pair the live shapes exist for: a block of paint wearing a
-   * class icon as its mask. The tile places the icon, and the icon is a cutter,
-   * which never draws itself — so the frame reaches the wall only through the
-   * hole it cuts. Taken raw, it cut the old hole and the drag changed nothing
-   * at all: a tool that wrote into the manifest and moved no pixel. */
-  const badge = async (frame?: { x: number; y: number; z: number; a: number }) => {
-    const m = manifest(1);
-    const id = order(m)[0];
-    const icon: ShapeLayer = {
-      ...newShapeLayer("icon", "Placeholder"),
-      id: "cutter",
-      x: 0.5,
-      y: 0.5,
-      w: 0.4,
-      h: 0.4,
-      live: true,
-      layoutId: "L1",
-    };
-    const block: ImageLayer = {
-      ...newImageLayer("block:#00ff00"),
-      id: "paint",
-      x: 0.5,
-      y: 0.5,
-      scale: 1,
-      maskId: icon.id,
-      live: true,
-      layoutId: "L1",
-    };
-    m.tiles[id].layers.push(icon, block);
-    if (frame) m.tiles[id].frame = { [icon.id]: frame };
-    const [bmp] = [...(await renderTiles(view(m), m, testDeps)).values()];
-    return bmp;
-  };
-
-  /** How much of the block survived the cut. */
-  const ink = (bmp: Uint8Array) => {
-    let n = 0;
-    for (let y = 0; y < TILE_H; y += 4)
-      for (let x = 0; x < TILE_W; x += 4) if (pixel(bmp, x, y)[1] > 128) n++;
-    return n;
-  };
-
-  it("moves the hole the mask cuts", async () => {
-    const [plain, moved] = [await badge(), await badge({ x: 0.25, y: 0, z: 1, a: 0 })];
-    expect(ink(plain)).toBeGreaterThan(0);
-    // No Buffer here — this runs in Chromium, not in node.
-    expect(moved.every((b, i) => b === plain[i])).toBe(false);
-  });
-
-  it("zooms it", async () => {
-    const [plain, bigger] = [await badge(), await badge({ x: 0, y: 0, z: 1.6, a: 0 })];
-    expect(ink(bigger)).toBeGreaterThan(ink(plain));
-  });
-});
-
-
-describe("a Layout composed over a tile", () => {
-  /* Composing against "text01" and the placeholder class and finding out at the
-   * tenth character that it does not fit is the whole reason this exists. What
-   * the tile says shows through everywhere except on the layers being edited —
-   * see layoutObjects for why that exception is load-bearing. */
-  const sheet = async (except: string[], content: Parameters<typeof buildLayout>[5]) => {
-    const words = { ...newTextLayer(), id: "cap", text: "text01", perTile: true } as TextLayer;
-    words.x = 0.5;
-    words.y = 0.5;
-    const badge = { ...newShapeLayer("icon", "Ranger"), id: "bad", perTile: true } as ShapeLayer;
-    /* A flat block, so "did the tile's answer reach the canvas" is one pixel
-       read rather than a silhouette count. The icon above cannot answer that:
-       an icon layer fills the tile and its artwork is a clipPath, so counting
-       opaque pixels saturates and passes whatever the code does — which is how
-       this whole class of substitution came to ship broken. */
-    const pic = { ...newImageLayer("block:#ff0000"), id: "pic", perTile: true } as ImageLayer;
-    pic.x = 0.5;
-    pic.y = 0.5;
-    pic.scale = 1;
-    const layout: Layout = { id: "L1", name: "L", layers: [words, badge, pic] };
+    const grid = gridSize(order(m).length);
     const canvas = new fabric.StaticCanvas(undefined, {
-      width: TILE_W,
-      height: TILE_H,
+      width: grid.w,
+      height: grid.h,
       enableRetinaScaling: false,
     });
-    await buildLayout(canvas, layout, testDeps, false, undefined, { ...content!, except });
-    return canvas;
-  };
+    try {
+      await buildGrid(canvas, view(m), m, testDeps);
+      const drawn = canvas
+        .getObjects()
+        .find((o) => o instanceof fabric.Textbox) as fabric.Textbox | undefined;
+      expect(drawn?.text).toBe(id);
+    } finally {
+      await canvas.dispose();
+    }
+  });
+});
 
-  const drawnText = (canvas: fabric.StaticCanvas) =>
-    (canvas.getObjects().find((o) => o instanceof fabric.Textbox) as fabric.Textbox | undefined)?.text;
+describe("what a tile carries beyond a flat list", () => {
+  /* Two things Phase 0 gave the tile path and nothing has rendered since: a
+   * group, which displaces its children instead of drawing, and a shared bake
+   * for a cut layer, which is what stopped a masked wall from taking the
+   * browser down. */
 
-  const tile = {
-    id: "t0",
-    base: null,
-    content: {
-      ...emptyTile(),
-      text: { cap: "Nachtklinge" },
-      swap: { bad: "Witch", pic: "block:#00ff00" },
-    },
-  };
+  it("displaces a group's children and draws nothing for the group itself", async () => {
+    const m = manifest(2);
+    const id = order(m)[0];
+    const inner = { ...newShapeLayer("rect"), id: "inner" };
+    inner.x = 0.5;
+    inner.y = 0.5;
+    inner.w = 0.2;
+    inner.h = 0.2;
+    const group = { ...newGroupLayer([inner]), id: "grp" };
+    // A group's own x/y is the displacement it applies to what it holds.
+    group.x = 0.5 + 0.25;
+    group.y = 0.5;
+    m.tiles[id].layers.push(group);
 
-  /** The colour in the middle of the sheet, where the block sits. */
-  const centre = (canvas: fabric.StaticCanvas) => {
-    const px = canvas
-      .getElement()
-      .getContext("2d", { willReadFrequently: true })!
-      .getImageData(TILE_W / 2, TILE_H / 2, 1, 1).data;
-    return [px[0], px[1], px[2]];
-  };
-
-  it("draws the tile's wording where the Layout only has a placeholder", async () => {
-    expect(drawnText(await sheet([], tile))).toBe("Nachtklinge");
+    const grid = gridSize(order(m).length);
+    const canvas = new fabric.StaticCanvas(undefined, {
+      width: grid.w,
+      height: grid.h,
+      enableRetinaScaling: false,
+    });
+    try {
+      await buildGrid(canvas, view(m), m, testDeps, true);
+      const drawn = canvas.getObjects().filter((o) => (o as { layerId?: string }).layerId);
+      // The group is not an object; its child is, and it has moved with it.
+      expect(drawn.map((o) => (o as { layerId?: string }).layerId)).toEqual(["inner"]);
+      const at = cellAt(0);
+      expect(drawn[0].left).toBeCloseTo(at.x + 0.75 * TILE_W, 0);
+    } finally {
+      await canvas.dispose();
+    }
   });
 
-  it("gives the picked layer its own text back, so typing has something to type into", async () => {
-    /* layerText reads the tile's wording in preference to the layer's, and what
-     * is on the canvas is what gets written back — a caption drawn as
-     * "Nachtklinge" while its own text is being edited swallows the keystrokes. */
-    expect(drawnText(await sheet(["cap"], tile))).toBe("text01");
+  it("bakes one canvas for a cut layer and hands it to every tile that matches", async () => {
+    /* cutToShape composites onto a tile-sized canvas. Before the bake was
+     * shared, a wall of 301 asked for 602 of them — about 1.2GB, and the
+     * browser went down mid-render rather than merely slowing. Two tiles
+     * carrying the same cut layer have to come out holding the same element. */
+    const m = manifest(2);
+    const [a, b] = order(m);
+    const cutter = { ...newShapeLayer("ellipse"), id: "cut" };
+    cutter.w = 0.3;
+    cutter.h = 0.3;
+    const pic = { ...newImageLayer("block:#00ff00"), id: "pic" };
+    pic.scale = 1;
+    pic.maskId = "cut";
+    for (const id of [a, b]) m.tiles[id].layers.push({ ...cutter }, { ...pic });
+
+    const grid = gridSize(order(m).length);
+    const canvas = new fabric.StaticCanvas(undefined, {
+      width: grid.w,
+      height: grid.h,
+      enableRetinaScaling: false,
+    });
+    try {
+      await buildGrid(canvas, view(m), m, testDeps, true);
+      const cut = canvas
+        .getObjects()
+        .filter((o) => (o as { layerId?: string }).layerId === "pic") as fabric.FabricImage[];
+      expect(cut).toHaveLength(2);
+      expect(cut[0].getElement()).toBe(cut[1].getElement());
+    } finally {
+      await canvas.dispose();
+    }
   });
-
-  it("draws the tile's own picture, not the Layout's placeholder", async () => {
-    /* This shipped broken in 0.15.0 and looked finished, because the wording
-       half works: captions never go through asTileShows. The substitution was
-       gated on `live`, which only a tile's *copies* carry — a Layout holds the
-       sources, and those wear `perTile`. Every branch fell through, silently. */
-    const [r, g, b] = centre(await sheet([], tile));
-    expect(g).toBeGreaterThan(200);
-    expect(r).toBeLessThan(80);
-    expect(b).toBeLessThan(80);
-  });
-
-  it("gives the picked layer the Layout's own picture back", async () => {
-    // Same exception as the wording: what you are editing shows itself.
-    const [r, g] = centre(await sheet(["pic"], tile));
-    expect(r).toBeGreaterThan(200);
-    expect(g).toBeLessThan(80);
-  });
-
-  it("stands down rather than swapping the canvas out from under a drag", async () => {
-    /* Reading and decoding a picture takes long enough for a hand to start a
-       drag in the middle of it. The swap would then take the object out from
-       under Fabric's live transform: the detached copy follows the mouse and
-       the visible one stands still. Asked after every await and immediately
-       before the swap, because that is the only moment where the answer is
-       still true. */
-    const canvas = await sheet([], tile);
-    const before = canvas.getObjects();
-    expect(before.length).toBeGreaterThan(0);
-
-    const other: Layout = { id: "L2", name: "andere", layers: [newShapeLayer("rect")] };
-    const drew = await buildLayout(canvas, other, testDeps, false, undefined, undefined, () => false);
-
-    expect(drew).toBe(false);
-    // The same objects, not merely the same count: the old frame is the one the
-    // drag is happening on.
-    expect(canvas.getObjects()).toEqual(before);
-  });
-
-  it("shows the Layout as written when no tile is under it", async () => {
-    // The stamp path and the golden tests render the design and nothing else.
-    expect(drawnText(await sheet([], { id: "t0", base: null }))).toBe("text01");
-  });
-
 });

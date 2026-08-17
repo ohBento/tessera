@@ -15,65 +15,71 @@ import { mount, tick, unmount } from "svelte";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import App from "./App.svelte";
-import { resetRows } from "./lib/rows.svelte";
+import { resetRows, reveal } from "./lib/rows.svelte";
 import {
-  addLayoutShape,
-  addLayoutText,
   app,
-  applyLayoutTransform,
-  assignLayoutToSelection,
-  assignLayoutToWall,
-  canGroupLayers,
+  applyTransform,
+  applyTransformBulk,
+  addTileShape,
+  addTileText,
+  bakeMosaic,
+  bulkTargets,
+  changedHere,
+  clearAll,
+  selectLayer,
+  alsoSelect,
+  pickedLayers,
+  groupPicked,
+  ungroupLayer,
+  groupHolding,
+  takeOutOfGroup,
+  setTileLayerField,
   archived,
   archiveSelection,
-  closeLayoutDoc,
-  dropLayoutLayer,
-  duplicateLayoutLayers,
+  releaseTilesToInbox,
   endGesture,
   deleteLayer,
+  dropTileLayer,
+  duplicateLayer,
+  fileSelectionInto,
+  fileTile,
+  folders,
+  newFolderHere,
   freeCount,
   history,
+  historySteps,
   setLayerField,
   redoEdit,
   undoEdit,
-  groupLayoutLayers,
   inbox,
-  layouts,
-  moveLayersIntoGroup,
   moveTilesToProject,
   deleteProject,
   newProjectFrom,
   openFolder,
   openProjectView,
   projects,
-  remainingFor,
   renameSnapshot,
   restoreSnapshot,
-  deleteLayoutDoc,
-  deleteLayoutLayers,
-  setTileFrame,
-  setTileText,
-  removeLayoutFrom,
-  wearing,
   stripSelectedTiles,
   saveToGame,
+  nextSnapshotName,
   snapshots,
   takeSnapshot,
   tileLayers,
   unplace,
+  visibleIds,
   renameLayer,
-  setLayoutSelection,
   tileCaptions,
   toggleLayerHidden,
-  toggleLayoutPick,
+  toggleLayerLocked,
   toggleTile,
-} from "./lib/editor.svelte";
-import {
-  addLayoutImage,
-  assignTileLayout,
-  newLayoutDoc,
-  openLayout,
-  saveLayout,
+  copyLayerProps,
+  pasteLayerProps,
+  pasteLayerOntoTiles,
+  layersOnSelection,
+  removeLayerFromSelection,
+  setLayerHiddenOnSelection,
+  setLayerLockedOnSelection,
 } from "./lib/editor.svelte";
 import {
   emptyManifest,
@@ -81,23 +87,24 @@ import {
   groupShift,
   isGradient,
   layerLabel,
+  newImageLayer,
+  newShapeLayer,
+  newGroupLayer,
+  clone,
+  walkLayers,
   type ImageLayer,
   type ShapeLayer,
   type TextLayer,
 } from "./lib/model";
+import { maskChoices } from "./lib/model";
+import { cellAt, textWidth, tilesChanged, wallPrint, type Tagged } from "./lib/scene";
+import { TILE_H, TILE_W } from "./lib/bmp";
+import { dragObject, scaleObject } from "./test/gestures";
 import {
-  layerShows,
-  offLayouts,
-} from "./lib/stamps";
-import { maskChoices, maskOffers } from "./lib/model";
-import { textWidth } from "./lib/scene";
-import {
-  canSaveLayout,
   undoLabel,
-  openLayoutDoc,
-  tileAsset,
+  redoLabel,
+  tileHeadline,
   tileIcons,
-  tileText,
   keepAllCharacters,
   keepCharacter,
   replaceAllCharacters,
@@ -230,28 +237,463 @@ describe("the wall", () => {
     expect(ink()).toBe(0);
   });
 
-  it("stamps a per-tile caption onto the tile, live", async () => {
-    /* Through the editor, not the model: the unit tests hand syncLiveLayers
-     * plain objects, and the app hands it Svelte $state proxies — which is a
-     * different thing entirely, and the difference silently broke the whole
-     * feature. Anything reachable only through a real edit belongs here. */
-    const [a] = app.folderIds;
 
-    await newLayoutDoc("Mit Text");
-    await addLayoutText();
-    const caption = openLayout()!.layers[0];
-    await setLayerField(caption.id, "perTile", true);
-    await setLayerField(caption.id, "text", "Kachel {{id}}");
+  it("edits the layer on the tile it was picked on, not the first of that name", async () => {
+    /* Two tiles, one layer id. That is not a contrived shape: the v6→v7 fold
+     * copied every shared stack onto its tiles keeping the ids, and a design
+     * dissolved across a wall keeps them on purpose — the shared id is what
+     * lets one edit reach the same layer on every selected tile.
+     *
+     * So "the selected layer" is a pair, and it has to stay one all the way to
+     * the write. It did not: the write looked the id up by scanning every tile
+     * and taking the first hit, so a caption dragged on the second tile moved
+     * on the first one instead — the portrait under the pointer did not budge,
+     * and a portrait somewhere else on the wall quietly did. */
+    await enterInbox();
+    const [a, b] = app.folderIds;
 
-    await assignTileLayout(a, openLayout()!.id);
+    const twin = () => {
+      const l = newImageLayer("block:#00ff00");
+      l.id = "shared-01";
+      l.x = 0.5;
+      l.y = 0.5;
+      return l;
+    };
+    app.manifest.tiles[a].layers.push(twin());
+    app.manifest.tiles[b].layers.push(twin());
+    app.version++;
+    await tick();
 
-    expect(app.error).toBe("");
-    expect(tileLayers(a).map((l) => l.kind)).toEqual(["image", "text"]);
-    // Recorded, or "Update stamps" would be greyed out forever.
-    expect(openLayout()!.stamped).toBeTruthy();
-    // And the tile's own row can find it.
-    expect(tileCaptions(a)).toHaveLength(1);
+    selectLayer("shared-01", b);
+    await applyTransform(
+      { layerId: "shared-01", tileId: b, space: "tile", locked: false } as Tagged,
+      { x: 0.25, y: 0.75, rotation: 0, scale: 0.5, scaleH: 0.5, fx: 1, fy: 1 },
+    );
+
+    const on = (tile: string) => findLayer(tileLayers(tile), "shared-01")!;
+    expect(on(b).x).toBeCloseTo(0.25, 5);
+    expect(on(b).y).toBeCloseTo(0.75, 5);
+    // The other portrait was never asked about.
+    expect(on(a).x).toBeCloseTo(0.5, 5);
+    expect(on(a).y).toBeCloseTo(0.5, 5);
   });
+
+  /* The row buttons are the third caller of that pair, and they never carried
+   * the tile. A row knows perfectly well which portrait it belongs to — the
+   * name button beside the eye passes it — so the eye hid, the lock locked and
+   * × deleted on whichever tile the id turned up on first, unless that tile
+   * happened to be the selected one. On the real document three ids sit on 14,
+   * 14 and 39 of the 44 tiles, so most clicks landed elsewhere. */
+  const twinned = async (id: string) => {
+    await enterInbox();
+    const [a, b] = app.folderIds;
+    /* A shape, not a picture: the row draws what it lists, and a made-up asset
+     * name has nothing behind it to draw. */
+    const twin = () => {
+      const l = newShapeLayer("rect");
+      l.id = id;
+      return l;
+    };
+    app.manifest.tiles[a].layers.push(twin());
+    app.manifest.tiles[b].layers.push(twin());
+    app.version++;
+    await tick();
+    // Nothing picked: what a row click does before anything else is touched.
+    selectLayer("", "");
+    return [a, b] as const;
+  };
+
+  it("hides the layer on the row's own tile, not the first tile holding that id", async () => {
+    const [a, b] = await twinned("shared-eye");
+    await toggleLayerHidden("shared-eye", b);
+
+    expect(findLayer(tileLayers(b), "shared-eye")!.hidden).toBe(true);
+    expect(findLayer(tileLayers(a), "shared-eye")!.hidden).toBeFalsy();
+  });
+
+  it("locks from a row whose tile is not the selected one", async () => {
+    /* The other resolver, and the other symptom: this one does not scan, so an
+     * unselected tile answered `undefined` and the click did nothing at all. */
+    const [a, b] = await twinned("shared-lock");
+    await toggleLayerLocked("shared-lock", b);
+
+    expect(findLayer(tileLayers(b), "shared-lock")!.locked).toBe(true);
+    expect(findLayer(tileLayers(a), "shared-lock")!.locked).toBeFalsy();
+  });
+
+  it("deletes from the row's own tile", async () => {
+    const [a, b] = await twinned("shared-x");
+    await deleteLayer("shared-x", b);
+
+    expect(findLayer(tileLayers(b), "shared-x")).toBeUndefined();
+    expect(findLayer(tileLayers(a), "shared-x")).toBeTruthy();
+  });
+
+  it("hides from the row that was actually clicked", async () => {
+    /* The three above prove the functions honour a tile. This one proves the
+     * rows hand one over, which is where the bug was: the resolvers were doing
+     * what they were asked, with nobody asking for a tile at all. Clicked
+     * through the DOM for that reason — calling the function with the right
+     * argument cannot fail the way the button did. */
+    const [a, b] = await twinned("shared-dom");
+
+    // The rows are behind the Tiles twisty, and a shut section renders none.
+    reveal("tiles");
+    await tick();
+
+    const row = document.querySelector(`[data-tile="${b}"]`) as HTMLElement;
+    expect(row).toBeTruthy();
+    (row.querySelector("button.twisty") as HTMLButtonElement).click();
+    await tick();
+
+    const eye = [...row.querySelectorAll("button.eye")].find(
+      (e) => e.getAttribute("title") === "Hide",
+    ) as HTMLButtonElement;
+    expect(eye).toBeTruthy();
+    eye.click();
+
+    await until(() => !!findLayer(tileLayers(b), "shared-dom")!.hidden);
+    expect(findLayer(tileLayers(a), "shared-dom")!.hidden).toBeFalsy();
+  });
+
+  it("hands the canvas handles to the picked tile's copy alone", async () => {
+    /* The other half of the same pair. Matching on the id alone made every
+     * copy of a dissolved design grabbable at once, and the active handles
+     * landed on whichever one Fabric happened to list first. */
+    await enterInbox();
+    const [a, b] = app.folderIds;
+    /* A shape, not a picture: the app resolves assets through Tauri and a
+     * made-up name never loads, so nothing would reach the canvas to grab. */
+    for (const tile of [a, b]) {
+      const l = newShapeLayer("rect");
+      l.id = "twin-01";
+      l.w = 0.4;
+      l.h = 0.4;
+      app.manifest.tiles[tile].layers.push(l);
+    }
+    app.version++;
+    await tick();
+
+    selectLayer("twin-01", b);
+    const canvas = (window as { tesseraWall?: fabric.Canvas }).tesseraWall!;
+    await until(() => canvas.getObjects().some((o) => (o as Tagged).layerId === "twin-01"));
+    await until(() => !!canvas.getActiveObject());
+
+    const grabbable = canvas
+      .getObjects()
+      .filter((o) => (o as Tagged).layerId === "twin-01" && o.selectable);
+    expect(grabbable).toHaveLength(1);
+    expect((grabbable[0] as Tagged).tileId).toBe(b);
+    expect((canvas.getActiveObject() as Tagged).tileId).toBe(b);
+  });
+
+  it("reaches every picked tile with one field edit, in one undo step", async () => {
+    await enterInbox();
+    const [a, b, c] = app.folderIds;
+    for (const tile of [a, b, c]) {
+      const l = newShapeLayer("rect");
+      l.id = "badge-01";
+      l.fill = "#111111";
+      app.manifest.tiles[tile].layers.push(l);
+    }
+    app.version++;
+    await tick();
+
+    const steps = history.past.length;
+    app.selectedTiles = [a, b];
+    selectLayer("badge-01", a);
+    await setTileLayerField(bulkTargets("badge-01"), "badge-01", "fill", "#ff0000");
+
+    const fill = (tile: string) =>
+      (findLayer(tileLayers(tile), "badge-01") as ShapeLayer).fill;
+    expect(fill(a)).toBe("#ff0000");
+    expect(fill(b)).toBe("#ff0000");
+    // The tile nobody picked keeps its own.
+    expect(fill(c)).toBe("#111111");
+    expect(history.past.length).toBe(steps + 1);
+
+    // And one undo puts all of them back together.
+    await undoEdit();
+    expect(fill(a)).toBe("#111111");
+    expect(fill(b)).toBe("#111111");
+  });
+
+  it("says on the panel how many tiles it writes to", async () => {
+    /* The panel's Text field writes to every selected tile carrying the layer.
+     * Nothing said how many that was, and with forty-four picked one keystroke
+     * replaces forty-four names typed by hand. The count is on the heading,
+     * where it can be read before something is changed. */
+    await enterInbox();
+    const [a, b, c] = app.folderIds;
+    app.selectedTiles = [a, b, c];
+    await addTileText();
+    const caption = tileLayers(a).at(-1)!;
+    selectLayer(caption.id, a);
+    reveal("props");
+    await tick();
+    await until(() =>
+      [...document.querySelectorAll("h2")].some((h) => h.textContent!.includes("3 tiles")),
+    );
+
+    // One tile picked, no count: there is nothing to warn about.
+    app.selectedTiles = [a];
+    await tick();
+    await until(() =>
+      [...document.querySelectorAll("h2")].every((h) => !h.textContent!.includes("tiles")),
+    );
+  });
+
+  it("puts the old number back when a box is typed full of nonsense", async () => {
+    /* Driven through the box itself, because the fault was in the box.
+     * "1e999" is a valid entry for a number field and is Infinity: the model
+     * refused it, but the panel had already written String(Math.round(Infinity))
+     * — "Infinity" — back into an input that cannot hold it, so the box went
+     * blank. The next entry then read that blank as 0 and stored the minimum,
+     * which is how typing a size too big left a caption at 30px. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileText();
+    const caption = tileLayers(tile).at(-1)!;
+    await setTileLayerField([tile], caption.id, "w", 0.5);
+    selectLayer(caption.id, tile);
+    reveal("props");
+    await tick();
+
+    const box = () => {
+      const row = [...document.querySelectorAll("label.field")].find(
+        (l) => l.querySelector("span")?.textContent?.trim() === "Width",
+      );
+      return row?.querySelector("input.num") as HTMLInputElement | undefined;
+    };
+    await until(() => !!box());
+    const before = box()!.value;
+    expect(Number(before)).toBeGreaterThan(100);
+
+    box()!.value = "1e999";
+    box()!.dispatchEvent(new Event("change", { bubbles: true }));
+    await tick();
+    await new Promise((r) => setTimeout(r, 100));
+
+    // The layer is the size it was, and the box says so.
+    expect((findLayer(tileLayers(tile), caption.id) as TextLayer).w).toBeCloseTo(0.5, 6);
+    expect(box()!.value).toBe(before);
+  });
+
+  it("refuses a size no renderer can draw, and keeps an icon square-ish", async () => {
+    /* Two ways the panel could write a number the wall cannot use.
+     *
+     * "1e999" is a valid entry for a number field and is Infinity; the clamps
+     * in the panel all read `max ?? Infinity`, so for every box without a
+     * ceiling it came through. The layer draws as nothing, and the save turns
+     * it into `null`, which is a layer of no size with its row still in the
+     * list and no way back to a size.
+     *
+     * And a class icon is fitted to both its width and its height while the
+     * panel offers only the width, so the slider stopped doing anything about
+     * a quarter above wherever the icon started. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const rect = tileLayers(tile).at(-1)!;
+    const was = (rect as ShapeLayer).w;
+    await setTileLayerField([tile], rect.id, "w", Number("1e999"));
+    expect((findLayer(tileLayers(tile), rect.id) as ShapeLayer).w).toBe(was);
+
+    await addTileShape("icon", "Ranger");
+    const icon = tileLayers(tile).at(-1)!;
+    await setTileLayerField([tile], icon.id, "w", 0.9);
+    const now = findLayer(tileLayers(tile), icon.id) as ShapeLayer;
+    // The height follows, or the fit takes the smaller of the two and the
+    // slider's upper half does nothing.
+    expect(now.h).toBeCloseTo(0.9, 6);
+  });
+
+  it("reaches the tile the panel is showing, whichever tiles are picked", async () => {
+    /* Reported from the code rather than by hand, and worth pinning because
+     * what it looks like is a dead control: pick two tiles on the wall, click a
+     * layer on a third, drag Opacity — the two change and the one whose numbers
+     * are in the panel does not. Clicking a layer object sets the pair (id,
+     * tile) and deliberately leaves the wall's tile selection alone, so the
+     * panel showed C while the edit went to A and B.
+     *
+     * The tile a layer was picked on is not one more selected tile; it is the
+     * layer's own address, which is why it is unioned in rather than replacing
+     * the selection. */
+    await enterInbox();
+    const [a, b, c] = app.folderIds;
+    for (const tile of [a, b, c]) {
+      const l = newShapeLayer("rect");
+      l.id = "plate-01";
+      l.fill = "#111111";
+      app.manifest.tiles[tile].layers.push(l);
+    }
+    app.version++;
+    await tick();
+
+    app.selectedTiles = [a, b];
+    selectLayer("plate-01", c);
+    expect(bulkTargets("plate-01").sort()).toEqual([a, b, c].sort());
+
+    await setTileLayerField(bulkTargets("plate-01"), "plate-01", "fill", "#ff0000");
+    const fill = (tile: string) => (findLayer(tileLayers(tile), "plate-01") as ShapeLayer).fill;
+    for (const tile of [a, b, c]) expect(fill(tile)).toBe("#ff0000");
+  });
+
+  it("refuses to bake a wall picture whose look would not survive it", async () => {
+    /* A baked background is an asset name and a crop rectangle, and that is all
+     * `background()` draws. Everything else the panel offers for a picture —
+     * the rotation, the trim, the grading dials, the frame, the opacity — is
+     * drawn on the wall and would simply be missing from the forty-four files
+     * written to the game. It baked anyway, and with the eye switched off it
+     * baked a picture that was not even on screen. Named and refused, because
+     * the alternative is a wall that disagrees with the game and says nothing.
+     */
+    await enterInbox();
+    app.selectedTiles = app.folderIds.slice(0, 4);
+    await newProjectFrom("Konto");
+    const p = projects()[0].id;
+    openProjectView(p);
+
+    const picture = newImageLayer("block:#00ff88");
+    picture.space = "grid";
+    picture.scale = 4;
+    app.manifest.projects.find((x) => x.id === p)!.gridLayers.push(picture);
+    app.version++;
+    selectLayer(picture.id, "");
+    await tick();
+
+    await setLayerField(picture.id, "rotation", 30);
+    await bakeMosaic();
+    expect(app.error).toContain("rotation");
+    for (const id of app.folderIds.slice(0, 4)) expect(app.manifest.tiles[id].base).toBeNull();
+
+    /* Straightened out, the guard lets it past. What happens after that is the
+     * bake's own business and is covered where the arithmetic lives — this
+     * harness has no real picture behind that asset name. */
+    await setLayerField(picture.id, "rotation", 0);
+    app.error = "";
+    await bakeMosaic();
+    expect(app.error).not.toContain("Not applied");
+  });
+
+  it("leaves no wall open that the document does not have", async () => {
+    /* Undo swaps the document and nothing else, so the id of the open project
+     * outlived the project itself: the canvas fell back to Unsorted while the
+     * sidebar highlighted nothing, and the wall's own menu lost the two entries
+     * that wall is for and offered two that silently did nothing. Both ways in
+     * are here — undoing the making of a project, and redoing its deletion. */
+    await enterInbox();
+    app.selectedTiles = app.folderIds.slice(0, 3);
+    await newProjectFrom("Konto");
+    const made = projects()[0].id;
+    openProjectView(made);
+    expect(app.openProjectId).toBe(made);
+
+    await undoEdit();
+    expect(app.openProjectId).toBe("");
+
+    await redoEdit();
+    openProjectView(projects()[0].id);
+    await deleteProject(projects()[0].id);
+    await undoEdit();
+    await redoEdit();
+    expect(app.openProjectId).toBe("");
+  });
+
+  it("stops reaching the picked tile once the pick is dropped", async () => {
+    /* The other half of the rule above, and it was missing: the tile a layer
+     * was picked on always counts, so something has to stop counting it. Left
+     * standing, it kept an edit reaching a tile the user had left behind —
+     * possibly on another wall — because clearing the pick cleared the layer
+     * and not its address. */
+    await enterInbox();
+    const [a, b, c] = app.folderIds;
+    for (const tile of [a, b, c]) {
+      const l = newShapeLayer("rect");
+      l.id = "badge-77";
+      app.manifest.tiles[tile].layers.push(l);
+    }
+    app.version++;
+    await tick();
+
+    selectLayer("badge-77", a);
+    expect(bulkTargets("badge-77")).toEqual([a]);
+
+    clearAll();
+    /* What a row drop does: it names the layer without naming a tile
+     * (`dropInto` writes app.selected outright). So the address left over from
+     * the last pick is the one that answers — and it must be gone by now. */
+    app.selectedTiles = [b, c];
+    app.selected = "badge-77";
+    expect(bulkTargets("badge-77").sort()).toEqual([b, c].sort());
+  });
+
+  it("starts a new undo step when the picked tiles change mid-slider", async () => {
+    /* Runs collapse an edit that is still being made — dragging a slider is one
+     * step, not forty. The key says two edits are of the same kind, so the tile
+     * set has to be in it: without that, editing {a,b}, reselecting {c} and
+     * carrying on with the same control folded both into one step, and a single
+     * undo left half the wall changed. */
+    await enterInbox();
+    const [a, b, c] = app.folderIds;
+    for (const tile of [a, b, c]) {
+      const l = newShapeLayer("rect");
+      l.id = "bar-01";
+      app.manifest.tiles[tile].layers.push(l);
+    }
+    app.version++;
+    await tick();
+
+    app.selectedTiles = [a, b];
+    selectLayer("bar-01", a);
+    await setTileLayerField(bulkTargets("bar-01"), "bar-01", "w", 0.3);
+    const afterFirst = history.past.length;
+
+    app.selectedTiles = [c];
+    selectLayer("bar-01", c);
+    await setTileLayerField(bulkTargets("bar-01"), "bar-01", "w", 0.7);
+    expect(history.past.length).toBe(afterFirst + 1);
+  });
+
+  it("places a dragged layer on every picked tile without compounding its size", async () => {
+    /* A shape stores its size and `resize` multiplies it by what Fabric
+     * scaled, so replaying the gesture on each tile would scale each one by
+     * that factor again — tiles that had drifted apart would drift further.
+     * The dragged layer's finished size is what the others copy. */
+    await enterInbox();
+    const [a, b] = app.folderIds;
+    const widths: Record<string, number> = { [a]: 0.4, [b]: 0.2 };
+    for (const tile of [a, b]) {
+      const l = newShapeLayer("rect");
+      l.id = "plate-01";
+      l.w = widths[tile];
+      l.h = 0.1;
+      l.x = 0.5;
+      app.manifest.tiles[tile].layers.push(l);
+    }
+    app.version++;
+    await tick();
+
+    app.selectedTiles = [a, b];
+    selectLayer("plate-01", a);
+    await applyTransformBulk(
+      { layerId: "plate-01", tileId: a, space: "tile", locked: false } as Tagged,
+      { x: 0.3, y: 0.6, rotation: 0, scale: 1, scaleH: 1, fx: 2, fy: 1 },
+      [a, b],
+    );
+
+    const on = (tile: string) => findLayer(tileLayers(tile), "plate-01") as ShapeLayer;
+    // The dragged one took the factor: 0.4 * 2.
+    expect(on(a).w).toBeCloseTo(0.8, 5);
+    // The other one matches it outright rather than doubling its own 0.2.
+    expect(on(b).w).toBeCloseTo(0.8, 5);
+    expect(on(b).x).toBeCloseTo(0.3, 5);
+    expect(on(b).y).toBeCloseTo(0.6, 5);
+  });
+
+
 
   it("takes a range with shift and a single tile with ctrl", async () => {
     /* Twenty tiles into a drawer used to mean twenty ctrl-clicks: the grid
@@ -279,28 +721,6 @@ describe("the wall", () => {
     expect(app.selectedTiles).toEqual([b, c, d]);
   });
 
-  it("stamps one layout onto every picked tile in one step", async () => {
-    /* Assigning was one dropdown per row: forty-four visits to give a wall its
-     * design, forty-four renders of the same flat sheet, forty-four undo
-     * steps. The picture is identical for all of them, so it is rendered once
-     * and every tile is pointed at it inside a single mutation. */
-    const [a, b, c] = app.folderIds;
-
-    queuePick(await magentaSquare("blatt"));
-    await newLayoutDoc("Rahmen");
-    await addLayoutImage();
-    await closeLayoutDoc();
-
-    const steps = history.past.length;
-    app.selectedTiles = [a, b, c];
-    await assignLayoutToSelection(layouts()[0].id);
-
-    for (const id of [a, b, c]) expect(tileLayers(id)).toHaveLength(1);
-    // One asset for all three: the same rendered sheet, not three of them.
-    const assets = new Set([a, b, c].map((id) => (tileLayers(id)[0] as ImageLayer).asset));
-    expect(assets.size).toBe(1);
-    expect(history.past.length).toBe(steps + 1);
-  });
 
   it("puts the document aside and back again, leaving the game folder alone", async () => {
     /* Twenty kilobytes, not a folder copy: assets and vault copies are never
@@ -390,61 +810,6 @@ describe("the wall", () => {
     expect(app.error).toContain("1 tile(s) taken back");
   });
 
-  it("answers the whole changed list at once, each way round", async () => {
-    /* The mass case: the game regenerated the folder wholesale. "All same"
-     * records the files as seen and keeps every layer; "All new" strips the
-     * tiles and sends them back to Unsorted. Driven through the buttons, since
-     * the alert only exists when changedTiles says so. */
-    const [a, b] = app.folderIds;
-    app.selectedTiles = [a, b];
-    await newProjectFrom("Konto");
-    queuePick(await magentaSquare("massen"));
-    await newLayoutDoc("Massentest");
-    await addLayoutImage();
-    await closeLayoutDoc();
-    await assignTileLayout(a, layouts()[0].id);
-    expect(app.manifest.tiles[a].layers.length).toBeGreaterThan(0);
-
-    // Still on the overview — nothing here entered a wall — where the alert lives.
-    app.hashes = { ...app.hashes, [a]: "neu-a", [b]: "neu-b" };
-    app.changedTiles = [a, b];
-    await until(
-      () => ![...document.querySelectorAll("button")].every((x) => x.textContent!.trim() !== "All same characters"),
-    );
-    const byLabel = (t: string) =>
-      [...document.querySelectorAll("button")].find((x) => x.textContent!.trim() === t)!;
-
-    byLabel("All same characters").click();
-    await until(() => app.changedTiles.length === 0);
-    // Layers untouched, ownership untouched: same characters, new bytes.
-    expect(app.manifest.tiles[a].layers.length).toBeGreaterThan(0);
-    expect(projects()).toHaveLength(1);
-
-    app.hashes = { ...app.hashes, [a]: "neu2-a" };
-    app.changedTiles = [a];
-    await until(
-      () => ![...document.querySelectorAll("button")].every((x) => x.textContent!.trim() !== "All new characters"),
-    );
-    /* Answered yes on purpose: this is the button that deletes the vaulted
-       originals, so it asks first now — and a test that let the dialog default
-       to "no" would be testing nothing. */
-    const asked: string[] = [];
-    const real = window.confirm;
-    window.confirm = (m?: string) => {
-      asked.push(m ?? "");
-      return true;
-    };
-    try {
-      byLabel("All new characters").click();
-      await until(() => app.changedTiles.length === 0);
-    } finally {
-      window.confirm = real;
-    }
-    expect(asked[0]).toContain("vaulted originals are deleted");
-    // A stranger inherited the slot: bare, and back on the unsorted pile.
-    expect(app.manifest.tiles[a].layers).toEqual([]);
-    expect(projects()[0].order).toEqual([b]);
-  });
 
   it("refuses a rename that would land on another snapshot's file", async () => {
     /* The dedupe compared what was typed while the file was written under a
@@ -550,54 +915,7 @@ describe("the wall", () => {
     expect(snapshots().some((s) => s.name.startsWith("Before write"))).toBe(false);
   });
 
-  it("sweeps stamps of a deleted layout out of a restored snapshot", async () => {
-    /* A project snapshot restores the wall and its tiles but deliberately not
-     * the layout library, so one taken before a layout was deleted put that
-     * layout's stamps back with nothing left to name them — pictures labelled
-     * with a raw id, sitting on the tiles until the next start. The rule is
-     * that a layout and its layers do not survive each other, and it has to
-     * hold on this route too.
-     *
-     * A document-wide snapshot is the case that needs no sweep: it brings the
-     * library back with it, so the stamps have their layout again. */
-    const [a] = app.folderIds;
-    app.selectedTiles = [a];
-    await newProjectFrom("Konto");
-    const projectId = projects()[0].id;
-    openProjectView(projectId);
 
-    queuePick(await magentaSquare("blatt"));
-    await newLayoutDoc("Rahmen");
-    await addLayoutImage();
-    await closeLayoutDoc();
-    await assignTileLayout(a, layouts()[0].id);
-    expect(tileLayers(a).length).toBeGreaterThan(0);
-
-    await takeSnapshot("Mit Layout");
-    await deleteLayoutDoc(layouts()[0].id);
-    expect(tileLayers(a)).toHaveLength(0);
-
-    await restoreSnapshot({ name: "Mit Layout", projectId });
-
-    expect(layouts()).toHaveLength(0);
-    // The stamp does not come back on its own, with no layout left to name it.
-    expect(tileLayers(a)).toHaveLength(0);
-  });
-
-  it("says how many tiles it undressed instead of doing it in silence", async () => {
-    const [a] = app.folderIds;
-    queuePick(await magentaSquare("blatt2"));
-    await newLayoutDoc("Rahmen");
-    await addLayoutImage();
-    await closeLayoutDoc();
-    await assignTileLayout(a, layouts()[0].id);
-
-    app.selectedTiles = [a];
-    await stripSelectedTiles();
-
-    expect(tileLayers(a)).toHaveLength(0);
-    expect(app.error).toContain("1 tile(s)");
-  });
 
   it("lists only the open wall's snapshots", async () => {
     const [a, b] = app.folderIds;
@@ -658,101 +976,8 @@ describe("the wall", () => {
     expect(inbox()).not.toContain(a);
   });
 
-  it("shows a stamp under its layout's name once one is assigned", async () => {
-    const a = app.folderIds[0];
 
-    queuePick(await magentaSquare("stempel"));
-    await newLayoutDoc("Mein Layout");
-    await addLayoutImage();
-    await assignTileLayout(a, openLayout()!.id);
 
-    await until(() => tileLayers(a).length === 1);
-    expect(layouts()[0].name).toBe("Mein Layout");
-    await until(() => document.body.textContent!.includes("Mein Layout"));
-  });
-
-  it("shows one row for a layout, not a second for the picture it keeps live", async () => {
-    /* A layout with a per-tile picture puts two layers on the tile: the stamp
-     * and the live copy. Both are images carrying the same layoutId, so a rule
-     * written on kind alone kept both — the tile read "2 layout(s)" and the
-     * two rows marked different things on the wall. Live captions were already
-     * hidden; the picture is the same kind of copy. */
-    const a = app.folderIds[0];
-
-    queuePick(await magentaSquare("logo"));
-    await newLayoutDoc("Mit Logo");
-    await addLayoutImage();
-    const pic = openLayout()!.layers[0];
-    await setLayerField(pic.id, "perTile", true);
-    await assignTileLayout(a, openLayout()!.id);
-    await until(() => tileLayers(a).length === 2);
-
-    // Through the list, because the list is where it was wrong.
-    await closeLayoutDoc();
-    /* The tile-section head, not the project row of the same name — both read
-     * "Unsorted" now, and only this one carries the count. */
-    const section = [...document.querySelectorAll("aside button.name")].find((b) =>
-      b.textContent!.includes("right-click the wall to assign"),
-    ) as HTMLButtonElement;
-    section.click();
-
-    const row = () =>
-      [...document.querySelectorAll("aside button.name")].find((b) =>
-        b.textContent!.trim().startsWith(a),
-      );
-    await until(() => !!row());
-    expect(row()!.textContent).toContain("1 layout(s)");
-  });
-
-  it("a class per tile takes what the icon cuts along with it", async () => {
-    /* The real setup, from a real manifest: a block of colour cut to the class
-     * icon. The mask is chosen while both are ordinary Layout layers; the
-     * switch comes after. The rule only lets a per-tile cutter cut a per-tile
-     * layer, so flipping it used to void the mask in silence — the block kept a
-     * maskId that no longer applied, the dropdown stopped listing the icon, and
-     * the wall showed a whole rectangle beside a badge instead of one cut to
-     * the other. */
-    await newLayoutDoc("Klassenschnitt");
-    await addLayoutShape("icon", "Ranger");
-    const icon = openLayout()!.layers[0];
-    await addLayoutShape("rect");
-    const block = openLayout()!.layers.find((l) => l.id !== icon.id)!;
-    await setLayerField(block.id, "maskId", icon.id);
-
-    await setLayerField(icon.id, "perTile", true);
-
-    const now = (id: string) => openLayout()!.layers.find((l) => l.id === id)!;
-    expect(now(block.id).perTile).toBe(true);
-    // And the cutter is still on offer for it, which is the same fact stated
-    // by the control the user actually looks at.
-    expect(maskChoices(openLayout()!.layers, block.id).map((l) => l.id)).toContain(icon.id);
-  });
-
-  it("choosing a mask that lives on the tiles takes the layer along", async () => {
-    /* The other half of the same rule. A per-tile cutter may only cut a
-     * per-tile layer, so a plain rectangle could not be cut by a class icon
-     * that names a class per tile — and the dropdown answered by leaving the
-     * icon out entirely, with nothing said. It is offered now, and picking it
-     * sends the rectangle to the tiles as well, which is the only way the pair
-     * can exist at all. */
-    await newLayoutDoc("Maske folgt");
-    await addLayoutShape("icon", "Ranger");
-    const icon = openLayout()!.layers[0];
-    await setLayerField(icon.id, "perTile", true);
-    await addLayoutShape("rect");
-    const block = openLayout()!.layers.find((l) => l.id !== icon.id)!;
-    expect(block.perTile).toBeFalsy();
-
-    // The icon is on offer even though today's rule would refuse it.
-    expect(maskOffers(openLayout()!.layers, block.id).map((l) => l.id)).toContain(icon.id);
-
-    await setLayerField(block.id, "maskId", icon.id);
-
-    const now = openLayout()!.layers.find((l) => l.id === block.id)!;
-    expect(now.perTile).toBe(true);
-    // And the cut is legal, so it will actually render.
-    expect(maskChoices(openLayout()!.layers, block.id).map((l) => l.id)).toContain(icon.id);
-  });
 
   it("lets a section be collapsed while a tile is still picked", async () => {
     /* The follow that opens the way to a picked tile reads the open sections to
@@ -782,898 +1007,15 @@ describe("the wall", () => {
     expect(document.querySelector(`[data-tile="${a}"]`)).toBeNull();
   });
 
-  it("hiding a stamp hides the whole assignment, live layers and all", async () => {
-    /* The stamp's row speaks for the copies a Layout keeps beside it — they
-     * have no row of their own. Hiding it and leaving those drawn meant the
-     * eye did nothing you could see: the caption and the logo stayed on the
-     * wall with nothing left to switch them off.
-     *
-     * Asserted as what draws, not as which flags are set. This test used to
-     * check that `hidden` had been copied onto the live layer, and that copy
-     * was itself the bug below: it pinned the mechanism, so the mechanism could
-     * not be corrected without the test objecting. */
-    const a = app.folderIds[0];
-    await newLayoutDoc("Mit Text");
-    await addLayoutText();
-    const caption = openLayout()!.layers[0];
-    await setLayerField(caption.id, "perTile", true);
-    await assignTileLayout(a, openLayout()!.id);
-    await until(() => tileLayers(a).length === 2);
-    const shows = () => {
-      const off = offLayouts(tileLayers(a));
-      return tileLayers(a).map((l) => layerShows(l, off));
-    };
-    expect(shows()).toEqual([true, true]);
 
-    const stamp = tileLayers(a).find((l) => l.kind === "image")!;
-    await toggleLayerHidden(stamp.id);
-    expect(shows()).toEqual([false, false]);
 
-    // And back, in one press.
-    await toggleLayerHidden(stamp.id);
-    expect(shows()).toEqual([true, true]);
-  });
 
-  it("keeps a hidden assignment hidden when the layout is updated", async () => {
-    /* The eye said "off", "Update stamps" was pressed, and the design came
-     * back — captions and all, into the 624x804 file written to the game —
-     * with the row still saying "hidden".
-     *
-     * `syncLiveLayers` rebuilds every live copy from the Layout's own layer, so
-     * anything mirrored onto that copy is overwritten. `hidden` was the one
-     * thing the tile owned there. It is asked for now rather than stored twice:
-     * a copy draws when neither its own eye nor its stamp's is closed. */
-    const a = app.folderIds[0];
-    await newLayoutDoc("Verschwunden");
-    await addLayoutText();
-    const caption = openLayout()!.layers[0];
-    await setLayerField(caption.id, "perTile", true);
-    const layoutId = openLayout()!.id;
-    await assignTileLayout(a, layoutId);
-    await until(() => tileLayers(a).length === 2);
 
-    const stamp = tileLayers(a).find((l) => l.kind === "image")!;
-    await toggleLayerHidden(stamp.id);
 
-    // The design is edited and stamped again, which is the whole loop.
-    await setLayerField(caption.id, "size", 0.14);
-    await saveLayout(layoutId);
-    await until(() => tileLayers(a).length === 2);
 
-    const off = offLayouts(tileLayers(a));
-    expect(tileLayers(a).map((l) => layerShows(l, off))).toEqual([false, false]);
-    // And one press still brings the whole assignment back.
-    await toggleLayerHidden(tileLayers(a).find((l) => l.kind === "image")!.id);
-    const back = offLayouts(tileLayers(a));
-    expect(tileLayers(a).map((l) => layerShows(l, back))).toEqual([true, true]);
-  });
-
-  it("clearing a tile's layers leaves it archived, and keeps its framing out of the way", async () => {
-    /* `{ ...emptyTile(), base }` was a whitelist of what to keep, and `Tile`
-     * has grown `swap`, `frame` and `archived` since it was written — each one
-     * joined the throw-away side in silence. The last of those meant that
-     * clearing the layers on a portrait you had put away quietly brought it
-     * back onto the Unsorted wall. Named `stripTile` now, so it cannot drop a
-     * field it has never heard of. */
-    const a = app.folderIds[0];
-    await newLayoutDoc("Weg damit");
-    await addLayoutText();
-    const caption = openLayout()!.layers[0];
-    await setLayerField(caption.id, "perTile", true);
-    await assignTileLayout(a, openLayout()!.id);
-    await closeLayoutDoc();
-    await until(() => tileLayers(a).length === 2);
-    await setTileFrame(a, caption.id, { x: 0.2, y: 0, z: 1, a: 0 });
-
-    app.selectedTiles = [a];
-    await archiveSelection(true);
-    expect(archived()).toContain(a);
-
-    app.selectedTiles = [a];
-    await stripSelectedTiles();
-    expect(tileLayers(a)).toEqual([]);
-    // Still put away — the clearing was of its artwork, not of the tile.
-    expect(archived()).toContain(a);
-    // And its placement went with the layers it belonged to.
-    expect(app.manifest.tiles[a].frame).toBeUndefined();
-  });
-
-  it("takes one layout off the tiles that wear it, and nothing else", async () => {
-    /* The inverse of assigning, and it has to be as thorough. A stamp removed
-     * on its own leaves the captions and logos the Layout keeps live beside it
-     * drawing on the wall with no row to switch them off — the fault
-     * deleteStampCascade exists for — and the tile's own wording, pictures and
-     * placements are keyed to those same ids.
-     *
-     * And it takes only what was asked for: a second design on the same tile
-     * stays, which is the whole reason the menu names the layout rather than
-     * offering one blunt "clear". */
-    const [a, b] = app.folderIds;
-    await newLayoutDoc("Weg");
-    await addLayoutText();
-    const doomed = openLayout()!;
-    const caption = doomed.layers[0];
-    await setLayerField(caption.id, "perTile", true);
-    await closeLayoutDoc();
-
-    await newLayoutDoc("Bleibt");
-    const keeper = openLayout()!;
-    await addLayoutShape("rect");
-    await closeLayoutDoc();
-
-    for (const id of [a, b]) {
-      await assignTileLayout(id, doomed.id);
-      await assignTileLayout(id, keeper.id);
-    }
-    await until(() => tileLayers(a).length === 3);
-    await setTileText(a, caption.id, "Nachtklinge");
-    await setTileFrame(a, caption.id, { x: 0.1, y: 0, z: 1, a: 0 });
-    expect(wearing(doomed.id, [a, b])).toEqual([a, b]);
-
-    await removeLayoutFrom(doomed.id, [a]);
-
-    // Gone from the one asked for, stamp and live caption together.
-    expect(tileLayers(a).some((l) => l.layoutId === doomed.id)).toBe(false);
-    // And its wording and placement with it — both keyed by the caption's id.
-    expect(app.manifest.tiles[a].text[caption.id]).toBeUndefined();
-    expect(app.manifest.tiles[a].frame?.[caption.id]).toBeUndefined();
-    // The other design on the same tile is untouched.
-    expect(tileLayers(a).some((l) => l.layoutId === keeper.id)).toBe(true);
-    // And so is the tile that was not named.
-    expect(wearing(doomed.id, [a, b])).toEqual([b]);
-  });
-
-  it("deleting a stamp takes its live caption with it", async () => {
-    /* The defect this replaces: the caption survived, no list showed it —
-     * they are hidden because the stamp row speaks for them — and it went on
-     * rendering on the wall with no row and no way out. Four tiles on the real
-     * wall ended up like that. */
-    const a = app.folderIds[0];
-    await newLayoutDoc("Mit Text");
-    await addLayoutText();
-    const caption = openLayout()!.layers[0];
-    await setLayerField(caption.id, "perTile", true);
-    await assignTileLayout(a, openLayout()!.id);
-    await until(() => tileLayers(a).length === 2);
-
-    const stamp = tileLayers(a).find((l) => l.kind === "image")!;
-    await deleteLayer(stamp.id);
-    expect(tileLayers(a)).toEqual([]);
-  });
-
-  it("renames a layout from its row", async () => {
-    await newLayoutDoc("Alt");
-    await closeLayoutDoc();
-    await until(() => !app.openLayoutId);
-
-    /* Through the DOM, because the bug was in the DOM: rename and open cannot
-     * share the name button — the first click of a double-click would open
-     * the document and unmount the row, so the second click landed on nothing
-     * and layouts were unrenamable. Double-click renames (like a group row),
-     * the pencil opens. */
-    const name = [...document.querySelectorAll("aside button.name")].find((b) =>
-      b.textContent!.includes("Alt"),
-    ) as HTMLButtonElement;
-    name.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
-    await until(() => !!document.querySelector("aside input.rename"));
-
-    const input = document.querySelector("aside input.rename") as HTMLInputElement;
-    input.value = "Neu";
-    input.dispatchEvent(new Event("blur"));
-    await until(() => layouts()[0]?.name === "Neu");
-    // Renaming must not have opened the document as a side effect.
-    expect(app.openLayoutId).toBe("");
-
-    // And the pencil is what opens the editor now.
-    const pencil = [...document.querySelectorAll("aside button")].find(
-      (b) => (b as HTMLElement).title === "Edit layout",
-    ) as HTMLButtonElement;
-    pencil.click();
-    await until(() => app.openLayoutId === layouts()[0].id);
-  });
-
-  it("spends nothing on a rename that changes nothing", async () => {
-    await newLayoutDoc("Nur gucken");
-    await addLayoutText();
-    const layer = openLayout()!.layers[0];
-    const steps = history.past.length;
-
-    /* What a cancelled rename does: Escape restores the display label into the
-     * field and blur still fires. Writing it back in has to leave both the
-     * name and the history exactly as they were. */
-    await renameLayer(layer.id, layerLabel(layer));
-    expect(history.past.length).toBe(steps);
-    expect(findLayer(openLayout()!.layers, layer.id)!.name).toBe("text01");
-
-    // A real rename still lands and costs its one step.
-    await renameLayer(layer.id, "Mein Text");
-    expect(findLayer(openLayout()!.layers, layer.id)!.name).toBe("Mein Text");
-    expect(history.past.length).toBe(steps + 1);
-  });
 });
 
-describe("the Layout editor", () => {
-  /** Two layers in a fresh Layout, with the canvas built. */
-  async function twoLayers() {
-    await newLayoutDoc("Zwei");
-    for (const name of ["eins", "zwei"]) {
-      queuePick(await magentaSquare(name));
-      await addLayoutImage();
-    }
-    await until(() => (openLayout()?.layers.length ?? 0) === 2);
-    return openLayout()!.layers.map((l) => l.id);
-  }
 
-  it("keeps a picture's side handles once it is selected", async () => {
-    /* The handles are put on the object when the scene is built, and the
-     * selection rules run again every time the picked layer changes — so a
-     * rule that hides them there quietly undoes the build, and nothing below
-     * this component can see it happen. That is exactly how cropping first
-     * shipped with no handle to crop by: every test around it built a canvas
-     * directly, and not one of them ever selected anything. */
-    queuePick(await magentaSquare("zuschnitt"));
-    await newLayoutDoc("Griffe");
-    await addLayoutImage();
-    const id = openLayout()!.layers[0].id;
-
-    const live = () =>
-      (window as { tesseraLayout?: fabric.Canvas }).tesseraLayout as fabric.Canvas;
-    await until(
-      () => !!live()?.getObjects().some((o) => (o as { layerId?: string }).layerId === id),
-    );
-
-    setLayoutSelection([id]);
-    await until(() => !!live().getActiveObject());
-
-    const obj = live().getActiveObject()!;
-    for (const side of ["ml", "mr", "mt", "mb"] as const) {
-      expect(obj.isControlVisible(side)).toBe(true);
-    }
-  });
-
-  it("turns a fill into a gradient from the panel, and the canvas paints it", async () => {
-    /* Gradients were in the model and in scene.ts from the start and no
-     * control ever made one — the swatch read a gradient's start colour and
-     * wrote a flat colour back, so the feature was unreachable from the app.
-     * Driven through the real button for that reason: a test that called
-     * setLayerField would have passed against the panel that had no button. */
-    await newLayoutDoc("Verlauf");
-    await addLayoutShape("rect");
-    const shape = openLayout()!.layers[0] as ShapeLayer;
-    // Read now, not after the click: mutate edits the layer in place, so the
-    // same object would hand back the gradient and the check would compare the
-    // colour against itself.
-    const was = shape.fill;
-    setLayoutSelection([shape.id]);
-
-    const ramp = 'button.ramp[aria-label*="Fade"]';
-    await until(() => !!document.querySelector(ramp));
-    document.querySelector<HTMLButtonElement>(ramp)!.click();
-
-    await until(() => isGradient((findLayer(openLayout()!.layers, shape.id) as ShapeLayer).fill));
-    const fill = (findLayer(openLayout()!.layers, shape.id) as ShapeLayer).fill;
-    // The colour it had is where the ramp starts: pressing this must not throw
-    // the picked colour away.
-    expect(isGradient(fill) && fill.from).toBe(was);
-
-    const live = () => (window as { tesseraLayout?: fabric.Canvas }).tesseraLayout as fabric.Canvas;
-    await until(() => {
-      const obj = live()
-        ?.getObjects()
-        .find((o) => (o as { layerId?: string }).layerId === shape.id);
-      return typeof obj?.fill === "object";
-    });
-  });
-
-  it("numbers a new layer rather than naming it after the file", async () => {
-    /* The file name was misleading the moment a Layout was involved — the same
-     * picture is a frame in one and a class logo in another — and the asset it
-     * would otherwise fall back to is a content hash, which says nothing at
-     * all. The number is per kind and per stack. */
-    await newLayoutDoc("Namen");
-    queuePick(await magentaSquare("mein-bild"));
-    await addLayoutImage();
-    await addLayoutText();
-    queuePick(await magentaSquare("noch-eins"));
-    await addLayoutImage();
-    await until(() => openLayout()!.layers.length === 3);
-    expect(openLayout()!.layers.map((l) => l.name)).toEqual(["img01", "text01", "img02"]);
-  });
-
-  it("imports an SVG at the size its viewBox says, not the browser's 300×150", async () => {
-    /* The whole reason importAsset touches SVG at all. Measured the way the app
-     * measures it: an <img> on the stored bytes, which is what Fabric builds
-     * behind every picture layer. Without the rewrite this reads 300×150 — the
-     * CSS default object size — and the icon lands in the Layout at a scale the
-     * file never asked for. */
-    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 16"><rect width="64" height="16"/></svg>';
-    queuePick(stashPickedFile("klasse.svg", new TextEncoder().encode(svg)));
-    await newLayoutDoc("Mit Icon");
-    await addLayoutImage();
-    await until(() => (openLayout()?.layers.length ?? 0) === 1);
-
-    const asset = (openLayout()!.layers[0] as ImageLayer).asset;
-    const url = await app.deps!.asset(asset);
-    const size = await new Promise<{ w: number; h: number }>((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
-      img.onerror = reject;
-      img.src = url;
-    });
-
-    expect(size).toEqual({ w: 64, h: 16 });
-  });
-
-  it("deletes every picked layer in one undo step", async () => {
-    /* The menu above it reads "Group 2 layers" and "Duplicate 2 layers" and
-     * acts on the selection; Delete sat underneath them and removed the clicked
-     * row alone, without a word about the other one. */
-    const [a, b] = await twoLayers();
-    setLayoutSelection([a, b]);
-    const steps = history.past.length;
-
-    await deleteLayoutLayers([a, b]);
-
-    expect(openLayout()!.layers).toEqual([]);
-    expect(history.past.length).toBe(steps + 1);
-    await undoEdit();
-    expect(openLayout()!.layers.map((l) => l.id)).toEqual([a, b]);
-  });
-
-  it("duplicates the picked layers above the originals", async () => {
-    /* A copy that lands underneath its original looks like nothing happened,
-     * and one that keeps the original's ids is the same layer twice. */
-    const [a] = await twoLayers();
-    setLayoutSelection([a]);
-    const before = openLayout()!.layers.length;
-
-    await duplicateLayoutLayers();
-
-    const layers = openLayout()!.layers;
-    expect(layers).toHaveLength(before + 1);
-    const original = layers.find((l) => l.id === a)!;
-    const copy = layers[layers.indexOf(original) + 1];
-    expect(copy.id).not.toBe(a);
-    // Offset, or it would be hiding under the thing it was copied from.
-    expect(copy.x).toBeCloseTo(original.x + 0.02, 6);
-    // Named for the stack it joined, and picked, since moving it is next.
-    expect(copy.name).not.toBe(original.name);
-    expect(app.layoutSelection).toEqual([copy.id]);
-  });
-
-  it("duplicates a layer that sits inside a group, into that group", async () => {
-    /* The selection can name a layer nested in a group — the list wires the
-     * same handlers to those rows — but the copy only ever looked at the top
-     * level. It found nothing, did nothing, and still burned an undo step,
-     * because the checkpoint is taken before the callback runs. */
-    const [a, b] = await twoLayers();
-    setLayoutSelection([a, b]);
-    await groupLayoutLayers();
-    const group = openLayout()!.layers.find((l) => l.kind === "group")!;
-    const inside = group.kind === "group" ? group.children[0] : undefined!;
-
-    setLayoutSelection([inside.id]);
-    const steps = history.past.length;
-    await duplicateLayoutLayers();
-
-    const after = openLayout()!.layers.find((l) => l.id === group.id)!;
-    expect(after.kind === "group" && after.children).toHaveLength(3);
-    expect(history.past.length).toBe(steps + 1);
-  });
-
-  it("spends no undo step when there is nothing to duplicate", async () => {
-    await newLayoutDoc("Nichts");
-    setLayoutSelection([]);
-    const steps = history.past.length;
-    await duplicateLayoutLayers();
-    expect(history.past.length).toBe(steps);
-  });
-
-  it("points a duplicated mask at the duplicated shape, not the original", async () => {
-    await newLayoutDoc("Maske kopieren");
-    await addLayoutShape("rect");
-    await addLayoutText();
-    const [shape, words] = openLayout()!.layers;
-    await setLayerField(words.id, "maskId", shape.id);
-
-    setLayoutSelection([shape.id, words.id]);
-    await duplicateLayoutLayers();
-
-    const copies = openLayout()!.layers.filter((l) => ![shape.id, words.id].includes(l.id));
-    expect(copies).toHaveLength(2);
-    const copiedText = copies.find((l) => l.kind === "text")!;
-    const copiedShape = copies.find((l) => l.kind === "shape")!;
-    /* Pointing back at the original would mean editing one design moved the
-       other's hole — the surprise duplicating exists to avoid. */
-    expect(copiedText.maskId).toBe(copiedShape.id);
-  });
-
-  it("keeps a Ctrl-picked second layer selected", async () => {
-    const [a, b] = await twoLayers();
-
-    toggleLayoutPick(a, false);
-    await until(() => app.layoutSelection.length === 1);
-
-    toggleLayoutPick(b, true);
-    /* The regression: the canvas answers the pick by setting its active
-     * object, Fabric fires selection:created, and the handler used to reset
-     * the selection to that one layer. Give those a chance to run before
-     * checking, or the assertion passes on timing alone. */
-    await new Promise((r) => setTimeout(r, 200));
-
-    expect(app.layoutSelection).toHaveLength(2);
-    expect(canGroupLayers()).toBe(true);
-  });
-
-  it("moves a layer into an existing group without moving it on screen", async () => {
-    const [a, b] = await twoLayers();
-    queuePick(await magentaSquare("drei"));
-    await addLayoutImage();
-    const loose = openLayout()!.layers.at(-1)!;
-    loose.x = 0.5;
-    loose.y = 0.8;
-
-    setLayoutSelection([a, b]);
-    await groupLayoutLayers();
-    const group = openLayout()!.layers.find((l) => l.kind === "group")!;
-    // Displace the group, so entering it has something to compensate for.
-    group.x = 0.65;
-    group.y = 0.35;
-    const shift = groupShift(group);
-
-    await moveLayersIntoGroup(group.id, [loose.id]);
-
-    const inside = findLayer(openLayout()!.layers, loose.id)!;
-    expect(inside.x + shift.dx).toBeCloseTo(0.5, 5);
-    expect(inside.y + shift.dy).toBeCloseTo(0.8, 5);
-    // And it really is inside now, not merely renamed.
-    expect(openLayout()!.layers.some((l) => l.id === loose.id)).toBe(false);
-  });
-
-  it("puts a new group where its topmost member was, so nothing restacks", async () => {
-    await newLayoutDoc("Stapel");
-    for (const name of ["a", "b", "c", "d"]) {
-      queuePick(await magentaSquare(name));
-      await addLayoutImage();
-    }
-    const [a, b, c, d] = openLayout()!.layers.map((l) => l.id);
-
-    // Group the bottom one and the third: c drew above b, and must keep to.
-    setLayoutSelection([a, c]);
-    await groupLayoutLayers();
-
-    const order = openLayout()!.layers.map((l) => (l.kind === "group" ? "G" : l.id));
-    expect(order).toEqual([b, "G", d]);
-    const made = openLayout()!.layers[1];
-    expect(made.kind === "group" ? made.children.map((x) => x.id) : null).toEqual([a, c]);
-  });
-
-  it("keeps the new group selected instead of its children", async () => {
-    const [a, b] = await twoLayers();
-    setLayoutSelection([a, b]);
-    await groupLayoutLayers();
-    // The canvas answers a group pick with its members; that must not come
-    // back as the selection, or the row you just made is never the one picked.
-    await new Promise((r) => setTimeout(r, 250));
-    const group = openLayout()!.layers.find((l) => l.kind === "group")!;
-    expect(app.layoutSelection).toEqual([group.id]);
-    expect([a, b]).not.toContain(app.layoutSelection[0]);
-  });
-
-  it("moves a layer out of one group into another without moving it", async () => {
-    // Four layers: two make each group, one travels between them.
-    await newLayoutDoc("Umzug");
-    for (const name of ["a", "b", "c", "d"]) {
-      queuePick(await magentaSquare(name));
-      await addLayoutImage();
-    }
-    const [a, b, c, d] = openLayout()!.layers.map((l) => l.id);
-
-    setLayoutSelection([a, b]);
-    await groupLayoutLayers();
-    const first = openLayout()!.layers.find((l) => l.kind === "group")!;
-    first.x = 0.7;
-
-    setLayoutSelection([c, d]);
-    await groupLayoutLayers();
-    const second = openLayout()!.layers.filter((l) => l.kind === "group").at(-1)!;
-    second.y = 0.3;
-
-    /* A layer nested in one group, moved into another: this used to look only
-     * at the top level, so nothing moved, the selection was cleared anyway and
-     * an undo step was pushed for it. */
-    const travelling = findLayer(openLayout()!.layers, a)!;
-    const before = {
-      x: travelling.x + groupShift(first).dx,
-      y: travelling.y + groupShift(first).dy,
-    };
-
-    await moveLayersIntoGroup(second.id, [a]);
-
-    const moved = findLayer(openLayout()!.layers, a)!;
-    expect(moved.x + groupShift(second).dx).toBeCloseTo(before.x, 5);
-    expect(moved.y + groupShift(second).dy).toBeCloseTo(before.y, 5);
-    expect(first.kind === "group" && first.children.map((x) => x.id)).toEqual([b]);
-    expect(second.kind === "group" && second.children.map((x) => x.id)).toEqual([c, d, a]);
-  });
-
-  it("spends one undo step on a whole run of typing", async () => {
-    await newLayoutDoc("Tippen");
-    await addLayoutText();
-    const id = openLayout()!.layers[0].id;
-
-    /* Busy-wait, not setTimeout: this test is about a time window, and a
-     * background tab throttles timers to about a second — long enough to end
-     * the very run being measured. */
-    const spin = (ms: number) => {
-      const end = performance.now() + ms;
-      while (performance.now() < end);
-    };
-
-    const before = history.past.length;
-    for (const word of ["M", "Me", "Mei", "Mein"]) {
-      await setLayerField(id, "text", word);
-      spin(30);
-    }
-    expect(history.past.length - before).toBe(1);
-
-    await undoEdit();
-    const back = findLayer(openLayout()!.layers, id);
-    expect(back?.kind === "text" && back.text).toBe("Text");
-  });
-
-  it("starts a new step once the field has been left", async () => {
-    await newLayoutDoc("Pause");
-    await addLayoutText();
-    const id = openLayout()!.layers[0].id;
-
-    /* This used to wait out a 700ms clock. What ends a run now is the control
-     * saying so — `change` fires when a field is left or a slider released,
-     * and App.svelte listens for it on the window. Dispatched here rather than
-     * called directly, because the listener being wired up is half of what
-     * makes the boundary real. */
-    const before = history.past.length;
-    await setLayerField(id, "text", "A");
-    await setLayerField(id, "text", "AB");
-    expect(history.past.length - before).toBe(1);
-
-    window.dispatchEvent(new Event("change", { bubbles: true }));
-    await setLayerField(id, "text", "ABC");
-    expect(history.past.length - before).toBe(2);
-  });
-
-  it("drags a row to the top of the list", async () => {
-    await newLayoutDoc("Ziehen");
-    for (const name of ["a", "b", "c"]) {
-      queuePick(await magentaSquare(name));
-      await addLayoutImage();
-    }
-    const [a, b, c] = openLayout()!.layers.map((l) => l.id);
-
-    /* The list shows topmost first — c, b, a — so dropping `a` above `c` means
-     * landing at the end of the model's list. Getting the two directions
-     * confused is invisible until something draws in the wrong order. */
-    await dropLayoutLayer(a, null, null);
-    expect(openLayout()!.layers.map((l) => l.id)).toEqual([b, c, a]);
-
-    // And back down: in front of b puts it at the bottom again.
-    await dropLayoutLayer(a, null, b);
-    expect(openLayout()!.layers.map((l) => l.id)).toEqual([a, b, c]);
-  });
-
-  it("drags a row into a group and out again without moving it", async () => {
-    const [a, b] = await twoLayers();
-    queuePick(await magentaSquare("frei"));
-    await addLayoutImage();
-    const loose = openLayout()!.layers.at(-1)!.id;
-
-    setLayoutSelection([a, b]);
-    await groupLayoutLayers();
-    const group = openLayout()!.layers.find((l) => l.kind === "group")!;
-    group.x = 0.75;
-    group.y = 0.25;
-
-    const before = {
-      x: findLayer(openLayout()!.layers, loose)!.x,
-      y: findLayer(openLayout()!.layers, loose)!.y,
-    };
-
-    await dropLayoutLayer(loose, group.id, null);
-    const inside = findLayer(openLayout()!.layers, loose)!;
-    const shift = groupShift(group);
-    expect(inside.x + shift.dx).toBeCloseTo(before.x, 5);
-    expect(inside.y + shift.dy).toBeCloseTo(before.y, 5);
-
-    await dropLayoutLayer(loose, null, null);
-    const out = findLayer(openLayout()!.layers, loose)!;
-    expect(out.x).toBeCloseTo(before.x, 5);
-    expect(out.y).toBeCloseTo(before.y, 5);
-    expect(openLayout()!.layers.some((l) => l.id === loose)).toBe(true);
-  });
-
-  it("refuses to drag a group into itself", async () => {
-    const [a, b] = await twoLayers();
-    setLayoutSelection([a, b]);
-    await groupLayoutLayers();
-    const group = openLayout()!.layers.find((l) => l.kind === "group")!;
-    const before = history.past.length;
-
-    await dropLayoutLayer(group.id, group.id, null);
-
-    expect(openLayout()!.layers.map((l) => l.id)).toEqual([group.id]);
-    // And a refused move costs no undo step.
-    expect(history.past.length).toBe(before);
-  });
-
-  it("grows a left-aligned caption to the right, not out of both sides", async () => {
-    /* x is the centre, so longer words used to push the caption out sideways in
-     * both directions — line one of a stack would creep left while line two
-     * stayed put. Left-aligned text has its anchor at the left edge, and that
-     * is what stays still. */
-    await newLayoutDoc("Wachstum");
-    await addLayoutText();
-    const l = openLayout()!.layers[0] as TextLayer;
-    await setLayerField(l.id, "align", "left");
-    await setLayerField(l.id, "text", "M");
-
-    const at = () => {
-      const t = findLayer(openLayout()!.layers, l.id) as TextLayer;
-      return { left: t.x - textWidth(t) / 2, x: t.x };
-    };
-    const before = at();
-
-    await setLayerField(l.id, "text", "MMMMMMMMMMMM");
-    const after = at();
-    expect(after.left).toBeCloseTo(before.left, 5);
-    // It really did get wider — otherwise the assertion above proves nothing.
-    expect(after.x).toBeGreaterThan(before.x);
-  });
-
-  it("leaves a centred caption centred", async () => {
-    await newLayoutDoc("Mitte");
-    await addLayoutText();
-    const l = openLayout()!.layers[0] as TextLayer;
-    await setLayerField(l.id, "align", "center");
-    await setLayerField(l.id, "text", "M");
-    const x = (findLayer(openLayout()!.layers, l.id) as TextLayer).x;
-
-    await setLayerField(l.id, "text", "MMMMMMMMMMMM");
-    expect((findLayer(openLayout()!.layers, l.id) as TextLayer).x).toBeCloseTo(x, 5);
-  });
-
-  it("leaves a caption's size to the properties panel, whatever the canvas says", async () => {
-    /* The font size is a field now, and only a field. A caption's box is
-     * measured against its words, so a handle had no honest size to report
-     * anyway — dragging one multiplied the number you had just typed, and a
-     * plain move used to do it too. Moving still lands; scaling does not. */
-    await newLayoutDoc("Textzug");
-    await addLayoutText();
-    const l = openLayout()!.layers[0];
-    const size = l.kind === "text" ? l.size : 0;
-
-    await applyLayoutTransform(l.id, {
-      x: 0.8, y: 0.2, rotation: 0, scale: 0.21, scaleH: 0.09, fx: 1, fy: 1,
-    });
-    const moved = findLayer(openLayout()!.layers, l.id)!;
-    expect(moved.kind === "text" && moved.size).toBeCloseTo(size, 6);
-    expect(moved.x).toBeCloseTo(0.8);
-
-    await applyLayoutTransform(l.id, {
-      x: 0.8, y: 0.2, rotation: 0, scale: 0.42, scaleH: 0.18, fx: 2, fy: 2,
-    });
-    const scaled = findLayer(openLayout()!.layers, l.id)!;
-    expect(scaled.kind === "text" && scaled.size).toBeCloseTo(size, 6);
-  });
-
-  it("rebuilds after a scale, so the factor is not applied twice", async () => {
-    await newLayoutDoc("Nachwirkung");
-    await addLayoutText();
-    const l = openLayout()!.layers[0];
-
-    /* Fabric leaves the factor it applied on the object. A plain move skips the
-     * rebuild on purpose — the object is already where it belongs — but a scale
-     * must not, or the object keeps scaleX 1.5 and the next gesture reports 1.5
-     * again: two drags after one scale left the model 3.4x bigger than the
-     * picture, with nothing on screen to say so. */
-    const still = app.version;
-    await applyLayoutTransform(l.id, {
-      x: 0.5, y: 0.5, rotation: 0, scale: 0.2, scaleH: 0.09, fx: 1, fy: 1,
-    });
-    expect(app.version).toBe(still);
-
-    await applyLayoutTransform(l.id, {
-      x: 0.5, y: 0.5, rotation: 0, scale: 0.3, scaleH: 0.135, fx: 1.5, fy: 1.5,
-    });
-    expect(app.version).toBeGreaterThan(still);
-  });
-
-  it("spends one undo step per gesture, not per burst of them", async () => {
-    await newLayoutDoc("Zweimal");
-    await addLayoutText();
-    const l = openLayout()!.layers[0];
-    const before = history.past.length;
-
-    /* Two complete drags back to back. The run key exists so a multi-selection
-     * writing back once per member costs one step — not so that two separate
-     * gestures do, which made a single Ctrl+Z jump back past both. A pointer
-     * release ends the run. */
-    for (const x of [0.3, 0.7]) {
-      await applyLayoutTransform(
-        l.id,
-        { x, y: 0.5, rotation: 0, scale: 0.2, scaleH: 0.09, fx: 1, fy: 1 },
-        `drag:${l.id}`,
-      );
-      endGesture();
-    }
-    expect(history.past.length - before).toBe(2);
-  });
-
-  it("takes a gesture back when Escape is pressed mid-drag", async () => {
-    await newLayoutDoc("EscProbe");
-    await addLayoutText();
-    const id = openLayout()!.layers[0].id;
-    setLayoutSelection([id]);
-    const live = () =>
-      (window as { tesseraLayout?: fabric.Canvas }).tesseraLayout as fabric.Canvas;
-    await until(() => !!live()?.getObjects().some((o) => (o as { layerId?: string }).layerId === id));
-
-    const canvas = live();
-    const obj = canvas.getObjects().find((o) => (o as { layerId?: string }).layerId === id)!;
-    const xBefore = findLayer(openLayout()!.layers, id)!.x;
-
-    /* Mid-drag: Fabric has moved the object and reported it. Alt held, so
-     * snapping cannot vary what the numbers come out as. */
-    canvas.setActiveObject(obj);
-    obj.set({ left: (obj.left ?? 0) + 120 });
-    obj.setCoords();
-    canvas.fire("object:moving", {
-      target: obj,
-      e: new MouseEvent("mousemove", { altKey: true }),
-    } as never);
-
-    /* Esc lands on the body, as a real key does — aiming at the window itself
-     * would skip the capture phase and reach App's own Escape first. */
-    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    await new Promise((r) => setTimeout(r, 300));
-
-    // The release that still follows must write nothing.
-    canvas.fire("object:modified", { target: obj } as never);
-    canvas.fire("mouse:up", {} as never);
-    await new Promise((r) => setTimeout(r, 200));
-
-    expect(findLayer(openLayout()!.layers, id)!.x).toBe(xBefore);
-    // And Esc mid-gesture means "drop the drag", never "close the document".
-    expect(app.openLayoutId).not.toBe("");
-  });
-
-  it("does not resize a polygon just for being dragged", async () => {
-    await newLayoutDoc("Vieleck");
-    await addLayoutShape("polygon");
-    const shape = openLayout()!.layers[0];
-    const size = shape.kind === "shape" ? { w: shape.w, h: shape.h } : null;
-
-    /* A regular n-gon's bounding box is smaller than the box it is inscribed
-     * in, so deriving the size from the drawn object shrank it by 13% on every
-     * drag. A plain move reports a scale factor of 1 and must change nothing. */
-    await applyLayoutTransform(shape.id, {
-      x: 0.7,
-      y: 0.3,
-      rotation: 0,
-      scale: 0.26,
-      scaleH: 0.225,
-      fx: 1,
-      fy: 1,
-    });
-
-    const after = findLayer(openLayout()!.layers, shape.id)!;
-    expect(after.kind === "shape" && { w: after.w, h: after.h }).toEqual(size);
-    expect(after.x).toBeCloseTo(0.7);
-
-    // An actual scale still lands.
-    await applyLayoutTransform(shape.id, {
-      x: 0.7, y: 0.3, rotation: 0, scale: 0, scaleH: 0, fx: 2, fy: 0.5,
-    });
-    const scaled = findLayer(openLayout()!.layers, shape.id)!;
-    expect(scaled.kind === "shape" && scaled.w).toBeCloseTo(size!.w * 2);
-    expect(scaled.kind === "shape" && scaled.h).toBeCloseTo(size!.h * 0.5);
-  });
-
-  it("spends one undo step on dragging a whole multi-selection", async () => {
-    const [a, b] = await twoLayers();
-    const before = history.past.length;
-    // What LayoutCanvas does for an ActiveSelection: one write per member,
-    // under one gesture name.
-    for (const id of [a, b]) {
-      await applyLayoutTransform(
-        id,
-        { x: 0.6, y: 0.6, rotation: 0, scale: 0.3, scaleH: 0.3, fx: 1, fy: 1 },
-        `drag:${a},${b}`,
-      );
-    }
-    expect(history.past.length - before).toBe(1);
-  });
-
-  it("offers grouping only from two layers up", async () => {
-    const [a] = await twoLayers();
-    toggleLayoutPick(a, false);
-    await new Promise((r) => setTimeout(r, 150));
-    expect(canGroupLayers()).toBe(false);
-  });
-});
-
-/* Not covered by a test, deliberately: the reset that used to snap the wall
- * back to Unsorted sits between "the folder was asked for" and "the load
- * finished", and against the in-memory mock that gap is shorter than the 25ms
- * this file polls at. Two attempts at pinning it both passed against the bug
- * before they passed against the fix, which is worse than no test — so the
- * proof is a measurement in the running editor instead: a wall picked while a
- * real folder was still hashing stayed open. See openFolder in editor.svelte.ts,
- * where the reset now sits directly under `app.dir`. */
-
-describe("dressing a whole wall", () => {
-  it("counts only the tiles that still lack the layout, and stamps just those", async () => {
-    /* The two-click way to dress a second account's wall. Placed tiles only —
-     * the shelf is a waiting area and the game never sees it — and never a
-     * second stamp on a tile that already wears the design, so the number in
-     * the menu is the work that will actually happen. */
-    const [a, b, c] = app.folderIds;
-    app.selectedTiles = [a, b, c];
-    await newProjectFrom("Konto");
-    const project = projects()[0];
-    openProjectView(project.id);
-    // One of the three waits on the shelf rather than on the wall.
-    await unplace(c);
-
-    await newLayoutDoc("Rahmen");
-    await addLayoutShape("rect");
-    await closeLayoutDoc();
-    const layout = layouts()[0].id;
-
-    expect(remainingFor(layout).sort()).toEqual([a, b].sort());
-
-    // One tile gets it the ordinary way first; the count has to drop.
-    await assignTileLayout(a, layout);
-    expect(remainingFor(layout)).toEqual([b]);
-
-    await assignLayoutToWall(layout);
-
-    expect(remainingFor(layout)).toEqual([]);
-    expect(tileLayers(b).some((l) => l.layoutId === layout)).toBe(true);
-    // The shelved one is untouched: it was never on the wall.
-    expect(tileLayers(c)).toEqual([]);
-  });
-});
-
-describe("the sheets over the page", () => {
-  const sheet = (label: string) => document.querySelector(`[role="dialog"][aria-label="${label}"]`);
-  const press = (key: string) =>
-    window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
-
-  it("does not open the keyboard sheet under the icon grid", async () => {
-    /* Both sheets sit at the same z-index and the grid comes later in the
-     * markup, so it covers anything opened behind it. `?` toggled its sheet
-     * regardless: it went up out of sight, and the next press put it away
-     * again — a key that did nothing, twice. */
-    await newLayoutDoc("Blätter");
-    const icons = () =>
-      [...document.querySelectorAll("button")].find(
-        (b) => b.title === "Class icon",
-      ) as HTMLButtonElement;
-    await until(() => !!icons() && !icons().disabled);
-    icons().click();
-    await until(() => !!sheet("Class icons"));
-
-    press("?");
-    await tick();
-    expect(sheet("Keyboard and mouse")).toBeNull();
-
-    // And it is the grid in the way, not the key: with the grid gone it opens.
-    press("Escape");
-    await until(() => !sheet("Class icons"));
-    press("?");
-    await until(() => !!sheet("Keyboard and mouse"));
-  });
-});
 
 /* --- The four answers to "the game rewrote this tile", and the way back from a
  * write. These reach past the document and delete the last untouched copy of a
@@ -1691,11 +1033,10 @@ describe("keeping and replacing a character", () => {
     app.selectedTiles = [...ids];
     await newProjectFrom("Konto");
     openProjectView(projects()[0].id);
-    queuePick(await magentaSquare("tresor"));
-    await newLayoutDoc("Tresortest");
-    await addLayoutImage();
-    await closeLayoutDoc();
-    for (const id of ids) await assignTileLayout(id, layouts()[0].id);
+    // Dressed straight onto the tiles: a layer on each is what the vault
+    // question is about, and there is no other way to put one there now.
+    app.selectedTiles = [...ids];
+    await addTileText();
     await saveToGame();
     await until(() => ids.every((id) => app.vaulted.includes(id)));
     return ids;
@@ -1715,6 +1056,38 @@ describe("keeping and replacing a character", () => {
     expect(app.manifest.tiles[a].layers.length).toBeGreaterThan(0);
     expect(app.changedTiles).toEqual([]);
     expect(await vaultedIds(app.dir)).not.toContain(a);
+    expect(app.vaulted).not.toContain(a);
+  });
+
+  it("leaves an archived portrait's question alone when the list is answered", async () => {
+    /* Archiving is "not now", not "decide for me" — the banner leaves those out
+     * and lists the rest. The two mass buttons read every changed tile instead,
+     * so a portrait set aside was answered by a button that never mentioned it:
+     * with "All new characters" that means its layers stripped and its vault
+     * original deleted, which is the one step Ctrl+Z cannot take back. */
+    const [a, b] = await written(2);
+    app.hashes = { ...app.hashes, [a]: "fremder", [b]: "fremder" };
+    app.changedTiles = [a, b];
+
+    /* b is put away, so the banner asks about a alone. Archiving is only
+     * offered for a tile no project has claimed, so it leaves the wall first —
+     * which is what a user does with a portrait they are not ready to decide
+     * about. */
+    app.selectedTiles = [b];
+    await releaseTilesToInbox();
+    // Re-picked: releasing a tile clears the selection it was made from.
+    app.selectedTiles = [b];
+    await archiveSelection(true);
+    app.selectedTiles = [];
+    expect(changedHere()).toEqual([a]);
+
+    await replaceAllCharacters();
+
+    // The one on screen was answered; the one put away kept its question and
+    // its original.
+    expect(app.changedTiles).toEqual([b]);
+    expect(app.vaulted).toContain(b);
+    expect(await vaultedIds(app.dir)).toContain(b);
     expect(app.vaulted).not.toContain(a);
   });
 
@@ -1772,28 +1145,6 @@ describe("keeping and replacing a character", () => {
 describe("putting the game's own portraits back", () => {
   const same = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((x, i) => x === b[i]);
 
-  it("writes the vault copies over the folder and leaves the document alone", async () => {
-    const [a] = app.folderIds;
-    const pristine = await readFile(`${app.dir}/${a}.bmp`);
-    app.selectedTiles = [a];
-    await newProjectFrom("Konto");
-    openProjectView(projects()[0].id);
-    queuePick(await magentaSquare("zurueck"));
-    await newLayoutDoc("Zurücktest");
-    await addLayoutImage();
-    await closeLayoutDoc();
-    await assignTileLayout(a, layouts()[0].id);
-    await saveToGame();
-    expect(same(await readFile(`${app.dir}/${a}.bmp`), pristine)).toBe(false);
-
-    await restoreProject();
-
-    expect(same(await readFile(`${app.dir}/${a}.bmp`), pristine)).toBe(true);
-    expect(app.error).toContain("put back");
-    /* "Show the originals in game again", not "throw the work away": every
-     * layer stays, and Write to game puts it all back. */
-    expect(app.manifest.tiles[a].layers.length).toBeGreaterThan(0);
-  });
 
   it("counts what the vault holds, not what the project owns", async () => {
     /* The dialog used to offer every tile of the project and then report "none
@@ -1810,316 +1161,2273 @@ describe("putting the game's own portraits back", () => {
   });
 });
 
-describe("the dot on a Layout row", () => {
-  it("updates the stamps where it stands, without opening the Layout", async () => {
-    /* The dot was a span inside the name button and its tooltip read "open it
-     * and press Update stamps" — an instruction to go elsewhere, printed on the
-     * exact spot the eye was already on. saveLayout has been keyed by id for a
-     * while, so there was nothing to open. */
-    const [a] = app.folderIds;
-    app.selectedTiles = [a];
-    await newProjectFrom("Konto");
-    queuePick(await magentaSquare("punkt"));
-    await newLayoutDoc("Punkttest");
-    await addLayoutImage();
-    await closeLayoutDoc();
-    const id = layouts()[0].id;
-    await assignTileLayout(a, id);
-    const stamp = () =>
-      app.manifest.tiles[a].layers.find((l) => l.layoutId === id && !l.live) as ImageLayer;
-    const before = stamp().asset;
+describe("the placing tool", () => {
+  /* The one mode the wall has, and the only way to move a layer that is baked
+   * to pixels before its cell clips it — a masked picture, a class icon. The
+   * object on the canvas for those is a flat image at the cell's origin, so
+   * `object:modified` refuses it outright and a transparent stand-in is dragged
+   * instead.
+   *
+   * It went on working the whole time it had stopped doing anything: the drag
+   * wrote a Frame, the tile's offset from a design that no longer exists, into
+   * a record the renderer stopped reading when the stamps came apart. The
+   * stand-in moved, the picture under it did not, and the next rebuild put the
+   * frame back where the layer still was. Nothing failed and nothing said so,
+   * which is why this is a gesture and not a unit test. */
+  async function placing() {
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    /* A shape that something is cutting, which is one of the two kinds the
+     * frame appears on. There is no mode to switch on any more: picking the
+     * layer is the whole of it. */
+    await addTileShape("rect");
+    const layer = tileLayers(tile).at(-1)!;
+    await addTileShape("ellipse");
+    const cutter = tileLayers(tile).at(-1)!;
+    await setTileLayerField([tile], layer.id, "maskId", cutter.id);
+    selectLayer(layer.id, tile);
 
-    // Change the Layout, so the picture on the tile is now older than it.
-    openLayoutDoc(id);
-    await addLayoutText();
-    await closeLayoutDoc();
-    await until(() => canSaveLayout(id));
-
-    const dot = () =>
-      [...document.querySelectorAll("aside button")].find((b) =>
-        (b as HTMLElement).title.startsWith("Stamps are older"),
-      ) as HTMLButtonElement | undefined;
-    await until(() => !!dot());
-    dot()!.click();
-
-    // The mark goes when the work is done, and a different picture is on the
-    // tile — the dot disappearing on its own would prove only that it was hidden.
-    await until(() => !canSaveLayout(id));
-    expect(stamp().asset).not.toBe(before);
-    expect(app.openLayoutId).toBe("");
-    expect(dot()).toBeUndefined();
-  });
-});
-
-describe("the collapsed tile row", () => {
-  const row = (id: string) =>
-    document.querySelector(`[data-tile="${id}"] .grouphead .name`) as HTMLButtonElement | null;
-
-  /** One tile on a wall, wearing a Layout with a caption and a class icon. */
-  async function dressed() {
-    const [a] = app.folderIds;
-    app.selectedTiles = [a];
-    await newProjectFrom("Konto");
-    openProjectView(projects()[0].id);
-    await newLayoutDoc("Zeilentest");
-    await addLayoutText();
-    await addLayoutShape("icon", "Ranger");
-    // Both have to travel to the tiles, or the tile owns neither its wording
-    // nor its class and the row has nothing of its own to show.
-    for (const l of openLayout()!.layers) await setLayerField(l.id, "perTile", true);
-    await closeLayoutDoc();
-    await assignTileLayout(a, layouts()[0].id);
-    /* The list is behind its heading, and the heading is a real button — a test
-     * that reached past it would keep passing after the rows stopped being
-     * reachable. */
-    const heading = [...document.querySelectorAll("aside button")].find((b) =>
-      b.textContent!.includes("On this wall"),
-    ) as HTMLButtonElement;
-    heading.click();
-    await until(() => !!row(a));
-    return a;
+    const canvas = (window as { tesseraWall?: fabric.Canvas }).tesseraWall!;
+    const current = () =>
+      canvas.getObjects().find((o) => (o as Tagged & { framing?: boolean }).framing);
+    await until(() => !!current());
+    /* Waited out rather than taken as soon as one appears. Adding the layer
+     * bumps the document, the wall redraws the tile, and the effect that owns
+     * the stand-in puts up a fresh one — so the first object to show up is
+     * often replaced a frame later. A gesture against that stale instance is
+     * dropped on the floor by `opt.target === stand`, and the test then fails
+     * having proved nothing about the code it was written for. Held still for
+     * a stretch first, then taken. */
+    let held = current();
+    let steady = 0;
+    await until(() => {
+      const now = current();
+      steady = now && now === held ? steady + 1 : 0;
+      held = now;
+      return steady >= 8;
+    });
+    const stand = held!;
+    return { canvas, stand, tile, layerId: layer.id };
   }
 
-  it("leads with what the tile says and keeps the id on the second line", async () => {
-    /* "40000000005773694" identifies a file and nobody else. At forty-four
-     * portraits the list was a column of digits to be matched against the wall
-     * by counting. */
-    const a = await dressed();
-
-    // Unnamed: the id is still the headline, and it is not printed twice.
-    expect(row(a)!.textContent).toContain(a);
-    expect(row(a)!.querySelector(".usage")!.textContent).not.toContain(a);
-
-    await setTileText(a, tileCaptions(a)[0].id, "Nachtklinge");
-
-    await until(() => !!row(a)?.textContent?.includes("Nachtklinge"));
-    // The number stays: it is what the folder is sorted by, and the only way to
-    // line a row up with a file.
-    expect(row(a)!.querySelector(".usage")!.textContent).toContain(a);
+  it("puts the stand-in on the layer's own tile, not on whichever tile matched first", async () => {
+    const { stand, tile, layerId } = await placing();
+    /* Both, and the tile especially: applyTransform resolves the stack from the
+     * object's own tile, and a stand-in carrying only a layer id sent the drag
+     * through a scan of the wall — which wrote it onto the first tile holding
+     * that id, leaving the one under the pointer alone. */
+    expect((stand as Tagged).layerId).toBe(layerId);
+    expect((stand as Tagged).tileId).toBe(tile);
   });
 
-  it("takes its headline from this tile, never from the Layout's default", async () => {
-    /* The default belongs to every tile wearing that Layout, so a headline read
-     * from it is forty-four rows all saying "text01" — the same column of
-     * identical strings the id was. */
-    const a = await dressed();
-    const caption = tileCaptions(a)[0];
-    expect(caption.text.length).toBeGreaterThan(0);
+  it("shows the frame for a layer picked in the list, with no tile picked", async () => {
+    /* Reported as: I have to pick the tile *and* then the layer before the
+     * frame and its ghost appear.
+     *
+     * They are two different things. Clicking a layer's row sets the pair
+     * (id, tile) — which tile that layer was picked on — and deliberately
+     * leaves the wall's tile selection alone. The frame asked the selection,
+     * so it stayed away until the tile had been picked a second time. */
+    const { canvas, tile, layerId } = await placing();
+    // Exactly what the list leaves behind: a pair, and nothing picked on the
+    // wall.
+    app.selectedTiles = [];
+    selectLayer(layerId, tile);
+    await tick();
 
-    expect(row(a)!.textContent).not.toContain(caption.text);
-    expect(row(a)!.textContent).toContain(a);
-  });
-
-  it("opens the class grid for that tile, from the row", async () => {
-    // The class is half of "who is this" and used to be one expand away, so a
-    // wall being dressed was read by opening forty-four rows one at a time.
-    const a = await dressed();
-    const icon = document.querySelector(`[data-tile="${a}"] .grouphead .rowicon`) as HTMLButtonElement;
-    expect(icon).toBeTruthy();
-
-    icon.click();
-    await until(() => !!document.querySelector('[role="dialog"][aria-label="Class icons"]'));
-    // For this tile, not for the layer: picking here must not restyle the
-    // Layout out from under every other portrait wearing it.
-    expect(document.querySelector('[aria-label="Class icons"] h2')!.textContent).toContain(
-      "Class for this tile",
+    await until(() =>
+      canvas.getObjects().some((o) => (o as Tagged & { framing?: boolean }).framing),
     );
+    const stand = canvas
+      .getObjects()
+      .find((o) => (o as Tagged & { framing?: boolean }).framing) as Tagged;
+    expect(stand.layerId).toBe(layerId);
+    expect(stand.tileId).toBe(tile);
+  });
 
-    const witch = [...document.querySelectorAll(".icongrid button")].find(
-      (b) => (b as HTMLElement).title === "Witch",
-    ) as HTMLButtonElement;
-    witch.click();
+  it("moves the layer it stands for", async () => {
+    const { canvas, stand, tile, layerId } = await placing();
+    const before = findLayer(app.manifest.tiles[tile]!.layers, layerId)!;
+    const from = { x: before.x, y: before.y };
 
-    await until(() => tileAsset(a, tileIcons(a)[0].id) === "Witch");
-    // And the Layout's own icon is untouched.
-    expect(tileIcons(a)[0].icon).toBe("Ranger");
+    await dragObject(canvas, stand, 120, 90);
+    await until(() => {
+      const l = findLayer(app.manifest.tiles[tile]!.layers, layerId)!;
+      return l.x !== from.x || l.y !== from.y;
+    });
+
+    const after = findLayer(app.manifest.tiles[tile]!.layers, layerId)!;
+    /* Where the frame ended up, not where the hand pushed it: the wall pulls a
+     * dragged edge onto its cell and onto the layer's neighbours, so the layer
+     * is meant to land a few pixels off the raw gesture — 0.175 of the tile for
+     * a drag of 0.192. What must hold is that the two agree, the picture under
+     * the frame that was dragged, which is exactly what stopped being true when
+     * the drag wrote a Frame record nothing read. */
+    const cell = cellAt(visibleIds().indexOf(tile));
+    const centre = stand.getCenterPoint();
+    expect(after.x).toBeCloseTo((centre.x - cell.x) / TILE_W, 3);
+    expect(after.y).toBeCloseTo((centre.y - cell.y) / TILE_H, 3);
+    // And it travelled the way it was pushed, snapping or no snapping.
+    expect(after.x - from.x).toBeGreaterThan(0.1);
+    expect(after.y - from.y).toBeGreaterThan(0.08);
+  });
+
+  it("scales a shape by exactly what the frame was scaled by", async () => {
+    /* Reported as the frame growing a little and the shape growing a lot. The
+     * stand-in is built at the layer's own size, so the factor Fabric reports
+     * is the factor the layer takes — anything else means the two are being
+     * measured against different boxes. */
+    const { canvas, stand, tile, layerId } = await placing();
+    const before = { ...(findLayer(app.manifest.tiles[tile]!.layers, layerId)! as ShapeLayer) };
+
+    canvas.fire("object:modified", {
+      target: Object.assign(stand, { scaleX: 2, scaleY: 2 }) as fabric.Object,
+    });
+    await tick();
+    await new Promise((r) => setTimeout(r, 200));
+
+    const once = findLayer(app.manifest.tiles[tile]!.layers, layerId)! as ShapeLayer;
+    expect(once.w).toBeCloseTo(before.w * 2, 4);
+    expect(once.h).toBeCloseTo(before.h * 2, 4);
+
+    /* The frame the write left behind stands for a document that has moved on,
+     * so it is rebuilt from the layer rather than kept. It used to be built
+     * once and never re-derived, which is what made "the frame grew a little
+     * and the shape grew a lot" possible: the scale of the finished gesture sat
+     * on it and was read again by the next one. Checked on the frame that is
+     * actually there now, not on the detached one this test still holds. */
+    await until(() => {
+      const now = canvas
+        .getObjects()
+        .find((o) => (o as Tagged & { framing?: boolean }).framing) as fabric.Object | undefined;
+      return !!now && now !== stand && (now.scaleX ?? 1) === 1;
+    });
+  });
+
+  it("leaves the cell clickable while the frame is the handle", async () => {
+    /* A baked layer is a tile-sized picture at the cell's origin, and it
+     * answered the mouse across all of it: pressing anywhere in that cell
+     * grabbed the bake rather than picking the tile, so tile selection and the
+     * rubber band were dead in every cell carrying a mask or a class icon.
+     * Its snap box is the cell too, so both axes had every stop at nought and
+     * a nudge shorter than the snap distance came back to no movement at all.
+     * The frame is the handle for these; the bake is not a second one. */
+    const { canvas, layerId } = await placing();
+    const bake = canvas
+      .getObjects()
+      .find((o) => (o as Tagged).layerId === layerId && "flattened" in o) as fabric.Object;
+    expect(bake).toBeTruthy();
+    await until(() => !bake.evented);
+    expect(bake.selectable).toBe(false);
+
+    // The frame is still there to grab.
+    expect(
+      canvas.getObjects().some((o) => (o as Tagged & { framing?: boolean }).framing),
+    ).toBe(true);
+  });
+
+  it("takes the frame down when the layer is locked", async () => {
+    /* The padlock's whole job is to put a layer out of reach, and the frame is
+     * the one way to reach a baked one. It is built here and carries none of
+     * the object's own flags, so locking a masked layer left its frame standing
+     * and fully draggable — the lock looked like it had worked and had not. */
+    const { canvas, tile, layerId } = await placing();
+    const framing = () =>
+      canvas.getObjects().some((o) => (o as Tagged & { framing?: boolean }).framing);
+    expect(framing()).toBe(true);
+
+    await toggleLayerLocked(layerId, tile);
+    await until(() => !framing());
+
+    await toggleLayerLocked(layerId, tile);
+    await until(() => framing());
+  });
+
+  it("does not write a stale frame back over a panel edit", async () => {
+    /* The frame is marked `keep`, so it survives every rebuild — and it was
+     * built once and never re-derived. Type a Size into the panel and the layer
+     * grows on the wall while the frame stays the size it was; nudge the frame
+     * one pixel afterwards and the layer snaps back, because what a drop writes
+     * is the frame's own box in absolute numbers. The panel edit was gone with
+     * no undo step naming it. */
+    const { canvas, stand, tile, layerId } = await placing();
+    /* A window with a size. Mounted in a bare document the stage is one pixel
+     * wide, the wall is drawn at almost no zoom, and the frame's corner handles
+     * then cover its own middle — a press meant as a drag lands on a control
+     * and scales instead of moving. */
+    canvas.setDimensions({ width: 900, height: 700 });
+    canvas.setViewportTransform([0.5, 0, 0, 0.5, 0, 0]);
+    canvas.renderAll();
+    await tick();
+    const layer = () => findLayer(app.manifest.tiles[tile]!.layers, layerId)! as ShapeLayer;
+    const grown = layer().w * 2;
+    await setTileLayerField([tile], layerId, "w", grown);
+    await until(() => layer().w === grown);
+
+    // The frame that stands there now, which must be the new size's.
+    const framing = () =>
+      canvas.getObjects().find((o) => (o as Tagged & { framing?: boolean }).framing) as
+        | fabric.Object
+        | undefined;
+    await until(() => !!framing() && framing() !== stand);
+    const fresh = framing()!;
+    const sxBefore = fresh.scaleX;
+    await dragObject(canvas, fresh, 30, 0);
+    await until(() => layer().x !== 0.5);
+
+    expect(layer().w).toBeCloseTo(grown, 4);
+  });
+
+  it("takes the size from the handle a hand actually dragged", async () => {
+    /* The same claim as the test above, made through Fabric's own transform
+     * pipeline instead of a value assigned onto the stand-in.
+     *
+     * Worth the extra seconds because the shortcut skips the half of the story
+     * the report was about: `_setupCurrentTransform`, the live `object:scaling`
+     * work, and the rebuild that lands while the pointer is still down. A
+     * gesture is also the only way to find out whether the handle exists at
+     * all — `setControlsVisibility` decides that per kind, and a corner that
+     * cannot be grabbed is a feature nobody has.
+     *
+     * Read off the stand-in after the fact on purpose: that object is the frame
+     * the hand let go of, and the rebuild that follows leaves it detached with
+     * the gesture's scale still on it. What must hold is that the layer ended
+     * up the size that frame was — the thing the eye compares. */
+    const { canvas, stand, tile, layerId } = await placing();
+    const layer = () => findLayer(app.manifest.tiles[tile]!.layers, layerId)! as ShapeLayer;
+    const before = { ...layer() };
+
+    /* Measured off the frame as it is drawn, not in scene units: a handle is
+     * grabbed where it appears, and this canvas is fitted to a test window that
+     * has almost no width — a zoom near zero, where a flat 140 pixels is three
+     * hundred tiles. dragObject takes scene units and converts; scaleObject
+     * takes the canvas's own. Half again as wide is the gesture. */
+    const zoom = canvas.getZoom();
+    await scaleObject(
+      canvas,
+      stand,
+      "br",
+      (stand.getScaledWidth() * zoom) / 2,
+      (stand.getScaledHeight() * zoom) / 2,
+    );
+    await until(() => layer().w !== before.w);
+
+    // Copied, not held: findLayer hands back the live record, and a reference
+    // compared against itself after the next gesture says nothing ever moved.
+    const after = { ...layer() };
+    expect(after.w).toBeCloseTo(((stand.width ?? 0) * (stand.scaleX ?? 1)) / TILE_W, 3);
+    expect(after.h).toBeCloseTo(((stand.height ?? 0) * (stand.scaleY ?? 1)) / TILE_H, 3);
+    // Pulled outwards, so it grew: a sign error would satisfy the two above.
+    expect(after.w).toBeGreaterThan(before.w * 1.1);
+
+    /* And moving it afterwards leaves the size alone. The stand-in the rebuild
+     * put up is a fresh rectangle at scale 1, and the drag that follows must
+     * write that size back unchanged — "the shape grew every time it was
+     * touched" is what it looks like when a factor outlives its gesture. */
+    const frame = canvas
+      .getObjects()
+      .find((o) => (o as Tagged & { framing?: boolean }).framing) as fabric.Object;
+    await dragObject(canvas, frame, 120, 90);
+    await until(() => layer().x !== after.x);
+    expect(layer().w).toBeCloseTo(after.w, 4);
+    expect(layer().h).toBeCloseTo(after.h, 4);
+  });
+
+  it("will not let a gesture scale a layer down to nothing", async () => {
+    /* Seen happening: a shape left at Width 0, Height 0, gone from the wall
+     * with its row still in the list.
+     *
+     * A shape's size is multiplied by whatever Fabric scaled, so a run of tiny
+     * factors walks it towards nothing and no later gesture brings it back —
+     * the panel reads 0 because it rounds, and the layer is a point on the
+     * wall. Exactly nought is already caught (`patch.fx || 1`), which is why
+     * this uses a factor that is small rather than zero: that is the one that
+     * got through. The stand-in makes it easy to reach, being transparent —
+     * there is nothing to watch disappearing as the handle crosses the far
+     * side. */
+    const { canvas, stand, tile, layerId } = await placing();
+    const before = findLayer(app.manifest.tiles[tile]!.layers, layerId)! as ShapeLayer;
+    expect(before.w).toBeGreaterThan(0);
+
+    // What a corner handle dragged almost onto the opposite corner reports.
+    canvas.fire("object:modified", {
+      target: Object.assign(stand, { scaleX: 0.001, scaleY: 0.001 }) as fabric.Object,
+    });
+    await tick();
+    await new Promise((r) => setTimeout(r, 150));
+
+    const after = findLayer(app.manifest.tiles[tile]!.layers, layerId)! as ShapeLayer;
+    expect(after.w).toBeGreaterThan(0);
+    expect(after.h).toBeGreaterThan(0);
+    // And still grabbable: a hundredth of a tile is about six pixels across a
+    // portrait, small but not a point.
+    expect(after.w).toBeGreaterThanOrEqual(0.01);
+  });
+
+  it("leaves no per-tile frame record behind", async () => {
+    const { canvas, stand, tile } = await placing();
+    await dragObject(canvas, stand, 60, 40);
+    /* The whole point of the rewiring: the placement is on the layer, and
+     * nothing grows a second copy of it beside the tile. */
+    expect((app.manifest.tiles[tile] as unknown as { frame?: unknown }).frame).toBeUndefined();
   });
 });
 
-describe("typing a wall's names", () => {
-  /** Three tiles on a wall, all wearing a Layout whose caption is per-tile. */
-  async function three() {
+describe("carrying one layer's properties to another", () => {
+  /* Photoshop's Copy/Paste Layer Style, which is where the idea came from.
+   * Widened on purpose: there the placement stays behind, and here it is most
+   * of the point — two captions on two portraits in exactly the same spot at
+   * exactly the same size is what cannot be done by eye across forty-four
+   * tiles. */
+  const twoShapes = async () => {
+    await enterInbox();
+    const [a, b] = app.folderIds;
+    for (const t of [a, b]) {
+      app.selectedTiles = [t];
+      await addTileShape("rect");
+    }
+    return [
+      { tile: a, layer: tileLayers(a).at(-1)! as ShapeLayer },
+      { tile: b, layer: tileLayers(b).at(-1)! as ShapeLayer },
+    ] as const;
+  };
+
+  it("makes the target a twin, without taking its identity", async () => {
+    const [from, to] = await twoShapes();
+    Object.assign(from.layer, { x: 0.2, y: 0.3, w: 0.4, opacity: 0.5, fill: "#ff0000" });
+    const wasCalled = to.layer.id;
+
+    copyLayerProps(from.layer.id, from.tile);
+    await pasteLayerProps(to.layer.id, to.tile);
+
+    const now = findLayer(tileLayers(to.tile), wasCalled) as ShapeLayer;
+    expect(now.x).toBeCloseTo(0.2, 5);
+    expect(now.w).toBeCloseTo(0.4, 5);
+    expect(now.opacity).toBeCloseTo(0.5, 5);
+    expect(now.fill).toBe("#ff0000");
+    // Its own, both of them: an id it shares with the source is the one shape
+    // the wall cannot hold, and the layer stayed on its own tile.
+    expect(now.id).toBe(wasCalled);
+    expect(findLayer(tileLayers(from.tile), from.layer.id)).toBeTruthy();
+  });
+
+  it("clears a field the source does not have", async () => {
+    /* The half-copy: the target keeps its old shadow, takes the source's
+     * colour, and comes out looking like neither. Nothing on screen would say
+     * why, which is what makes it worth a test of its own. */
+    const [from, to] = await twoShapes();
+    to.layer.shadow = 0.05;
+    to.layer.shadowColor = "#000000";
+
+    copyLayerProps(from.layer.id, from.tile);
+    await pasteLayerProps(to.layer.id, to.tile);
+
+    const now = findLayer(tileLayers(to.tile), to.layer.id)!;
+    expect(now.shadow).toBeUndefined();
+    expect(now.shadowColor).toBeUndefined();
+  });
+
+  it("carries only the placement between two kinds, and leaves the wording", async () => {
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const shape = tileLayers(tile).at(-1)! as ShapeLayer;
+    shape.x = 0.25;
+    shape.opacity = 0.4;
+    await addTileText();
+    const caption = tileLayers(tile).at(-1)! as TextLayer;
+    caption.text = "{{id}}";
+    const size = caption.size;
+
+    copyLayerProps(shape.id, tile);
+    await pasteLayerProps(caption.id, tile);
+
+    const now = findLayer(tileLayers(tile), caption.id) as TextLayer;
+    expect(now.x).toBeCloseTo(0.25, 5);
+    expect(now.opacity).toBeCloseTo(0.4, 5);
+    // A shape has no wording and no font size to hand over, and a caption that
+    // took the shape's kind-specific fields would be undrawable.
+    expect(now.text).toBe("{{id}}");
+    expect(now.size).toBe(size);
+    expect((now as unknown as Record<string, unknown>).w).toBeUndefined();
+  });
+
+  it("leaves what you are doing alone: hidden and locked stay put", async () => {
+    const [from, to] = await twoShapes();
+    from.layer.hidden = true;
+    from.layer.locked = true;
+
+    copyLayerProps(from.layer.id, from.tile);
+    await pasteLayerProps(to.layer.id, to.tile);
+
+    const now = findLayer(tileLayers(to.tile), to.layer.id)!;
+    expect(now.hidden).toBeFalsy();
+    expect(now.locked).toBeFalsy();
+  });
+
+  it("puts the copied layer on every picked tile under one id", async () => {
+    /* The whole point of the action: one id across the selection is what makes
+     * a later drag move all of them, so this checks the id and then checks
+     * that the wall agrees by asking bulkTargets, which is what the drag
+     * actually consults. */
+    await enterInbox();
+    const [a, b, c] = app.folderIds;
+    app.selectedTiles = [a];
+    await addTileShape("rect");
+    const src = tileLayers(a).at(-1)! as ShapeLayer;
+    src.fill = "#00ff88";
+
+    copyLayerProps(src.id, a);
+    app.selectedTiles = [a, b, c];
+    await pasteLayerOntoTiles();
+
+    for (const t of [b, c]) {
+      const got = findLayer(tileLayers(t), src.id) as ShapeLayer;
+      expect(got).toBeTruthy();
+      expect(got.fill).toBe("#00ff88");
+    }
+    expect(bulkTargets(src.id).sort()).toEqual([a, b, c].sort());
+  });
+
+  it("leaves a tile its own wording and takes everything else", async () => {
+    /* The decision this action turns on. Captions typed one at a time are
+     * worth keeping; it is their placement and look that should stop being one
+     * decision per tile. A tile with no such layer has nothing of its own to
+     * keep and gets the whole thing, wording included. */
+    await enterInbox();
+    const [a, b, c] = app.folderIds;
+    for (const t of [a, b]) {
+      app.selectedTiles = [t];
+      await addTileText();
+    }
+    const src = tileLayers(a).at(-1)! as TextLayer;
+    const mine = tileLayers(b).at(-1)! as TextLayer;
+    src.text = "Alpha";
+    src.x = 0.2;
+    src.size = 0.09;
+    mine.id = src.id;
+    mine.text = "Beta";
+    mine.x = 0.8;
+
+    copyLayerProps(src.id, a);
+    app.selectedTiles = [b, c];
+    await pasteLayerOntoTiles();
+
+    const onB = findLayer(tileLayers(b), src.id) as TextLayer;
+    expect(onB.text).toBe("Beta");
+    expect(onB.x).toBeCloseTo(0.2, 5);
+    expect(onB.size).toBeCloseTo(0.09, 5);
+    // Nothing of its own to keep, so it takes the wording too.
+    expect((findLayer(tileLayers(c), src.id) as TextLayer).text).toBe("Alpha");
+  });
+
+  it("takes one layer off the picked tiles and leaves the rest standing", async () => {
+    await enterInbox();
+    const [a, b, c] = app.folderIds;
+    app.selectedTiles = [a, b, c];
+    await addTileShape("rect");
+    await addTileText();
+    const shape = tileLayers(a).at(-2)!;
+    const caption = tileLayers(a).at(-1)!;
+
+    // Only two of the three, so the third proves the reach is the selection.
+    app.selectedTiles = [a, b];
+    const steps = historySteps().length;
+    await removeLayerFromSelection(caption.id);
+
+    for (const t of [a, b]) {
+      expect(findLayer(tileLayers(t), caption.id)).toBeUndefined();
+      expect(findLayer(tileLayers(t), shape.id)).toBeTruthy();
+    }
+    expect(findLayer(tileLayers(c), caption.id)).toBeTruthy();
+    expect(historySteps().length).toBe(steps + 1);
+  });
+
+  it("lists what is on the selection, with how far a removal would reach", async () => {
+    await enterInbox();
+    const [a, b, c] = app.folderIds;
+    app.selectedTiles = [a, b, c];
+    await addTileShape("rect");
+    app.selectedTiles = [a];
+    await addTileText();
+
+    app.selectedTiles = [a, b, c];
+    const listed = layersOnSelection();
+    expect(listed).toHaveLength(2);
+    // Widest reach first, so the blunt instrument is not the one you have to
+    // hunt for.
+    expect(listed[0].tiles).toBe(3);
+    expect(listed[1].tiles).toBe(1);
+  });
+
+  it("switches a layer off across the selection, whatever each tile said before", async () => {
+    /* Set outright, not flipped per tile. With the flag disagreeing between
+     * tiles a toggle hides half and shows half, which reads as a bug whichever
+     * way it was meant — so the menu asks for a direction and gets one. */
+    await enterInbox();
+    const [a, b, c] = app.folderIds;
+    app.selectedTiles = [a, b, c];
+    await addTileShape("rect");
+    const id = tileLayers(a).at(-1)!.id;
+    findLayer(tileLayers(b), id)!.hidden = true;
+
+    app.selectedTiles = [a, b];
+    await setLayerHiddenOnSelection(id, true);
+    expect(findLayer(tileLayers(a), id)!.hidden).toBe(true);
+    expect(findLayer(tileLayers(b), id)!.hidden).toBe(true);
+    // Not picked, not touched.
+    expect(findLayer(tileLayers(c), id)!.hidden).toBeFalsy();
+
+    await setLayerHiddenOnSelection(id, false);
+    expect(findLayer(tileLayers(a), id)!.hidden).toBeFalsy();
+    expect(findLayer(tileLayers(b), id)!.hidden).toBeFalsy();
+  });
+
+  it("locks and unlocks across the selection in one step each", async () => {
+    await enterInbox();
+    const [a, b] = app.folderIds;
+    app.selectedTiles = [a, b];
+    await addTileShape("rect");
+    const id = tileLayers(a).at(-1)!.id;
+
+    const steps = historySteps().length;
+    await setLayerLockedOnSelection(id, true);
+    for (const t of [a, b]) expect(findLayer(tileLayers(t), id)!.locked).toBe(true);
+    expect(historySteps().length).toBe(steps + 1);
+
+    await setLayerLockedOnSelection(id, false);
+    for (const t of [a, b]) expect(findLayer(tileLayers(t), id)!.locked).toBeFalsy();
+  });
+
+  it("renames the layer on the row's own tile", async () => {
+    /* The third caller of the (id, tile) pair, and it resolved through
+     * anyLayer, which answers for the selected tile alone — so a rename typed
+     * on an unselected row wrote nothing at all. */
+    await enterInbox();
+    const [a, b] = app.folderIds;
+    app.selectedTiles = [a, b];
+    await addTileShape("rect");
+    const id = tileLayers(a).at(-1)!.id;
+    selectLayer("", "");
+
+    await renameLayer(id, "Frame", b);
+    expect(findLayer(tileLayers(b), id)!.name).toBe("Frame");
+    expect(findLayer(tileLayers(a), id)!.name).not.toBe("Frame");
+  });
+
+  it("carries a whole group to other tiles, members and all", async () => {
+    /* A group copied onto a tile has to arrive with what is in it, and each
+     * member with its own look — otherwise "copy this arrangement to those
+     * portraits" means rebuilding it by hand on each one.
+     *
+     * It falls out of the two rules already in place rather than needing a
+     * third: the clipboard holds a deep copy, so a group brings its children;
+     * and a tile that has no layer of that id gets the whole thing. The ids
+     * come with it, which is what makes the copies one layer across the wall
+     * from then on — drag one, they all move. */
+    await enterInbox();
+    const [a, b] = app.folderIds;
+    app.selectedTiles = [a];
+    await addTileShape("rect");
+    const one = tileLayers(a).at(-1)!;
+    await setTileLayerField([a], one.id, "fill", "#00ff88");
+    await addTileShape("ellipse");
+    const two = tileLayers(a).at(-1)!;
+    await setTileLayerField([a], two.id, "x", 0.8);
+    selectLayer(one.id, a);
+    alsoSelect(two.id, a);
+    await groupPicked();
+    const group = tileLayers(a).find((l) => l.kind === "group")!;
+
+    copyLayerProps(group.id, a);
+    app.selectedTiles = [b];
+    await pasteLayerOntoTiles();
+
+    const landed = tileLayers(b).find((l) => l.id === group.id);
+    expect(landed?.kind).toBe("group");
+    // Both members, under their own ids, with what they looked like.
+    const onB = (id: string) => findLayer(tileLayers(b), id) as ShapeLayer | undefined;
+    expect(onB(one.id)?.fill).toBe("#00ff88");
+    expect(onB(two.id)?.x).toBeCloseTo(0.8, 6);
+    // One layer across two tiles now: a drag on the group reaches both.
+    app.selectedTiles = [a, b];
+    expect(bulkTargets(group.id).sort()).toEqual([a, b].sort());
+  });
+
+  it("leaves each tile's own wording inside a pasted group", async () => {
+    /* The contract this paste is written to: a tile already carrying the layer
+     * keeps what its copy *says* and takes everything else. It held for a
+     * loose caption and not for one inside a group — the group's members were
+     * replaced wholesale, so a nameplate group carried across forty-four
+     * portraits gave every one of them the first tile's name. Worse than it
+     * sounds: a caption inside a group has no per-tile text field in the row,
+     * so there is nothing on screen to notice it with, and one undo is the
+     * only way back. */
+    await enterInbox();
+    const [a, b] = app.folderIds;
+    app.selectedTiles = [a];
+    await addTileShape("rect");
+    const plate = tileLayers(a).at(-1)!;
+    await addTileText();
+    const caption = tileLayers(a).at(-1)!;
+    selectLayer(plate.id, a);
+    alsoSelect(caption.id, a);
+    await groupPicked();
+    const group = tileLayers(a).find((l) => l.kind === "group")!;
+
+    // The arrangement is carried to the second portrait, whole.
+    copyLayerProps(group.id, a);
+    app.selectedTiles = [b];
+    await pasteLayerOntoTiles();
+    expect(findLayer(tileLayers(b), group.id)).toBeTruthy();
+
+    // Then each portrait is named by hand — the work being protected here.
+    await setTileLayerField([a], caption.id, "text", "Aria");
+    await setTileLayerField([b], caption.id, "text", "Bern");
+    // And the look is changed on the first one, and carried again.
+    await setTileLayerField([a], plate.id, "fill", "#00ff88");
+
+    copyLayerProps(group.id, a);
+    app.selectedTiles = [b];
+    await pasteLayerOntoTiles();
+
+    const on = (tile: string, id: string) => findLayer(tileLayers(tile), id)!;
+    // The look travelled; the name stayed.
+    expect((on(b, plate.id) as ShapeLayer).fill).toBe("#00ff88");
+    expect((on(b, caption.id) as TextLayer).text).toBe("Bern");
+    expect((on(a, caption.id) as TextLayer).text).toBe("Aria");
+  });
+
+  it("refuses to put two layers of one name on the same tile", async () => {
+    /* Found by hand: a row of tiles was given an ellipse, then a group holding
+     * a copy of that same ellipse was pasted onto one of them. The tile ended
+     * up with the id twice — once inside the group, once beside it — and every
+     * lookup in this app finds a layer by id and takes the first hit. So the
+     * eye and the lock clicked on the row inside the group went to the layer
+     * outside it.
+     *
+     * The invariant is "an id is unique within a tile", and the paste is the
+     * one thing that could break it. It skips such a tile and says so. */
+    await enterInbox();
+    const [a, b] = app.folderIds;
+    app.selectedTiles = [a];
+    await addTileShape("ellipse");
+    const shared = tileLayers(a).at(-1)!;
+    await addTileShape("rect");
+    const other = tileLayers(a).at(-1)!;
+    selectLayer(shared.id, a);
+    alsoSelect(other.id, a);
+    await groupPicked();
+    const group = tileLayers(a).find((l) => l.kind === "group")!;
+
+    // The second tile already carries the same ellipse, loose.
+    app.selectedTiles = [b];
+    copyLayerProps(shared.id, a);
+    await pasteLayerOntoTiles();
+    expect(findLayer(tileLayers(b), shared.id)).toBeTruthy();
+
+    // Now the group, whose member would be that id a second time.
+    copyLayerProps(group.id, a);
+    app.selectedTiles = [b];
+    await pasteLayerOntoTiles();
+
+    expect(tileLayers(b).some((l) => l.kind === "group")).toBe(false);
+    expect([...walkLayers(tileLayers(b))].filter((l) => l.id === shared.id)).toHaveLength(1);
+    expect(app.error).toContain("skipped");
+  });
+
+  it("still opens the row of a tile that already carries an id twice", async () => {
+    /* Documents written before the guard have such tiles: a loose layer and a
+     * group holding a copy of it, one id twice. The guard stops new ones being
+     * made and does nothing for those, and the report is that the tile's row
+     * will not open at all — so the state has to be survivable, not merely
+     * unreachable. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("ellipse");
+    const loose = tileLayers(tile).at(-1)!;
+    // What the old paste left behind: the same id again, inside a group.
+    const twin = { ...clone(loose), id: loose.id };
+    app.manifest.tiles[tile].layers.push(newGroupLayer([twin]));
+    app.version++;
+    await tick();
+
+    reveal("tiles");
+    await tick();
+    const row = document.querySelector(`[data-tile="${tile}"]`) as HTMLElement;
+    (row.querySelector("button.twisty") as HTMLButtonElement).click();
+    await tick();
+    await new Promise((r) => setTimeout(r, 200));
+
+    const names = [...row.querySelectorAll("button.name")].map((b) => b.textContent!.trim());
+    expect(names.length).toBeGreaterThan(0);
+  });
+
+  it("says nothing when the tiles already carry that very group", async () => {
+    /* The other half of the guard above, and the one that must stay quiet. A
+     * tile holding the same group is not a collision — it is the same layer,
+     * and writing over it is the whole point of pasting onto tiles that have
+     * it. The ids inside it are its own, so nothing is being duplicated.
+     *
+     * Pinned because the two cases look alike from outside and only one of
+     * them should warn: a warning on this one would train the eye to ignore
+     * the other. */
+    await enterInbox();
+    const [a, b, c] = app.folderIds;
+    app.selectedTiles = [a];
+    await addTileShape("rect");
+    const one = tileLayers(a).at(-1)!;
+    await addTileShape("ellipse");
+    const two = tileLayers(a).at(-1)!;
+    selectLayer(one.id, a);
+    alsoSelect(two.id, a);
+    await groupPicked();
+    const group = tileLayers(a).find((l) => l.kind === "group")!;
+
+    // Both tiles get the group first.
+    copyLayerProps(group.id, a);
+    app.selectedTiles = [b, c];
+    await pasteLayerOntoTiles();
+    expect(app.error).toBe("");
+    for (const t of [b, c]) expect(findLayer(tileLayers(t), group.id)).toBeTruthy();
+
+    // Change it on the source, then paste again onto the same two.
+    await setTileLayerField([a], one.id, "fill", "#123456");
+    copyLayerProps(group.id, a);
+    app.selectedTiles = [b, c];
+    await pasteLayerOntoTiles();
+
+    expect(app.error).toBe("");
+    for (const t of [b, c]) {
+      // Once, not twice, and the member took the change.
+      expect([...walkLayers(tileLayers(t))].filter((l) => l.id === group.id)).toHaveLength(1);
+      expect((findLayer(tileLayers(t), one.id) as ShapeLayer).fill).toBe("#123456");
+    }
+  });
+
+  it("opens the menu on the row and pastes through it", async () => {
+    const [from, to] = await twoShapes();
+    from.layer.x = 0.15;
+    app.version++;
+    reveal("tiles");
+    await tick();
+
+    const open = async (tile: string) => {
+      const row = document.querySelector(`[data-tile="${tile}"]`) as HTMLElement;
+      (row.querySelector("button.twisty") as HTMLButtonElement).click();
+      // The rows are created by the click, not before it.
+      await tick();
+      return row;
+    };
+    const item = (text: string) =>
+      [...document.querySelectorAll("button")].find((b) =>
+        b.textContent!.trim().startsWith(text),
+      ) as HTMLButtonElement;
+
+    (await open(from.tile)).querySelector("li")!.dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true, clientX: 20, clientY: 20 }),
+    );
+    await tick();
+    item("Copy properties").click();
+    await tick();
+
+    (await open(to.tile)).querySelector("li")!.dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true, clientX: 20, clientY: 20 }),
+    );
+    await tick();
+    // Named, not just "Paste": the menu says what would land.
+    expect(item("Paste from")).toBeTruthy();
+    item("Paste from").click();
+
+    await until(() => findLayer(tileLayers(to.tile), to.layer.id)!.x === 0.15);
+  });
+});
+
+describe("the layer panel", () => {
+  /* It was imported and never rendered. Master put it inside the Layout editor
+   * and nowhere else, so taking that editor out took the only way to a layer's
+   * font, colour, shadow, corners, grading and mask with it — on a build whose
+   * whole point is that every asset is a layer you can edit. Nothing failed:
+   * the fields were simply not on the screen, which no test could see because
+   * none of them looked. */
+  async function pickedShape() {
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const layer = tileLayers(tile).at(-1)!;
+    selectLayer(layer.id, tile);
+    await tick();
+    return { tile, layer };
+  }
+
+  const headings = () =>
+    [...document.querySelectorAll("aside h2")].map((h) => h.textContent!.trim());
+
+  const field = (name: string) =>
+    [...document.querySelectorAll("aside label.field")].find(
+      (l) => l.querySelector("span")?.textContent!.trim() === name,
+    );
+
+  it("shows the picked layer's fields, and nothing when nothing is picked", async () => {
+    const { layer } = await pickedShape();
+    expect(headings()).toContain(layerLabel(layer));
+    expect(field("Fill")).toBeTruthy();
+
+    selectLayer("", "");
+    await tick();
+    expect(headings()).not.toContain(layerLabel(layer));
+  });
+
+  it("offers a layer on the same tile as a mask", async () => {
+    /* The control was gated on being inside a Layout, which was where shapes
+     * and pictures used to share a stack. A tile is that stack now — the
+     * component's own siblings/maskOffers already read off the tile — so the
+     * gate was the last thing keeping masking off the wall. */
+    const { tile } = await pickedShape();
+    app.selectedTiles = [tile];
+    await addTileText();
+    const cutter = tileLayers(tile).at(-1)!;
+    const shape = tileLayers(tile).find((l) => l.kind === "shape")!;
+    selectLayer(shape.id, tile);
+    await tick();
+
+    const mask = field("Mask")!;
+    expect(mask).toBeTruthy();
+    const offered = [...mask.querySelectorAll("option")].map((o) => o.textContent!.trim());
+    expect(offered).toContain(layerLabel(cutter));
+  });
+
+  it("keeps a cutter on the canvas, invisible, so it can still be grabbed", async () => {
+    /* A layer that is cutting another one draws nothing, and used to have no
+     * object at all — so there was nothing on the wall to click and the placing
+     * tool's stand-in was the only handle a mask had. Asked here as two things
+     * at once, because either alone is satisfied by the old behaviour: there is
+     * an object for it, and that object paints nothing. */
+    const { tile } = await pickedShape();
+    const cutter = tileLayers(tile).at(-1)!;
+    app.selectedTiles = [tile];
+    await addTileShape("ellipse");
+    const cutLayer = tileLayers(tile).at(-1)!;
+    await setTileLayerField([tile], cutLayer.id, "maskId", cutter.id);
+    await tick();
+
+    const canvas = (window as { tesseraWall?: fabric.Canvas }).tesseraWall!;
+    await until(() =>
+      canvas.getObjects().some((o) => (o as Tagged).layerId === cutter.id),
+    );
+    const obj = canvas.getObjects().find((o) => (o as Tagged).layerId === cutter.id)!;
+    expect(obj.opacity).toBe(0);
+    // And the layer it cuts is still baked, which is what made the cutter
+    // undrawable in the first place.
+    const cutObj = canvas.getObjects().find((o) => (o as Tagged).layerId === cutLayer.id);
+    expect((cutObj as Tagged & { flattened?: boolean }).flattened).toBe(true);
+  });
+
+  it("re-cuts the picture when the mask under it is moved", async () => {
+    /* Seen in a clip: the mask's frame moved to the other end of the tile and
+     * the cut-out picture stayed exactly where it was, until anything else
+     * happened to redraw the tile.
+     *
+     * A plain move skips the rebuild because the object the hand moved is the
+     * layer and the canvas already shows the result. A cutter breaks that
+     * premise: what changes on screen is the *other* layer's pixels, and those
+     * are baked. Asked of the canvas — the bake has to be a new object —
+     * because the model was never the part that was wrong. */
+    const { tile } = await pickedShape();
+    const cutter = tileLayers(tile).at(-1)!;
+    app.selectedTiles = [tile];
+    await addTileShape("ellipse");
+    const cutLayer = tileLayers(tile).at(-1)!;
+    await setTileLayerField([tile], cutLayer.id, "maskId", cutter.id);
+    await tick();
+
+    const canvas = (window as { tesseraWall?: fabric.Canvas }).tesseraWall!;
+    const bake = () => canvas.getObjects().find((o) => (o as Tagged).layerId === cutLayer.id);
+    await until(() => !!bake());
+    let held = bake();
+    let steady = 0;
+    await until(() => {
+      const now = bake();
+      steady = now && now === held ? steady + 1 : 0;
+      held = now;
+      return steady >= 8;
+    });
+    const was = held!;
+
+    const stencil = canvas.getObjects().find((o) => (o as Tagged).layerId === cutter.id)!;
+    stencil.set({ left: (stencil.left ?? 0) + 90 });
+    stencil.setCoords();
+    canvas.fire("object:modified", { target: stencil });
+
+    // A new object for the cut layer: the bake was made again, with the mask
+    // where it now is.
+    await until(() => !!bake() && bake() !== was, 3000);
+    expect(bake()).toBeTruthy();
+    expect(bake()).not.toBe(was);
+  });
+
+  it("writes a field onto every picked tile in one step", async () => {
+    const { tile, layer } = await pickedShape();
+    const second = app.folderIds[1];
+    app.selectedTiles = [tile, second];
+    await addTileShape("rect");
+    const onBoth = tileLayers(tile).at(-1)!;
+    selectLayer(onBoth.id, tile);
+    await tick();
+
+    const before = historySteps().length;
+    await setTileLayerField([tile, second], onBoth.id, "fill", "#22cc55");
+    const here = findLayer(app.manifest.tiles[tile]!.layers, onBoth.id) as ShapeLayer;
+    const there = findLayer(app.manifest.tiles[second]!.layers, onBoth.id) as ShapeLayer;
+    expect(here.fill).toBe("#22cc55");
+    expect(there.fill).toBe("#22cc55");
+    // One step, not two: the panel is a bulk editor and undo has to match.
+    expect(historySteps().length).toBe(before + 1);
+    void layer;
+  });
+});
+
+describe("what the wall lost with the layout editor", () => {
+  /* Rebuilt from the list of tests the demolition removed. Most of that list
+   * described stamps and assignments and went with them; these are the ones
+   * whose behaviour survived the move onto the tiles, so losing their cover
+   * was an accident rather than a consequence. */
+
+  it("adds a layer to every picked tile under one id", async () => {
+    /* One id across the wall is what makes a bulk edit possible at all: the
+     * panel, the row and a drag all find the layer on each tile by the id of
+     * the one that was picked. Insert them under separate ids and every edit
+     * silently reaches one tile. */
+    await enterInbox();
+    const [a, b] = app.folderIds;
+    app.selectedTiles = [a, b];
+    await addTileText();
+
+    const here = tileLayers(a).at(-1)!;
+    const there = tileLayers(b).at(-1)!;
+    expect(there.id).toBe(here.id);
+    expect(historySteps().at(-1)?.label).toBe("Add caption");
+  });
+
+  it("keeps a tile archived when its layers are cleared", async () => {
+    /* Clearing used to hand the tile back a fresh empty one, which took the
+     * archived flag with it and put the portrait back on the wall — the whole
+     * reason stripTile names the fields it clears instead of rebuilding. */
+    await enterInbox();
+    const [id] = app.folderIds;
+    app.selectedTiles = [id];
+    await addTileShape("rect");
+    await archiveSelection(true);
+    expect(archived()).toContain(id);
+
+    app.selectedTiles = [id];
+    await stripSelectedTiles();
+    expect(tileLayers(id)).toHaveLength(0);
+    expect(archived()).toContain(id);
+  });
+
+  it("leads with what the tile says, and treats the shared placeholder as no name", async () => {
+    /* The headline reads the caption's own words. It used to ask the tile's
+     * wording record — where a Layout's shared caption kept each portrait's
+     * name — and the migration empties that, so every row had quietly fallen
+     * back to its id. */
+    await enterInbox();
+    const [id] = app.folderIds;
+    app.selectedTiles = [id];
+    await addTileText();
+    const caption = tileLayers(id).at(-1)!;
+
+    // A caption every tile shares names none of them.
+    await setTileLayerField([id], caption.id, "text", "{{id}}");
+    expect(tileHeadline(id)).toBe("");
+
+    await setTileLayerField([id], caption.id, "text", "Nachtklinge");
+    expect(tileHeadline(id)).toBe("Nachtklinge");
+  });
+
+  it("names the step the undo button is about to take back", async () => {
+    /* Ctrl+Z on a wall of forty-four portraits can reach anywhere, and every
+     * other edit says what it touched by touching it. This one has to say so
+     * in words before it is pressed. */
+    await enterInbox();
+    const [id] = app.folderIds;
+    app.selectedTiles = [id];
+    await addTileShape("rect");
+    expect(undoLabel()).toBe("Add shape");
+
+    await undoEdit();
+    expect(redoLabel()).toBe("Add shape");
+  });
+
+  it("keeps one gesture to one undo step", async () => {
+    /* A slider is a burst of writes. Each one landing in the history would
+     * make Ctrl+Z walk back through a drag a pixel at a time — so a run key
+     * folds them, and a different field starts a new step. */
+    await enterInbox();
+    const [id] = app.folderIds;
+    app.selectedTiles = [id];
+    await addTileShape("rect");
+    const shape = tileLayers(id).at(-1)!;
+    const steps = historySteps().length;
+
+    for (const o of [0.9, 0.8, 0.7]) await setTileLayerField([id], shape.id, "opacity", o);
+    expect(historySteps().length).toBe(steps + 1);
+
+    await setTileLayerField([id], shape.id, "fill", "#123456");
+    expect(historySteps().length).toBe(steps + 2);
+  });
+
+  it("opens the class grid for that tile, from its row", async () => {
+    /* The sheet is App's — one of them serves the whole window — so the row
+     * asks for it rather than owning one. The pair it hands over is what
+     * decides whether the pick writes this tile's layer or a wall-wide one,
+     * and it used to write a per-tile record that nothing read. */
+    await enterInbox();
+    const [id] = app.folderIds;
+    app.selectedTiles = [id];
+    await addTileShape("icon", "Ranger");
+    await tick();
+
+    const badge = [...document.querySelectorAll("button.swatch.art")].at(-1) as HTMLButtonElement;
+    expect(badge).toBeTruthy();
+    badge.click();
+    await tick();
+
+    const witch = [...document.querySelectorAll("button")].find(
+      (b) => b.title === "Witch",
+    ) as HTMLButtonElement;
+    expect(witch).toBeTruthy();
+    witch.click();
+    await until(() => (tileIcons(id)[0]?.icon ?? "") === "Witch");
+    expect(undoLabel()).toBe("Change icon");
+  });
+});
+
+describe("lining layers up", () => {
+  const press = (title: string) => {
+    const button = [...document.querySelectorAll("button")].find((b) =>
+      b.title.startsWith(title),
+    ) as HTMLButtonElement | undefined;
+    expect(button).toBeTruthy();
+    expect(button!.disabled).toBe(false);
+    button!.click();
+  };
+  const boxed = (tile: string, id: string) =>
+    findLayer(app.manifest.tiles[tile]!.layers, id) as unknown as { x: number; w: number };
+
+  it("puts the picked layers against the tile's edge from the toolbar", async () => {
+    /* The arithmetic has its own tests in geometry.ts; what this holds is the
+     * wiring — that the button reaches the layers the pick names, and that
+     * both of them move, not just the one the panel is showing. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const a = tileLayers(tile).at(-1)!;
+    await addTileShape("ellipse");
+    const b = tileLayers(tile).at(-1)!;
+    await setTileLayerField([tile], a.id, "x", 0.3);
+    await setTileLayerField([tile], b.id, "x", 0.75);
+    selectLayer(a.id, tile);
+    alsoSelect(b.id, tile);
+    await tick();
+
+    press("Line up on the left");
+    await until(() => boxed(tile, a.id).x !== 0.3);
+    // Left edge on the tile's left edge: a layer's x is its centre.
+    expect(boxed(tile, a.id).x).toBeCloseTo(boxed(tile, a.id).w / 2, 5);
+    expect(boxed(tile, b.id).x).toBeCloseTo(boxed(tile, b.id).w / 2, 5);
+    expect(undoLabel()).toBe("Line up on the left");
+  });
+
+  it("lines a grouped layer up where it is drawn, not where it is stored", async () => {
+    /* A group's x/y is a displacement its children are drawn by, so a child's
+     * own coordinate is not where it is on the tile. Aligning on the stored
+     * number would leave it hanging off the edge by the group's offset —
+     * exactly the jump every other boundary in this app has to fold in. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const one = tileLayers(tile).at(-1)!;
+    await addTileShape("ellipse");
+    const two = tileLayers(tile).at(-1)!;
+    selectLayer(one.id, tile);
+    alsoSelect(two.id, tile);
+    await groupPicked();
+    const group = tileLayers(tile).find((l) => l.kind === "group")!;
+    // A fifth of a tile to the right: 0.5 is the neutral, undisplaced position.
+    await setTileLayerField([tile], group.id, "x", 0.7);
+
+    selectLayer(one.id, tile);
+    await tick();
+    press("Line up on the left");
+    await until(() => boxed(tile, one.id).x !== 0.5);
+
+    const child = boxed(tile, one.id);
+    expect(child.x + 0.2).toBeCloseTo(child.w / 2, 5);
+  });
+});
+
+describe("the wall follows the wheel", () => {
+  /* The bug this pins was reported as "the zoom only takes effect once I click
+   * something else", with panning moving in steps for the same reason. Neither
+   * was slowness: Fabric asks for the repaint after a viewport change only when
+   * renderOnAddRemove is on, and it is off here so that building a wall of
+   * forty-four does not request a frame per object. So the transform moved and
+   * nothing painted until an unrelated event happened to. */
+  it("paints after a wheel zoom, with no other event to prompt it", async () => {
+    await enterInbox();
+    const canvas = (window as { tesseraWall?: fabric.Canvas }).tesseraWall!;
+    await until(() => canvas.getObjects().length > 0);
+
+    /* Counting after:render is not enough: Fabric fires it for the interaction
+       layer too, and handling the wheel repaints that whichever way this goes —
+       a version of this test that counted those passed without the fix. What
+       has to be true is that the wheel asks for a frame of the object canvas. */
+    let asked = 0;
+    const original = canvas.requestRenderAll.bind(canvas);
+    canvas.requestRenderAll = () => {
+      asked++;
+      return original();
+    };
+    const before = canvas.getZoom();
+
+    canvas.upperCanvasEl.dispatchEvent(
+      new WheelEvent("wheel", { deltaY: -240, clientX: 40, clientY: 40, bubbles: true }),
+    );
+
+    expect(canvas.getZoom()).not.toBe(before);
+    expect(asked).toBeGreaterThan(0);
+  });
+});
+
+describe("three the demolition took and nobody missed", () => {
+  /* The last of the list in removed-tests.txt. None of them describes anything
+   * that changed with the layouts — they went because the file they lived in
+   * was cut, which is a worse reason than the other twenty-three had. */
+
+  const press = (key: string, init: KeyboardEventInit = {}) =>
+    window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, ...init }));
+
+  const sheetOpen = (heading: string) =>
+    [...document.querySelectorAll("h2")].some((h) => h.textContent!.trim() === heading);
+
+  it("does not open the keyboard sheet under the icon grid", async () => {
+    /* Both sheets sit at the same z-index and the grid is later in the markup,
+     * so it wins. Without the guard `?` opened the keyboard sheet out of sight
+     * and the key looked broken. */
+    await enterInbox();
+    const [id] = app.folderIds;
+    app.selectedTiles = [id];
+    await addTileShape("icon", "Ranger");
+    await tick();
+
+    const badge = [...document.querySelectorAll("button.swatch.art")].at(-1) as HTMLButtonElement;
+    badge.click();
+    await tick();
+    expect(sheetOpen("Keyboard and mouse")).toBe(false);
+
+    press("?");
+    await tick();
+    expect(sheetOpen("Keyboard and mouse")).toBe(false);
+
+    // Escape closes the grid, and then the key works.
+    press("Escape");
+    await tick();
+    press("?");
+    await tick();
+    expect(sheetOpen("Keyboard and mouse")).toBe(true);
+  });
+
+  it("files a drawerful of tiles as one step, and says which way it went", async () => {
+    /* The drawer's "+" filed the tiles one at a time — twenty tiles, twenty
+     * checkpoints, twenty saves racing each other, and nineteen more presses of
+     * Ctrl+Z than the gesture deserved. The context menu had used the bulk
+     * writer for this all along.
+     *
+     * And three labels named one direction for an action that goes both ways:
+     * "Undone: Archive tiles" over tiles coming back out of the archive says
+     * the opposite of what happened. */
+    await enterInbox();
     const ids = app.folderIds.slice(0, 3);
     app.selectedTiles = [...ids];
     await newProjectFrom("Konto");
-    openProjectView(projects()[0].id);
-    await newLayoutDoc("Namen");
-    await addLayoutText();
-    await setLayerField(openLayout()!.layers[0].id, "perTile", true);
-    await closeLayoutDoc();
-    for (const id of ids) await assignTileLayout(id, layouts()[0].id);
-    const heading = [...document.querySelectorAll("aside button")].find((b) =>
-      b.textContent!.includes("On this wall"),
-    ) as HTMLButtonElement;
-    heading.click();
-    await until(() => !!document.querySelector(`[data-tile="${ids[0]}"]`));
-    return ids;
-  }
+    const p = projects()[0].id;
+    openProjectView(p);
+    await newFolderHere("Fertig");
+    const folder = folders()[0];
 
-  const field = (id: string) =>
-    document.querySelector<HTMLInputElement>(`[data-tile="${id}"] .field input`);
-
-  async function typeInto(id: string, text: string) {
-    const input = field(id)!;
-    input.value = text;
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    await until(() => tileText(id, tileCaptions(id)[0].id) === text);
-  }
-
-  const enter = (id: string, shift = false) =>
-    field(id)!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: shift, bubbles: true }));
-
-  it("carries the cursor into the next tile, and closes the one behind it", async () => {
-    /* Naming a wall is the one job here that is forty-four of the same thing,
-     * and the list is an accordion: without this, every name costs a reach for
-     * the mouse to open the next row. */
-    const [a, b] = await three();
-    document.querySelector<HTMLButtonElement>(`[data-tile="${a}"] .twisty`)!.click();
-    await until(() => !!field(a));
-    await typeInto(a, "Nachtklinge");
-
-    enter(a);
-
-    await until(() => !!field(b));
-    expect(document.activeElement).toBe(field(b));
-    // Closed behind you, or the next row is a metre down the page by tile ten.
-    expect(field(a)).toBeNull();
-  });
-
-  it("goes back on Shift+Enter and stops at both ends", async () => {
-    const [a, b, c] = await three();
-    document.querySelector<HTMLButtonElement>(`[data-tile="${a}"] .twisty`)!.click();
-    await until(() => !!field(a));
-
-    enter(a);
-    await until(() => !!field(b));
-    enter(b, true);
-    await until(() => !!field(a));
-    expect(document.activeElement).toBe(field(a));
-
-    // The first row has nowhere to go back to, and the row stays put.
-    enter(a, true);
-    await until(() => document.activeElement !== field(a));
-    expect(field(a)).toBeTruthy();
-
-    // And the last row does not wrap round to the first: a second pass that
-    // started itself would type over the name just given.
-    document.querySelector<HTMLButtonElement>(`[data-tile="${c}"] .twisty`)!.click();
-    await until(() => !!field(c));
-    enter(c);
-    await until(() => document.activeElement !== field(c));
-    expect(field(c)).toBeTruthy();
-    expect(field(a)).toBeNull();
-  });
-});
-
-
-describe("undo that says what it takes back", () => {
-  const byPrefix = (prefix: string) =>
-    [...document.querySelectorAll("button")].find((b) =>
-      (b as HTMLElement).title.startsWith(prefix),
-    ) as HTMLButtonElement;
-
-  it("names the step on the button before it is pressed, and in the line after", async () => {
-    /* Ctrl+Z is the one action with no target: every other edit tells you what
-     * it touched by touching it, and this one can reach anywhere on the wall. */
-    await newLayoutDoc("Namenstest");
-    await addLayoutText();
-
-    await until(() => !!byPrefix("Undo "));
-    expect(byPrefix("Undo ").title).toContain("add caption");
-
+    app.selectedTiles = [...ids];
+    const steps = historySteps().length;
+    await fileSelectionInto(folder.id);
+    expect(historySteps().length).toBe(steps + 1);
+    expect(folders()[0].tiles.sort()).toEqual([...ids].sort());
+    // One press puts all three back out.
     await undoEdit();
+    expect(folders()[0].tiles).toEqual([]);
 
-    expect(app.error).toBe("Undone: Add caption");
-    // And the same edit is what the other button now offers to put back.
-    expect(byPrefix("Redo ").title).toContain("add caption");
+    // The label follows the direction.
+    app.selectedTiles = [ids[0]];
+    await fileTile(ids[0], folder.id);
+    expect(history.past.at(-1)?.label).toBe("File tile");
+    await fileTile(ids[0], "");
+    expect(history.past.at(-1)?.label).toBe("Take tile out of its folder");
   });
 
-  it("names the gesture, not its last keystroke", async () => {
-    /* Typing collapses into one step, and the step is named by the edit that
-     * opened the run — take the newest name and it ends up called after the
-     * last letter rather than after the thing you did. */
+  it("lists two snapshots of one name without taking the sidebar down", async () => {
+    /* Names are kept apart within one scope, and the overview deliberately
+     * lists the document-wide snapshots together with any left behind by a
+     * deleted project. So two "Snapshot 1" taken on different walls meet in one
+     * list — and a keyed `each` throws on the pair rather than drawing it,
+     * which takes the sidebar with it in the packaged build as well as in
+     * development. */
+    await enterInbox();
+    app.selectedTiles = app.folderIds.slice(0, 2);
+    await newProjectFrom("Konto");
+    const p = projects()[0].id;
+
+    // One on the overview, one inside the project, under the same name — which
+    // each scope allows, because their files are keyed by the project too.
+    // Making a project opens it, so the overview has to be gone back to.
+    openProjectView("");
+    await takeSnapshot("Snapshot 1");
+    openProjectView(p);
+    await takeSnapshot("Snapshot 1");
+    expect(new Set(app.snapshots.map((s) => s.name)).size).toBe(1);
+    expect(app.snapshots).toHaveLength(2);
+
+    // The project goes; its snapshot stays and lands in the overview's list.
+    await deleteProject(p);
+    reveal("snapshots");
+    await tick();
+    await new Promise((r) => setTimeout(r, 150));
+
+    expect(snapshots().length).toBe(2);
+    // The list drew both, and the sidebar is still standing.
+    expect(document.querySelectorAll("aside").length).toBeGreaterThan(0);
+  });
+
+  it("leaves Delete to a dropdown that has the keyboard", async () => {
+    /* A select takes the keyboard the way a field does — letters jump to a
+     * name, the arrows walk the list — and the panel's Font and Mask controls
+     * are two of them. Delete pressed there reached the global handler and took
+     * the layer off its tile: the cursor was in a control belonging to the very
+     * layer that vanished. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileText();
+    const caption = tileLayers(tile).at(-1)!;
+    selectLayer(caption.id, tile);
+    reveal("props");
+    await tick();
+
+    const font = [...document.querySelectorAll("label.field")]
+      .find((l) => l.querySelector("span")?.textContent?.trim() === "Font")
+      ?.querySelector("select") as HTMLSelectElement;
+    expect(font).toBeTruthy();
+    font.focus();
+    font.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true }));
+    await tick();
+    await new Promise((r) => setTimeout(r, 80));
+
+    expect(findLayer(tileLayers(tile), caption.id)).toBeTruthy();
+
+    // The same key with the focus anywhere else does take the layer off, or
+    // this proves nothing about the dropdown.
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true }));
+    await until(() => !findLayer(tileLayers(tile), caption.id));
+  });
+
+  it("ignores undo and delete while a long action is reading the document", async () => {
+    /* Every button that changes the document is disabled while one of these
+     * runs. The keys were not — and "Write to game" holds a reference to the
+     * open project across the snapshot it writes first, so an undo landing in
+     * that window swapped the document out from under a write already under
+     * way: portraits rendered from the new document into the old one's slot
+     * order, into the game's own folder, and recorded as written, so the next
+     * open reported nothing wrong. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const layer = tileLayers(tile).at(-1)!;
+    await setTileLayerField([tile], layer.id, "x", 0.9);
+    selectLayer(layer.id, tile);
+
+    app.busy = "save";
+    press("z", { ctrlKey: true });
+    await tick();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(findLayer(tileLayers(tile), layer.id)!.x).toBeCloseTo(0.9, 6);
+    press("Delete");
+    await tick();
+    expect(findLayer(tileLayers(tile), layer.id)).toBeTruthy();
+
+    // And they come back when it is over.
+    app.busy = "";
+    press("z", { ctrlKey: true });
+    await until(() => findLayer(tileLayers(tile), layer.id)!.x !== 0.9);
+  });
+
+  it("puts the game's portraits back without touching the document", async () => {
+    /* The vault holds what BDO shipped, and putting it back is the way out of a
+     * wall that went wrong. It writes files and nothing else: the layers stay,
+     * so the wall on screen is unchanged and one more click undoes nothing. */
+    await enterInbox();
     const [a] = app.folderIds;
     app.selectedTiles = [a];
+    await addTileShape("rect");
     await newProjectFrom("Konto");
-    await newLayoutDoc("Tippen");
-    await addLayoutText();
-    await setLayerField(openLayout()!.layers[0].id, "perTile", true);
-    await closeLayoutDoc();
-    await assignTileLayout(a, layouts()[0].id);
-    const caption = tileCaptions(a)[0];
+    openProjectView(projects()[0].id);
+    const before = JSON.stringify(app.manifest);
 
-    for (const word of ["N", "Na", "Nac", "Nacht"]) await setTileText(a, caption.id, word);
+    await saveToGame();
+    await until(() => !app.busy);
+    await restoreProject();
+    await until(() => !app.busy);
 
-    expect(undoLabel()).toBe("Type caption");
-    await undoEdit();
-    // One press takes the whole word back, not one letter.
-    expect(tileText(a, caption.id)).toBeUndefined();
-    expect(app.error).toBe("Undone: Type caption");
+    expect(app.error).toContain("put back in the game");
+    expect(JSON.stringify(app.manifest)).toBe(before);
   });
 
-  it("puts it back on redo, and says that too", async () => {
-    /* redo shares travel() with undo, so this is thin — but nothing pressed it
-     * at all before, and "shares the code path" stops being true the first time
-     * someone special-cases one of travel's two callers. */
-    await newLayoutDoc("Wiederholen");
-    await addLayoutText();
-    const before = openLayout()!.layers.length;
+  it("opens the wall's menu on the tile under the cursor", async () => {
+    /* The tile under the cursor is the one meant, unless it is already part of
+     * the selection — then the selection is what was meant, which is the rule
+     * every file manager uses. It used to re-target only when nothing at all
+     * was picked, so right-clicking tile A while B and C were selected quietly
+     * acted on B and C. */
+    await enterInbox();
+    const canvas = (window as { tesseraWall?: fabric.Canvas }).tesseraWall!;
+    await until(() => canvas.getObjects().length > 0);
 
-    await undoEdit();
-    expect(openLayout()!.layers.length).toBe(before - 1);
+    /* Sized and placed by hand, for the reason the guide-grid test above gives:
+       mounted in a bare document the stage collapses to a pixel wide and the
+       wall is drawn at 0.02% zoom, where every cell centre rounds to the same
+       point and tileAtEvent cannot tell them apart. */
+    canvas.setDimensions({ width: 900, height: 700 });
+    canvas.setViewportTransform([0.1, 0, 0, 0.1, 0, 0]);
+    canvas.renderAll();
+    await tick();
 
-    await redoEdit();
+    const stage = document.querySelector(".stage") as HTMLElement;
+    const rightClickAt = (x: number, y: number) => {
+      stage.dispatchEvent(
+        new MouseEvent("contextmenu", { clientX: x, clientY: y, bubbles: true }),
+      );
+    };
 
-    expect(openLayout()!.layers.length).toBe(before);
-    expect(app.error).toBe("Redone: Add caption");
+    /* Which cell a point lands on is GridCanvas's own arithmetic, and guessing
+       at it from here only tests the guess — an earlier version of this put the
+       second click a row off and failed on the coordinates rather than on the
+       rule. So the point is asked once what it means, and the answer is reused. */
+    /* Recomputed before every click, never cached. Setting the selection runs
+       the effects that own the viewport, so a point worked out once points
+       somewhere else by the next click — an earlier version of this asked the
+       same coordinates twice and got two different tiles. */
+    const firstCell = () => {
+      const r = canvas.upperCanvasEl.getBoundingClientRect();
+      const vt = canvas.viewportTransform!;
+      const at = cellAt(0);
+      return {
+        x: r.left + (at.x + TILE_W / 2) * vt[0] + vt[4],
+        y: r.top + (at.y + TILE_H / 2) * vt[3] + vt[5],
+      };
+    };
+
+    // A tile nobody picked becomes the selection.
+    app.selectedTiles = [];
+    await tick();
+    let p = firstCell();
+    rightClickAt(p.x, p.y);
+    await tick();
+    const under = app.selectedTiles[0];
+    expect(under).toBeTruthy();
+
+    /* And the same click inside an existing selection leaves it whole. It used
+       to re-target whenever anything at all was picked, so right-clicking one
+       of three selected tiles quietly acted on one. */
+    const other = visibleIds().find((id) => id !== under)!;
+
+    /* The case that separates the two rules, and the reason this test exists.
+       Both the old rule and the new one leave an existing selection alone when
+       the click lands inside it, and both take a tile when nothing is picked —
+       so neither of those can tell them apart. This one can: a click on a tile
+       the selection does not contain has to re-target, and the rule it replaced
+       only re-targeted when nothing at all was picked. */
+    app.selectedTiles = [other];
+    await tick();
+    p = firstCell();
+    rightClickAt(p.x, p.y);
+    await tick();
+    expect(app.selectedTiles).toEqual([under]);
+
+    // And a click inside the selection leaves it whole.
+    app.selectedTiles = [under, other];
+    await tick();
+    p = firstCell();
+    rightClickAt(p.x, p.y);
+    await tick();
+    expect(app.selectedTiles).toEqual([under, other]);
   });
 });
 
-describe("the right-click menu", () => {
-  /* Every action this menu offers is well tested as a function, and the menu
-   * that invokes them for most users was never opened by anything. A wrong
-   * `disabled`, an item wired to the neighbouring handler, or a regression in
-   * ContextMenu itself would all ship in silence. */
-  const items = () =>
-    [...document.querySelectorAll('[role="menuitem"]')] as HTMLButtonElement[];
+describe("two guards the wall was given and nothing checked", () => {
+  async function wallWith(make: () => Promise<void>) {
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await make();
+    const layer = tileLayers(tile).at(-1)!;
+    selectLayer(layer.id, tile);
+    const canvas = (window as { tesseraWall?: fabric.Canvas }).tesseraWall!;
+    await until(() => canvas.getObjects().some((o) => (o as Tagged).layerId === layer.id));
+    return { canvas, tile, layer };
+  }
 
-  it("opens on the wall and acts on the tile under the cursor", async () => {
+  it("puts the wall back when a drag is undone", async () => {
+    /* A plain drag deliberately asks for no rebuild, because the object the
+     * hand moved is the layer and the canvas is already right. What that skips
+     * is the *record* of what the canvas shows: the fingerprint the incremental
+     * redraw compares against still describes the wall before the drag.
+     *
+     * So the undo restores exactly the state the fingerprint remembers, the
+     * comparison answers "nothing changed", and nothing is repainted. The
+     * status line says "Undone: Move layer", the model holds the old position,
+     * the file on disk holds the old position, and the wall — and anything
+     * rendered from what the wall thinks it has — goes on showing the new one.
+     *
+     * Read off the canvas on purpose. Asked of the model this passes today. */
+    const { canvas, tile, layer } = await wallWith(() => addTileShape("rect"));
+    const at = () =>
+      canvas.getObjects().find((o) => (o as Tagged).layerId === layer.id)?.left ?? NaN;
+    // Settled first: a rebuild still owed from building the tile would land
+    // afterwards and refresh the fingerprint by accident.
+    await new Promise((r) => setTimeout(r, 500));
+    const obj = canvas.getObjects().find((o) => (o as Tagged).layerId === layer.id)! as Tagged;
+    const was = { left: at(), x: findLayer(tileLayers(tile), layer.id)!.x };
+
+    /* The write a plain move makes, asked for outright rather than through a
+     * gesture: `structural: false` is the contract — "the canvas already shows
+     * this, do not rebuild" — and every drag whose object comes back at scale 1
+     * takes it. Moving the object first is the half a hand would have done. */
+    obj.set({ left: (obj.left ?? 0) + 80 });
+    obj.setCoords();
+    await applyTransform(
+      obj,
+      {
+        x: was.x + 80 / TILE_W,
+        y: findLayer(tileLayers(tile), layer.id)!.y,
+        rotation: 0,
+        fx: 1,
+        fy: 1,
+        scale: (findLayer(tileLayers(tile), layer.id) as ShapeLayer).w,
+        scaleH: (findLayer(tileLayers(tile), layer.id) as ShapeLayer).h,
+      },
+      false,
+    );
+    expect(at()).toBeGreaterThan(was.left + 20);
+
+    await undoEdit();
+    await until(() => findLayer(tileLayers(tile), layer.id)!.x === was.x);
+    // Given long enough that a rebuild would have landed if one were coming.
+    await new Promise((r) => setTimeout(r, 400));
+    expect(at()).toBeCloseTo(was.left, 0);
+  });
+
+  it("stops answering the mouse the moment its padlock is clicked", async () => {
+    /* The lock no longer rebuilds the wall — it changes no pixels, and doing so
+     * across fourteen tiles was throwing the whole wall away and baking every
+     * mask again. What it must still do is take the layer out of reach, and
+     * the flag the canvas was reading is written when the object is built: it
+     * says what was true then. Read off the document instead. */
+    const { canvas, tile, layer } = await wallWith(() => addTileShape("rect"));
+    const obj = () =>
+      canvas.getObjects().find((o) => (o as Tagged).layerId === layer.id) as fabric.Object;
+    await until(() => !!obj()?.evented);
+
+    await toggleLayerLocked(layer.id, tile);
+    await tick();
+    await until(() => !obj().evented);
+    expect(obj().selectable).toBe(false);
+
+    // And back again, without a rebuild in either direction.
+    await toggleLayerLocked(layer.id, tile);
+    await tick();
+    await until(() => obj().evented);
+  });
+
+  it("moves a flattened layer by the distance dragged, never to its bake's corner", async () => {
+    /* A cut layer and a class icon are composited to pixels and placed at the
+     * cell's origin, so the object on the canvas sits at 0,0 at scale 1 whatever
+     * the model says. Reading its transform back as a position would write that
+     * over a real placement and the layer would jump to the corner of its tile.
+     *
+     * That used to be avoided by refusing the drop, which left the gesture half
+     * done: Fabric moves the object during the drag whatever the handler
+     * decides, so the icon lay where it was dropped with the model still
+     * holding the old position, until some later action rebuilt the tile and it
+     * jumped back. Reported as "the tile only updates once I do something
+     * else".
+     *
+     * What is readable is the distance: the bake starts at the cell's origin,
+     * so how far it has left that is how far the hand moved. Both halves are
+     * asserted here — the layer moves by exactly that, and it does not land at
+     * the corner, which is what the refusal was protecting. */
+    const { canvas, tile, layer } = await wallWith(() => addTileShape("icon", "Ranger"));
+    /* Not the frame, and waited for rather than taken. The frame now appears by
+     * itself on exactly these layers and carries the same layerId, so the wall
+     * briefly holds one object for this layer that the renderer did not build —
+     * `flattened` is the mark of one that it did. */
+    type Baked = fabric.Object & { flattened?: boolean };
+    const bake = () =>
+      canvas
+        .getObjects()
+        .find((o) => (o as Tagged).layerId === layer.id && "flattened" in o) as Baked | undefined;
+    await until(() => !!bake());
+    const obj = bake()!;
+    expect(obj.flattened).toBe(true);
+    // No handles on a bake: a factor read off a tile-sized picture says nothing
+    // about the layer inside it.
+    expect(obj.hasControls).toBe(false);
+
+    const before = { ...findLayer(app.manifest.tiles[tile]!.layers, layer.id)! };
+    obj.set({ left: (obj.left ?? 0) + 120, top: (obj.top ?? 0) + 90 });
+    obj.setCoords();
+    canvas.fire("object:modified", { target: obj });
+    await until(() => findLayer(app.manifest.tiles[tile]!.layers, layer.id)!.x !== before.x);
+
+    const after = findLayer(app.manifest.tiles[tile]!.layers, layer.id)!;
+    expect(after.x).toBeCloseTo(before.x + 120 / TILE_W, 6);
+    expect(after.y).toBeCloseTo(before.y + 90 / TILE_H, 6);
+    // The failure the refusal existed for: the bake's own origin, written in.
+    expect(after.x).toBeGreaterThan(0.1);
+  });
+
+  it("does not count a bake's displacement twice when two drags run together", async () => {
+    /* The distance a bake has moved is read from the cell's origin, which is
+     * where the next rebuild puts it back. Two gestures close enough together
+     * that the rebuild has not landed between them therefore read the first
+     * one's distance a second time: 120 then 80 more comes out as 320 instead
+     * of 200, and a picture walks off its tile in a few drags.
+     *
+     * The same shape as the stand-in's factor — a number that only means what
+     * it says while something resets it. */
+    const { canvas, tile, layer } = await wallWith(() => addTileShape("icon", "Ranger"));
+    type Baked = fabric.Object & { flattened?: boolean };
+    const bake = () =>
+      canvas
+        .getObjects()
+        .find((o) => (o as Tagged).layerId === layer.id && "flattened" in o) as Baked | undefined;
+    await until(() => !!bake());
+    const obj = bake()!;
+    const from = { ...findLayer(app.manifest.tiles[tile]!.layers, layer.id)! };
+
+    obj.set({ left: (obj.left ?? 0) + 120 });
+    obj.setCoords();
+    canvas.fire("object:modified", { target: obj });
+    await until(() => findLayer(app.manifest.tiles[tile]!.layers, layer.id)!.x !== from.x);
+
+    // Straight on, on the same object, before any rebuild can put it back.
+    obj.set({ left: (obj.left ?? 0) + 80 });
+    obj.setCoords();
+    canvas.fire("object:modified", { target: obj });
+    await new Promise((r) => setTimeout(r, 400));
+
+    const after = findLayer(app.manifest.tiles[tile]!.layers, layer.id)!;
+    expect(after.x).toBeCloseTo(from.x + 200 / TILE_W, 4);
+  });
+
+  it("leaves the wording to the panel, not the tile's row", async () => {
+    /* The row carried a wording field per caption and the panel carries one
+     * too. The row's was a single-line input, so the one thing a caption most
+     * often wants — a second line — could only be typed in the panel. Two
+     * fields for one value with only one of them able to hold it, so the row's
+     * is gone; this holds it gone. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileText();
+    reveal("tiles");
+    reveal(tile);
+    await tick();
+    await until(() => !!document.querySelector(`[data-tile="${tile}"]`));
+
+    expect(document.querySelectorAll(`[data-tile="${tile}"] .field input`)).toHaveLength(0);
+
+    // The panel still has it, and it takes more than one line.
+    selectLayer(tileLayers(tile).at(-1)!.id, tile);
+    reveal("props");
+    await tick();
+    const wording = () =>
+      [...document.querySelectorAll<HTMLTextAreaElement>("aside label.field textarea")].filter(
+        (t) => t.closest("label")!.querySelector("span")!.textContent === "Text",
+      );
+    await until(() => wording().length === 1);
+  });
+
+  it("keeps a tile's wording field when the caption is put in a group", async () => {
+    /* The row's own fields are built from what the tile draws, and that reading
+     * stopped at the top level. So grouping a nameplate — the rectangle and the
+     * caption on it, the most ordinary tidying there is — took the wording box
+     * out of the row, dropped the headline back to the seventeen-digit id, and
+     * stopped the Enter-walk on that tile. Naming forty-four portraits is the
+     * job this app exists for, and tidying up broke it. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const plate = tileLayers(tile).at(-1)!;
+    await addTileText();
+    const caption = tileLayers(tile).at(-1)!;
+    await setTileLayerField([tile], caption.id, "text", "Aria");
+    expect(tileCaptions(tile).map((l) => l.id)).toContain(caption.id);
+    expect(tileHeadline(tile)).toBe("Aria");
+
+    selectLayer(plate.id, tile);
+    alsoSelect(caption.id, tile);
+    await groupPicked();
+
+    // Still the tile's caption, still its headline.
+    expect(tileCaptions(tile).map((l) => l.id)).toContain(caption.id);
+    expect(tileHeadline(tile)).toBe("Aria");
+  });
+
+  it("takes them along with several tiles picked too", async () => {
+    /* The same gesture meant two different things depending on how many
+     * portraits happened to be selected: with one tile picked a Ctrl-picked
+     * second layer came along, with two or more it stayed where it was.
+     *
+     * They travel on the tile the hand was on. The other tiles get the dragged
+     * layer's placement copied — copying a *distance* onto a layer that sits
+     * somewhere else on that portrait would move it where nobody pointed. */
+    await enterInbox();
     const [a, b] = app.folderIds;
     app.selectedTiles = [a, b];
-    await newProjectFrom("Konto");
-    queuePick(await magentaSquare("menue"));
-    await newLayoutDoc("Menütest");
-    await addLayoutImage();
-    /* Closing a Layout lands back on the overview, so the wall has to be
-       entered after that or there is no canvas to right-click on. */
-    await closeLayoutDoc();
-    /* Entered by clicking its card, the way the other wall tests do it: the
-       card is the only way in, and openProjectView alone leaves the overview
-       showing — with no canvas to right-click on. */
-    const cards = () => [...document.querySelectorAll("button")];
-    await until(() => cards().some((x) => x.textContent!.includes("Konto")));
-    cards().find((x) => x.textContent!.includes("Konto"))!.click();
-    await until(() => !!document.querySelector("canvas.lower-canvas"));
+    await addTileShape("rect");
+    const one = tileLayers(a).at(-1)!;
+    await addTileShape("ellipse");
+    const two = tileLayers(a).at(-1)!;
+    await setTileLayerField([a, b], two.id, "y", 0.8);
 
-    /* Through the stage's own handler with a real event, so the retargeting
-       rule is exercised too: a right-click on a tile outside the selection
-       takes that tile rather than acting on what was picked before. */
-    app.selectedTiles = [a];
-    const stage = document.querySelector(".stage") as HTMLElement;
-    expect(stage).toBeTruthy();
-    stage.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 40, clientY: 40 }));
-    await until(() => items().length > 0);
+    selectLayer(one.id, a);
+    alsoSelect(two.id, a);
+    const was = {
+      one: { ...findLayer(tileLayers(a), one.id)! },
+      two: { ...findLayer(tileLayers(a), two.id)! },
+      twoOnB: { ...findLayer(tileLayers(b), two.id)! },
+    };
 
-    const assign = items().find((i) => i.textContent!.includes("Assign layout"))!;
-    expect(assign).toBeTruthy();
-    assign.click();
-    await until(() => items().some((i) => i.textContent!.includes("Menütest")));
-    items().find((i) => i.textContent!.includes("Menütest"))!.click();
+    await applyTransformBulk(
+      { layerId: one.id, tileId: a, space: "tile", locked: false } as Tagged,
+      { x: was.one.x + 0.2, y: was.one.y, rotation: 0, scale: 0.3, scaleH: 0.3, fx: 1, fy: 1 },
+      [a, b],
+    );
 
-    // The menu did what the function does — and closed behind itself.
-    await until(() => tileLayers(app.selectedTiles[0]).length > 0);
-    await until(() => items().length === 0);
+    // The dragged layer landed on both tiles, as it always did.
+    expect(findLayer(tileLayers(a), one.id)!.x).toBeCloseTo(was.one.x + 0.2, 6);
+    expect(findLayer(tileLayers(b), one.id)!.x).toBeCloseTo(was.one.x + 0.2, 6);
+    /* The extra travelled the same distance — on every picked tile, keeping
+     * the place it has on each of them. That is the difference between the two
+     * halves: the dragged layer is placed, the extra is nudged. */
+    expect(findLayer(tileLayers(a), two.id)!.x).toBeCloseTo(was.two.x + 0.2, 6);
+    expect(findLayer(tileLayers(a), two.id)!.y).toBeCloseTo(was.two.y, 6);
+    expect(findLayer(tileLayers(b), two.id)!.x).toBeCloseTo(was.twoOnB.x + 0.2, 6);
+    expect(findLayer(tileLayers(b), two.id)!.y).toBeCloseTo(was.twoOnB.y, 6);
+  });
+
+  it("takes the layers picked alongside it the same distance", async () => {
+    /* Two layers on one tile, neither in a group: Ctrl-click adds the second to
+     * the pick and a drag on the first carries both.
+     *
+     * The same distance, not to the same place — they keep the gap between
+     * them, which is the whole reason for moving two at once. One undo step for
+     * the pair, because it was one gesture. */
+    const { canvas, tile, layer } = await wallWith(async () => {
+      await addTileShape("rect");
+      const first = tileLayers(app.folderIds[0]).at(-1)!;
+      await setTileLayerField([app.folderIds[0]], first.id, "x", 0.3);
+    });
+    app.selectedTiles = [tile];
+    await addTileShape("ellipse");
+    const mate = tileLayers(tile).at(-1)!;
+    await setTileLayerField([tile], mate.id, "y", 0.8);
+
+    selectLayer(layer.id, tile);
+    alsoSelect(mate.id, tile);
+    expect(pickedLayers()).toEqual([layer.id, mate.id]);
+
+    canvas.setDimensions({ width: 900, height: 700 });
+    canvas.setViewportTransform([0.5, 0, 0, 0.5, 0, 0]);
+    canvas.renderAll();
+    await tick();
+    const current = () => canvas.getObjects().find((o) => (o as Tagged).layerId === layer.id);
+    let held = current();
+    let steady = 0;
+    await until(() => {
+      const now = current();
+      steady = now && now === held ? steady + 1 : 0;
+      held = now;
+      return steady >= 8;
+    });
+
+    const was = {
+      one: { ...findLayer(tileLayers(tile), layer.id)! },
+      two: { ...findLayer(tileLayers(tile), mate.id)! },
+    };
+    const steps = historySteps().length;
+    /* Where the second one is *drawn*, before and after. The model half of this
+     * was right from the first day and the wall did not follow: the extras are
+     * separate Fabric objects that no hand touched, and a plain move asks for
+     * no rebuild because "the canvas already shows the result" — true of the
+     * object under the pointer, false of every other one carried along. */
+    const mateAt = () =>
+      canvas.getObjects().find((o) => (o as Tagged).layerId === mate.id)?.left ?? NaN;
+    const mateWas = mateAt();
+    await dragObject(canvas, held!, 60, 0);
+    await until(() => findLayer(tileLayers(tile), layer.id)!.x !== was.one.x);
+
+    const now = {
+      one: findLayer(tileLayers(tile), layer.id)!,
+      two: findLayer(tileLayers(tile), mate.id)!,
+    };
+    expect(now.one.x - was.one.x).toBeGreaterThan(0.05);
+    expect(now.two.x - was.two.x).toBeCloseTo(now.one.x - was.one.x, 6);
+    // Its own y is untouched: they travelled, they did not line up.
+    expect(now.two.y).toBeCloseTo(was.two.y, 6);
+    expect(historySteps().length).toBe(steps + 1);
+
+    // And the wall shows the second one where the model now has it.
+    await until(() => Number.isFinite(mateAt()) && mateAt() !== mateWas);
+    expect(mateAt() - mateWas).toBeCloseTo((now.two.x - was.two.x) * TILE_W, 0);
+  });
+
+  it("groups the picked layers without moving them, and lets them go again", async () => {
+    /* A group is made at the centre of the tile, where its displacement is
+     * nought — so the members keep the coordinates they had and nothing shifts
+     * on the way in. Letting them go folds the displacement back, so they stay
+     * where they were drawn however far the group was moved in between. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const one = tileLayers(tile).at(-1)!;
+    await setTileLayerField([tile], one.id, "x", 0.25);
+    await addTileShape("ellipse");
+    const two = tileLayers(tile).at(-1)!;
+    await setTileLayerField([tile], two.id, "y", 0.75);
+    const was = { one: { ...findLayer(tileLayers(tile), one.id)! }, two: { ...findLayer(tileLayers(tile), two.id)! } };
+
+    selectLayer(one.id, tile);
+    alsoSelect(two.id, tile);
+    await groupPicked();
+
+    const group = tileLayers(tile).find((l) => l.kind === "group")!;
+    expect(group).toBeTruthy();
+    expect(tileLayers(tile)).toHaveLength(1);
+    expect(app.selected).toBe(group.id);
+    // Still exactly where they were: the members are found through the tree.
+    expect(findLayer(tileLayers(tile), one.id)!.x).toBeCloseTo(was.one.x, 6);
+    expect(findLayer(tileLayers(tile), two.id)!.y).toBeCloseTo(was.two.y, 6);
+
+    await ungroupLayer(group.id, tile);
+    expect(tileLayers(tile)).toHaveLength(2);
+    expect(findLayer(tileLayers(tile), one.id)!.x).toBeCloseTo(was.one.x, 6);
+    expect(findLayer(tileLayers(tile), two.id)!.y).toBeCloseTo(was.two.y, 6);
+  });
+
+  it("moves every member when the group is dragged", async () => {
+    /* The point of the thing. A group draws nothing of its own — it is
+     * dissolved into its members before anything is painted — so it gets the
+     * same frame a bake does, and what the drag writes is the group's own x/y.
+     * The members follow because that is what a group's position means. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const one = tileLayers(tile).at(-1)!;
+    await addTileShape("ellipse");
+    const two = tileLayers(tile).at(-1)!;
+    await setTileLayerField([tile], two.id, "x", 0.7);
+
+    selectLayer(one.id, tile);
+    alsoSelect(two.id, tile);
+    await groupPicked();
+    const group = tileLayers(tile).find((l) => l.kind === "group")!;
+    const was = {
+      group: { ...group },
+      one: { ...findLayer(tileLayers(tile), one.id)! },
+      two: { ...findLayer(tileLayers(tile), two.id)! },
+    };
+
+    const canvas = (window as { tesseraWall?: fabric.Canvas }).tesseraWall!;
+    await until(() =>
+      canvas.getObjects().some((o) => (o as Tagged & { framing?: boolean }).framing),
+    );
+    const stand = canvas
+      .getObjects()
+      .find((o) => (o as Tagged & { framing?: boolean }).framing)!;
+    expect((stand as Tagged).layerId).toBe(group.id);
+
+    stand.set({ left: (stand.left ?? 0) + 120 });
+    stand.setCoords();
+    canvas.fire("object:modified", { target: stand });
+    await until(() => findLayer(tileLayers(tile), group.id)!.x !== was.group.x);
+
+    /* The group moved and the members did not: their own coordinates are
+     * relative to it, and the displacement is what carries them. Read off the
+     * model rather than the canvas, because the canvas has no group on it at
+     * all — that is the whole reason this needed a frame. */
+    const now = findLayer(tileLayers(tile), group.id)!;
+    expect(now.x - was.group.x).toBeCloseTo(120 / TILE_W, 4);
+    expect(findLayer(tileLayers(tile), one.id)!.x).toBeCloseTo(was.one.x, 6);
+    expect(findLayer(tileLayers(tile), two.id)!.x).toBeCloseTo(was.two.x, 6);
+  });
+
+  it("keeps a group's frame the size of what is in it after it moves", async () => {
+    /* A group's x/y is a displacement, neutral at 0.5, and its members are
+     * drawn at their own coordinates plus it. The frame's reach was measured
+     * from the group's own x instead of from the neutral middle, so every move
+     * grew the box by twice the displacement: half a tile to the right and the
+     * frame came out three times too wide, hanging off the members it is meant
+     * to enclose — and the snap reasons about that box too. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const one = tileLayers(tile).at(-1)!;
+    await addTileShape("ellipse");
+    const two = tileLayers(tile).at(-1)!;
+    selectLayer(one.id, tile);
+    alsoSelect(two.id, tile);
+    await groupPicked();
+    const group = tileLayers(tile).find((l) => l.kind === "group")!;
+
+    const canvas = (window as { tesseraWall?: fabric.Canvas }).tesseraWall!;
+    const frame = () =>
+      canvas.getObjects().find((o) => (o as Tagged & { framing?: boolean }).framing) as
+        | fabric.Object
+        | undefined;
+    await until(() => !!frame());
+    const first = frame()!;
+    const before = first.getScaledWidth();
+
+    // Moved half a tile. The members did not move relative to the group, so
+    // the box that encloses them is the same size in the same place on the
+    // tile — only the whole thing has shifted.
+    await setTileLayerField([tile], group.id, "x", 1);
+    await until(() => !!frame() && frame() !== first);
+
+    expect(frame()!.getScaledWidth()).toBeCloseTo(before, 0);
+  });
+
+  it("duplicates a layer onto its own tile, clear of the original", async () => {
+    /* There was no way to have two of something that share a look. The route
+     * was: insert a fresh layer (which lands on every selected tile), copy the
+     * properties across through two context menus, then drag the copy off the
+     * original it landed exactly on top of. The keyboard sheet has claimed a
+     * duplicate exists for longer than one did.
+     *
+     * Fresh ids all the way down, or the copy and the original answer to the
+     * same name on one tile and every lookup takes the first hit. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const one = tileLayers(tile).at(-1)!;
+    await setTileLayerField([tile], one.id, "fill", "#00ff88");
+
+    await duplicateLayer(one.id, tile);
+
+    const own = tileLayers(tile);
+    expect(own).toHaveLength(2);
+    const copy = own.find((l) => l.id !== one.id)! as ShapeLayer;
+    // Its own id and name, the original's look, and not hidden behind it.
+    expect(copy.id).not.toBe(one.id);
+    expect(copy.name).not.toBe(one.name);
+    expect(copy.fill).toBe("#00ff88");
+    expect(copy.x).toBeGreaterThan((findLayer(own, one.id) as ShapeLayer).x);
+    // And it is what the panel is now showing.
+    expect(app.selected).toBe(copy.id);
+
+    /* A group comes with its members, each of them under an id of its own —
+     * two layers of one name on a tile is the shape nothing here copes with. */
+    await addTileShape("ellipse");
+    const two = tileLayers(tile).at(-1)!;
+    selectLayer(one.id, tile);
+    alsoSelect(two.id, tile);
+    await groupPicked();
+    const group = tileLayers(tile).find((l) => l.kind === "group")!;
+    await duplicateLayer(group.id, tile);
+
+    const ids = [...walkLayers(tileLayers(tile))].map((l) => l.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    const groups = tileLayers(tile).filter((l) => l.kind === "group");
+    expect(groups).toHaveLength(2);
+    expect(groups[0].kind === "group" && groups[0].children).toHaveLength(2);
+    /* And every one of them wears a name of its own. The members came out
+     * carrying the names they were copied from, so the tile listed polygon01
+     * and ellipse01 twice and only the group's own number told them apart. */
+    const names = [...walkLayers(tileLayers(tile))].map((l) => l.name);
+    expect(new Set(names).size).toBe(names.length);
+  });
+
+  it("puts a layer into a group that already exists, where it was drawn", async () => {
+    /* The model has taken a parent since the day groups arrived, and the row
+     * list computes the answer for a drop in a row's middle third — but the
+     * flag that offers that third was hard-coded false and the drop was written
+     * as "no parent". So a group could be made and never added to: the only way
+     * to put a fifth layer in a group of four was to dissolve it, re-select all
+     * five and group again.
+     *
+     * Crossing the boundary swaps the top level's displacement for the group's,
+     * which is what keeps the layer where it is drawn. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const one = tileLayers(tile).at(-1)!;
+    await addTileShape("ellipse");
+    const two = tileLayers(tile).at(-1)!;
+    selectLayer(one.id, tile);
+    alsoSelect(two.id, tile);
+    await groupPicked();
+    const group = tileLayers(tile).find((l) => l.kind === "group")!;
+    await setTileLayerField([tile], group.id, "x", 0.75);
+
+    // A third layer, loose, at a place of its own.
+    await addTileShape("rect");
+    const joiner = tileLayers(tile).at(-1)!;
+    await setTileLayerField([tile], joiner.id, "x", 0.2);
+    const drawnAt = findLayer(tileLayers(tile), joiner.id)!.x;
+
+    await dropTileLayer(tile, joiner.id, group.id, null);
+
+    expect(groupHolding(joiner.id, tile)?.id).toBe(group.id);
+    expect(tileLayers(tile).some((l) => l.id === joiner.id)).toBe(false);
+    /* Same place on the tile, now said in the group's coordinates: its own x
+     * plus the group's quarter-tile shift is where it was. */
+    expect(findLayer(tileLayers(tile), joiner.id)!.x + 0.25).toBeCloseTo(drawnAt, 6);
+  });
+
+  it("colours a group's row and its members' rows, and nothing else", async () => {
+    /* Asked for as: give grp01 red and every layer in it shows red — and
+     * nothing in the layers' own properties or on the wall changes. So it is a
+     * mark on the row, held once on the group: a member wears its group's
+     * rather than carrying a copy, which is why recolouring cannot half-apply
+     * and why a layer taken out of the group loses the colour by leaving. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const one = tileLayers(tile).at(-1)!;
+    await setTileLayerField([tile], one.id, "fill", "#00ff88");
+    await addTileShape("ellipse");
+    const two = tileLayers(tile).at(-1)!;
+    selectLayer(one.id, tile);
+    alsoSelect(two.id, tile);
+    await groupPicked();
+    const group = tileLayers(tile).find((l) => l.kind === "group")!;
+    reveal(group.id);
+    reveal("tiles");
+    await tick();
+
+    await setTileLayerField([tile], group.id, "tint", "#ff0000");
+    await tick();
+    const painted = () =>
+      [...document.querySelectorAll("li.tinted")].map(
+        (el) => (el as HTMLElement).style.getPropertyValue("--tint") || "",
+      );
+    // The group's row and both of its members', all in the one colour.
+    await until(() => painted().length === 3);
+    expect(new Set(painted())).toEqual(new Set(["#ff0000"]));
+
+    /* What must not have happened: the members' own colours are their own, and
+     * the wall has nothing to redraw — a mark on a row is not a pixel. */
+    expect((findLayer(tileLayers(tile), one.id) as ShapeLayer).fill).toBe("#00ff88");
+    expect(findLayer(tileLayers(tile), two.id)!.tint).toBeUndefined();
+    const wall = { ids: visibleIds(), gridLayers: [] };
+    const before = wallPrint(wall, clone(app.manifest));
+    await setTileLayerField([tile], group.id, "tint", "#0000ff");
+    expect(tilesChanged(before, wallPrint(wall, clone(app.manifest)))).toEqual([]);
+  });
+
+  it("says why a group cannot be put inside itself", async () => {
+    /* The one drop the model refuses: a group inside itself, or inside
+     * anything it holds, takes the whole branch out of reach of every list.
+     * The row springing back reads as a drag that never registered, so the
+     * refusal says what it is. (A row dropped on itself never gets this far —
+     * the drag layer ignores its own row, which is the right kind of nothing.)
+     */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const one = tileLayers(tile).at(-1)!;
+    await addTileShape("ellipse");
+    const two = tileLayers(tile).at(-1)!;
+    selectLayer(one.id, tile);
+    alsoSelect(two.id, tile);
+    await groupPicked();
+    const group = tileLayers(tile).find((l) => l.kind === "group")!;
+    const steps = historySteps().length;
+
+    app.error = "";
+    await dropTileLayer(tile, group.id, group.id, null);
+    expect(app.error).toContain("inside itself");
+    // Into one of its own members, which is the same mistake one level down.
+    app.error = "";
+    await dropTileLayer(tile, group.id, one.id, null);
+    expect(app.error).toContain("inside itself");
+
+    // And nothing moved, and no step was spent saying so.
+    expect(groupHolding(one.id, tile)?.id).toBe(group.id);
+    expect(historySteps().length).toBe(steps);
+  });
+
+  it("takes a layer out of its group and leaves it where it was drawn", async () => {
+    /* Crossing that boundary swaps one displacement for another: the group's
+     * for the top level's. Without the swap the layer jumps by the group's
+     * offset, which is exactly the thing nobody asked for when they said "take
+     * this one out". */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const one = tileLayers(tile).at(-1)!;
+    await addTileShape("ellipse");
+    const two = tileLayers(tile).at(-1)!;
+    selectLayer(one.id, tile);
+    alsoSelect(two.id, tile);
+    await groupPicked();
+
+    const group = tileLayers(tile).find((l) => l.kind === "group")!;
+    await setTileLayerField([tile], group.id, "x", 0.75);
+    // Where it is drawn: its own x plus the group's quarter-tile shift.
+    const drawnAt = findLayer(tileLayers(tile), two.id)!.x + 0.25;
+
+    expect(groupHolding(two.id, tile)?.id).toBe(group.id);
+    await takeOutOfGroup(two.id, tile);
+
+    expect(groupHolding(two.id, tile)).toBeUndefined();
+    expect(tileLayers(tile).some((l) => l.id === two.id)).toBe(true);
+    // Same place on the tile, now said in its own coordinates.
+    expect(findLayer(tileLayers(tile), two.id)!.x).toBeCloseTo(drawnAt, 6);
+    // The group keeps the other one.
+    expect(groupHolding(one.id, tile)?.id).toBe(group.id);
+  });
+
+  it("hides and deletes a layer that sits inside a group", async () => {
+    /* Every row in the list carries an eye, a lock and a ×, and the rows for a
+     * group's children are drawn by the same snippet as the rest. Two of the
+     * three did nothing there: the finder walks the tree, the writer looked at
+     * the top level only, and they disagreed in silence. The lock beside them
+     * worked, which is what made it read as a fluke rather than a rule.
+     *
+     * The delete was the worse half. It got past its own guard — that one
+     * walks — and then removed nothing, while still pushing a step named
+     * "Delete layer" that undoes to the same picture. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const one = tileLayers(tile).at(-1)!;
+    await addTileShape("ellipse");
+    const two = tileLayers(tile).at(-1)!;
+    selectLayer(one.id, tile);
+    alsoSelect(two.id, tile);
+    await groupPicked();
+    const group = tileLayers(tile).find((l) => l.kind === "group")!;
+
+    await toggleLayerHidden(two.id, tile);
+    expect(findLayer(tileLayers(tile), two.id)!.hidden).toBe(true);
+    await toggleLayerHidden(two.id, tile);
+    expect(findLayer(tileLayers(tile), two.id)!.hidden).toBeFalsy();
+
+    await deleteLayer(two.id, tile);
+    expect(findLayer(tileLayers(tile), two.id)).toBeUndefined();
+    // The group is still there with the other one in it: a member leaving is
+    // not the group dissolving.
+    expect(groupHolding(one.id, tile)?.id).toBe(group.id);
+  });
+
+  it("takes a grouped layer off every picked tile", async () => {
+    /* The wall menu counts with a walk and removed without one, so "Remove
+     * layer — 2 tile(s)" reported two and reached none. */
+    await enterInbox();
+    const [a, b] = app.folderIds;
+    app.selectedTiles = [a, b];
+    await addTileShape("rect");
+    const one = tileLayers(a).at(-1)!;
+    await addTileShape("ellipse");
+    const two = tileLayers(a).at(-1)!;
+    for (const t of [a, b]) {
+      selectLayer(one.id, t);
+      alsoSelect(two.id, t);
+      await groupPicked();
+    }
+    app.selectedTiles = [a, b];
+    expect(layersOnSelection().find((l) => l.id === two.id)?.tiles).toBe(2);
+
+    await removeLayerFromSelection(two.id);
+    for (const t of [a, b]) expect(findLayer(tileLayers(t), two.id)).toBeUndefined();
+  });
+
+  it("frames a layer picked inside a group, where the group has put it", async () => {
+    /* Reported as: clicking the picture inside a group shows no frame and no
+     * ghost on the wall.
+     *
+     * The frame looked the layer up in the tile's own stack, and a layer inside
+     * a group is not in that array — it is in the group's children. It reads
+     * what the wall draws instead, which is the stack with the groups folded
+     * away and their displacement carried by the members. That second half
+     * matters as much as the first: the frame has to stand where the layer is
+     * drawn, not where its own coordinates say. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("icon", "Ranger");
+    const member = tileLayers(tile).at(-1)!;
+    await addTileShape("rect");
+    const other = tileLayers(tile).at(-1)!;
+    selectLayer(member.id, tile);
+    alsoSelect(other.id, tile);
+    await groupPicked();
+
+    const group = tileLayers(tile).find((l) => l.kind === "group")!;
+    // Move the group, so the member's drawn place and its own differ.
+    await setTileLayerField([tile], group.id, "x", 0.75);
+    selectLayer(member.id, tile);
+
+    const canvas = (window as { tesseraWall?: fabric.Canvas }).tesseraWall!;
+    await until(() =>
+      canvas.getObjects().some((o) => (o as Tagged & { framing?: boolean }).framing),
+    );
+    const stand = canvas
+      .getObjects()
+      .find((o) => (o as Tagged & { framing?: boolean }).framing)!;
+    expect((stand as Tagged).layerId).toBe(member.id);
+
+    // Where the wall draws it: the member's own x plus the group's shift.
+    const inside = findLayer(tileLayers(tile), member.id)!;
+    const cell = cellAt(visibleIds().indexOf(tile));
+    expect((stand.left ?? 0) - cell.x).toBeCloseTo((inside.x + 0.25) * TILE_W, 0);
+  });
+
+  it("pulls a dragged layer onto its cell's centre", async () => {
+    /* The wall snaps a tile layer against its own cell and its neighbours on
+     * that tile — the same pull the layout editor had, with the cell where the
+     * sheet used to be. Asserted as an outcome: dragged to just short of the
+     * centre, it has to land exactly on it. */
+    const { canvas, tile, layer } = await wallWith(async () => {
+      await addTileShape("rect");
+      const l = tileLayers(app.folderIds[0]).at(-1)!;
+      await setTileLayerField([app.folderIds[0]], l.id, "x", 0.3);
+    });
+
+    /* Given a real size and zoom first, for the reason the guide-grid test
+       gives: mounted in a bare document the stage collapses to a pixel wide and
+       the wall is drawn at 0.02% zoom, where a drag of sixty scene pixels is
+       sub-pixel on screen and Fabric's transform does nothing at all. */
+    canvas.setDimensions({ width: 900, height: 700 });
+    canvas.setViewportTransform([0.5, 0, 0, 0.5, 0, 0]);
+    canvas.renderAll();
+    await tick();
+
+    /* Held still first. Setting the field bumps the document and the wall
+       redraws the tile, so the object fetched a moment earlier is replaced and
+       the gesture lands on an orphan — the same race the placing-tool tests
+       ran into, with the same silent pass-or-fail. */
+    const current = () => canvas.getObjects().find((o) => (o as Tagged).layerId === layer.id);
+    let held = current();
+    let steady = 0;
+    await until(() => {
+      const now = current();
+      steady = now && now === held ? steady + 1 : 0;
+      held = now;
+      return steady >= 8;
+    });
+    const obj = held!;
+    /* The number, not the layer. findLayer hands back the live object, so
+       holding it and comparing `.x` against itself later is a condition that
+       can never come true — this test waited out its own deadline on exactly
+       that while the drag underneath had worked perfectly. */
+    const startX = findLayer(app.manifest.tiles[tile]!.layers, layer.id)!.x;
+    // Short of the middle by a couple of scene pixels: inside the pull, and
+    // nowhere near it without one.
+    const gap = (0.5 - startX) * TILE_W - 3;
+    await dragObject(canvas, obj, gap, 0);
+    await until(() => findLayer(app.manifest.tiles[tile]!.layers, layer.id)!.x !== startX);
+
+    const landed = findLayer(app.manifest.tiles[tile]!.layers, layer.id)!;
+    expect(landed.x).toBeCloseTo(0.5, 3);
+  });
+
+  it("keeps drawing the layer it is dragging when the tile is rebuilt under it", async () => {
+    /* Reported as: with one tile picked, dragging a layer moves only the frame
+     * — the layer stays where it was and catches up the moment anything in the
+     * panel is changed. With every tile picked it follows live.
+     *
+     * A rebuild takes the tile's objects off the canvas and puts new ones back.
+     * Fabric holds the one being dragged, so it goes on transforming an object
+     * that is no longer on the canvas: its controls are drawn from the active
+     * object and keep moving, while the lower canvas shows the fresh object
+     * standing at the old position. The drop still writes — object:modified
+     * carries the detached object and its transform is real — so the model is
+     * right and only the picture is wrong, until the next structural change
+     * rebuilds and finally draws it.
+     *
+     * Two things had to be true at once for the earlier attempt at this test to
+     * miss it. The bump has to change something on *this* tile, or
+     * tilesChanged returns an empty list and no object is replaced at all; and
+     * it has to land inside the gesture, which is what every other drag test
+     * here carefully waits out. */
+    const tile0 = () => app.folderIds[0];
+    const { canvas, tile, layer } = await wallWith(async () => {
+      await addTileText();
+      await addTileShape("rect");
+    });
+    const caption = tileLayers(tile0()).find((l) => l.kind === "text")!;
+
+    canvas.setDimensions({ width: 900, height: 700 });
+    canvas.setViewportTransform([0.5, 0, 0, 0.5, 0, 0]);
+    canvas.renderAll();
+    await tick();
+
+    const current = () => canvas.getObjects().find((o) => (o as Tagged).layerId === layer.id);
+    let held = current();
+    let steady = 0;
+    await until(() => {
+      const now = current();
+      steady = now && now === held ? steady + 1 : 0;
+      held = now;
+      return steady >= 8;
+    });
+    const obj = held!;
+
+    let bumped = false;
+    await dragObject(canvas, obj, 90, 0, () => {
+      if (bumped) return;
+      bumped = true;
+      // What changing a field in the panel does, on this tile, right now.
+      void setTileLayerField([tile], caption.id, "opacity", 0.5);
+    });
+    await until(() => !canvas.getObjects().includes(obj), 3000).catch(() => {});
+
+    /* The object the wall is drawing has to be the one the hand moved. Asked of
+     * the canvas rather than the model, because the model was never the part
+     * that was wrong. */
+    const drawn = current();
+    expect(drawn).toBeTruthy();
+    const cell = cellAt(visibleIds().indexOf(tile));
+    expect((drawn!.left ?? 0) - cell.x).toBeCloseTo(
+      findLayer(app.manifest.tiles[tile]!.layers, layer.id)!.x * TILE_W,
+      0,
+    );
   });
 });

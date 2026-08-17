@@ -76,19 +76,22 @@ type Common = {
    * through the layer rather than a piece cut out of it. Absent means the
    * ordinary way round. */
   maskInvert?: boolean;
+  /* A colour for the row in the list, and for the rows of everything inside it
+   * when this is a group. Nothing draws it: the wall, the export and every
+   * other field of the layer are untouched. It is there so a stack of a dozen
+   * layers can be read at a glance — which of these belong together — the way
+   * a layer colour works in Photoshop.
+   *
+   * On a group in practice, though it costs nothing to allow anywhere: the
+   * members read their group's rather than carrying their own, so recolouring
+   * a group is one write and cannot half-apply. */
+  tint?: string;
   /* Set on anything a Layout put here: the picture rendered from it, and any
    * caption it keeps live. Lets one Layout find every copy of itself across
    * every tile carrying it and bring them all up to date in one pass. Absent
    * on a layer
    * created by hand. */
   layoutId?: string;
-  /* Inside a Layout: keep this layer out of the rendered stamp and copy it
-   * onto the tiles as a live layer instead. Baked pixels are the same pixels
-   * on every tile, and the whole point here is that they should not be — a
-   * caption naming the character, a logo for their class. Meaningless on a
-   * layer already sitting on a tile, where a live layer is live by
-   * construction. */
-  perTile?: boolean;
   /* On a tile: this is such a copy, not the stamp. Both carry the same
    * layoutId and both can be images, so without this the cleanup pass that
    * removes withdrawn live layers could not tell them apart and would delete
@@ -280,13 +283,20 @@ export function shiftLayer(l: Layer, dx: number, dy: number) {
  *  into them on the way out. */
 export function removeLayerFrom(list: Layer[] | undefined, id: string) {
   if (!list) return;
-  const at = list.findIndex((l) => l.id === id);
+  /* The list a group's member sits in is the group's own children, not the
+   * tile's stack. Looked up rather than assumed: every row in the layer list
+   * carries a ×, group members included, and this used to find nothing there
+   * and remove nothing — quietly, with the caller's undo step already
+   * pushed. */
+  const owner = findList(list, id);
+  if (!owner) return;
+  const at = owner.findIndex((l) => l.id === id);
   if (at < 0) return;
-  const [gone] = list.splice(at, 1);
+  const [gone] = owner.splice(at, 1);
   if (gone.kind === "group") {
     const { dx, dy } = groupShift(gone);
     for (const child of gone.children) shiftLayer(child, dx, dy);
-    list.splice(at, 0, ...gone.children);
+    owner.splice(at, 0, ...gone.children);
   }
 }
 
@@ -363,31 +373,15 @@ export type Tile = {
    *  alone, drawn on top of whatever its group gives it — which is what lets a
    *  single portrait carry a layout without a group being invented for it. */
   layers: Layer[];
-  /** Text content per shared layer — style syncs across tiles, wording does not. */
+  /** Written, and read by nobody here.
+   *
+   *  It held one tile's wording for a caption a Layout shared across the wall.
+   *  A caption belongs to its tile now and carries its own words, so nothing in
+   *  this build consults it — but the build before this one calls droppedWork on
+   *  every open, and that does `Object.keys(t.text)` with no guard. Dropping the
+   *  field would throw there, and that build is the way back if this one
+   *  misbehaves. An empty object costs nothing and keeps the door open. */
   text: Record<string, string>;
-  /** Picture per shared image layer — and class per shared icon layer, which is
-   *  the same idea and shares the map: the layout owns where and how big, the
-   *  tile owns which picture or which class. "" means this tile deliberately
-   *  shows none. Optional so manifests written before per-tile pictures existed
-   *  still load unchanged. */
-  swap?: Record<string, string>;
-  /** How this tile frames its own picture, per shared image layer.
-   *
-   *  The completion of the same bargain rather than a break with it. Masking a
-   *  picture is how you show one part of it, and which part is right depends on
-   *  the picture: a face sits centre in one portrait and left in the next. The
-   *  Layout still owns where the frame is and how big — the mask defines that —
-   *  and what moves is the picture inside it, which is the tile's own. */
-  frame?: Record<string, Frame>;
-  /** Fill per shared shape layer — the same bargain as a picture's, one kind
-   *  over: the Layout owns the form and where it sits, the tile owns what
-   *  colour it is. A whole `Paint`, so a tile can answer a gradient with a flat
-   *  colour and the other way round.
-   *
-   *  Its own map rather than a third meaning for `swap`, which holds strings:
-   *  a gradient is an object, and widening that map would touch every reader of
-   *  it for one new kind. Optional, like the two above. */
-  paint?: Record<string, Paint>;
   /** Put away: out of Unsorted, into the archive, still on disk and still
    *  carrying whatever was made for it. Absent is the ordinary state — see
    *  archivedIds, and setArchived for why it is only ever true on a tile no
@@ -625,122 +619,14 @@ export function dissolveFolder(p: Project, folderId: string) {
 /** Of `ids`, the ones no drawer has taken, in the order given. */
 export const looseTiles = (p: Project, ids: string[]) => ids.filter((id) => !folderOf(p, id));
 
-/** A tile-sized composition, edited on its own — not on the wall — and kept
- *  around as a reusable document rather than being consumed the moment it is
- *  used. It is never rendered directly onto a tile; it is only ever rendered
- *  to a flat picture and *that* is what gets stamped (see ImageLayer.layoutId
- *  and assignLayout in editor.svelte.ts). That split is deliberate: the layout
- *  keeps its structure, styles and per-layer editability for as long as you
- *  want to keep changing it, while what actually sits on a tile is nothing
- *  more exotic than an ordinary picture, reusing every bit of image-layer
- *  machinery that already exists. */
-export type Layout = {
-  id: string;
-  name: string;
-  layers: Layer[];
-  /** Fingerprint of `layers` as they were when this Layout was last rendered
-   *  and stamped. Absent until the first stamp. Comparing it against the
-   *  current fingerprint is what tells "there are changes the tiles have not
-   *  seen yet" apart from "the tiles are already showing this". */
-  stamped?: string;
-};
-
-export const newLayout = (name: string): Layout => ({ id: newId(), name, layers: [] });
-
-/** A copy of a Layout under a new name, with fresh ids all the way down.
- *
- *  The ids have to change. Per-tile wording lives in `tile.text` keyed by layer
- *  id, and `syncLiveLayers` finds the copy of a caption by id — so a duplicate
- *  that kept them would quietly share both with the original, and editing one
- *  would move the other's captions. Mask references are remapped as they are
- *  copied, so they keep pointing inside the duplicate rather than back at the
- *  layer they were cloned from.
- *
- *  `stamped` is deliberately not carried over: the copy has never been put on
- *  a tile, so it has nothing to be out of date with. */
-export function duplicateLayout(layout: Layout, name: string): Layout {
-  const swap = new Map<string, string>();
-  const renumber = (layers: Layer[]): Layer[] =>
-    layers.map((l) => {
-      const copy = clone(l);
-      copy.id = newId();
-      swap.set(l.id, copy.id);
-      if (copy.kind === "group") copy.children = renumber(copy.children);
-      return copy;
-    });
-
-  const layers = renumber(layout.layers);
-  for (const l of walkLayers(layers)) if (l.maskId) l.maskId = swap.get(l.maskId);
-  return { id: newId(), name, layers };
-}
-
-/** Copies layers within one Layout, offset a little so the copy is visible.
- *
- *  Fresh ids all the way down, and mask references remapped inside the copied
- *  set — a duplicate pointing back at the original's stencil would move when
- *  the original was edited, which is exactly the surprise duplicating is meant
- *  to avoid. A mask naming something *outside* the set keeps pointing there,
- *  because that layer is still the one meant.
- *
- *  Takes the layers themselves rather than ids, because a selection can name
- *  something nested in a group and only the caller knows which list each one
- *  came out of — the copy has to go back into that same list, or duplicating a
- *  layer inside a group would quietly do nothing.
- *
- *  Names are left to the caller too: only it knows the stack the copies are
- *  about to join, and that is what decides the next free number. */
-export function duplicateLayers(picked: Layer[], nudge = 0.02): Layer[] {
-  const swap = new Map<string, string>();
-  const renumber = (from: Layer[]): Layer[] =>
-    from.map((l) => {
-      const copy = clone(l);
-      copy.id = newId();
-      swap.set(l.id, copy.id);
-      if (copy.kind === "group") copy.children = renumber(copy.children);
-      return copy;
-    });
-
-  const copies = renumber(picked);
-  for (const l of walkLayers(copies)) {
-    if (l.maskId && swap.has(l.maskId)) l.maskId = swap.get(l.maskId);
-  }
-  /* Only the layers actually picked move: a group's children carry absolute
-   * coordinates, and nudging them as well would shift them twice. */
-  for (const l of copies) {
-    l.x += nudge;
-    l.y += nudge;
-  }
-  return copies;
-}
-
-/** Cheap content fingerprint of a Layout's layers.
- *
- *  A hash rather than the JSON itself: the comparison only ever needs to
- *  detect difference, and keeping a second full copy of every layout inside
- *  the manifest would be a lot of bytes to answer one yes/no question. */
-export function layoutFingerprint(layout: Layout): string {
-  const json = JSON.stringify(layout.layers);
-  let h = 5381;
-  for (let i = 0; i < json.length; i++) h = ((h * 33) ^ json.charCodeAt(i)) >>> 0;
-  // Length alongside the hash, so two different layouts colliding on the hash
-  // still have to also match in size before being called identical.
-  return `${h.toString(36)}-${json.length.toString(36)}`;
-}
-
-/** Whether this Layout has edits the stamps on the tiles do not show yet.
- *  False for one never stamped: there is nothing to bring up to date, and the
- *  action for that case is stamping it somewhere in the first place. */
-export const layoutNeedsRestamp = (layout: Layout) =>
-  layout.stamped !== undefined && layout.stamped !== layoutFingerprint(layout);
 
 /** Tiles are global, keyed by the id the game gave them; projects only say
  *  which wall an id belongs to. That split is what lets a tile move between
  *  projects without its layers, wording or pictures going anywhere. */
 export type Manifest = {
-  version: 7;
+  version: 8;
   projects: Project[];
   tiles: Record<string, Tile>;
-  layouts: Layout[];
 };
 
 export const emptyTile = (): Tile => ({ base: null, layers: [], text: {} });
@@ -756,16 +642,12 @@ export const emptyTile = (): Tile => ({ base: null, layers: [], text: {} });
 export function stripTile(t: Tile) {
   t.layers = [];
   t.text = {};
-  delete t.swap;
-  delete t.frame;
-  delete t.paint;
 }
 
 export const emptyManifest = (): Manifest => ({
-  version: 7,
+  version: 8,
   projects: [],
   tiles: {},
-  layouts: [],
 });
 
 const newId = () => Math.random().toString(36).slice(2, 10);
@@ -907,58 +789,24 @@ export const stencilIds = (layers: Layer[]): Set<string> => {
  *  nothing of its own to cut with. Itself is out too, since a layer clipped to
  *  its own outline is either a no-op or an empty picture.
  *
- *  So is anything editable in the grid. Its content is different on every tile
- *  by design, so it cannot be the thing that decides one shape — and it is
- *  stripped out of the stamp entirely, which had the editor clipping with it
- *  while the picture written to the game did not.
- *
  *  Two layers masking each other is left possible — both become stencils,
  *  nothing draws, and one click puts it back. */
-/** Whether `cutter` actually cuts `l` — the single answer four places need.
+/** Whether `cutter` actually cuts `l` — the single answer the dropdown, the
+ *  renderer and the stencil rule all need, written once because a rule three
+ *  places state in their own words is a rule that will disagree with itself.
  *
- *  A cutter that is editable in the grid says something different on every
- *  tile, so what it cuts has to be resolved per tile as well. That is exactly
- *  what a per-tile layer is: both travel to the tile, and the cut is computed
- *  there against this tile's own words. A stamped layer cannot use one — the
- *  stamp is a single picture shared by every wall tile, and there is no shared
- *  answer to "which letters".
- *
- *  Written once and asked by the dropdown, the renderer, the stencil rule and
- *  the copy that travels to the tile, because a rule that four places state in
- *  their own words is a rule that will disagree with itself — and it did: the
- *  stencil rule was the one that had never heard of `perTile`. */
+ *  There used to be a second clause: a cutter marked "editable in the grid"
+ *  said something different on every tile, so it could only cut a layer that
+ *  travelled to the tiles too — a stamp was one picture shared by forty-four
+ *  portraits and had no shared answer to "which letters". Every layer is on a
+ *  tile now, so both sides of that test are always true. */
 export const cutApplies = (l: Layer, cutter: Layer | undefined): boolean =>
-  canCut(l, cutter) && (!cutter!.perTile || !!l.perTile);
-
-/** Whether one layer could cut another at all, leaving aside where each of them
- *  lives. A group draws nothing of its own, and nothing cuts itself. */
-const canCut = (l: Layer, cutter: Layer | undefined): boolean =>
   !!cutter && cutter.kind !== "group" && cutter.id !== l.id;
 
-/** What the mask dropdown offers — everything that could cut, including a
- *  per-tile cutter that today's rule would refuse.
- *
- *  The rule stands: a cutter that varies per tile can only cut something that
- *  travels to the tiles as well, because a stamp is one picture shared by
- *  forty-four portraits and cannot be cut forty-four ways. What changes is who
- *  has to know it. Leaving those cutters out of the list made the feature look
- *  broken — the icon was simply not there, with nothing said — so they are
- *  offered, and choosing one takes the layer along (see setLayerField). */
-export const maskOffers = (layers: Layer[], layerId: string): Layer[] => {
-  const self = findLayer(layers, layerId);
-  return self ? [...walkLayers(layers)].filter((l) => canCut(self, l)) : [];
-};
-
-/** The layers this one cuts — the ones that have to travel wherever it does.
- *
- *  A per-tile cutter may only cut a per-tile layer (see cutApplies), so the
- *  moment an icon starts naming a class per tile, everything it was already
- *  cutting has to travel too. Without this the switch quietly voids masks that
- *  were set before it: the id stays on the layer, the dropdown stops listing
- *  the cutter, and the shape simply draws whole with nothing said. */
-export const cutBy = (layers: Layer[], cutterId: string): Layer[] =>
-  [...walkLayers(layers)].filter((l) => l.maskId === cutterId);
-
+/** What the mask dropdown offers. One list, not two: it used to also show the
+ *  cutters the rule above would have refused, because leaving them out made
+ *  the feature look broken — the icon was simply not there, with nothing said.
+ *  Nothing is refused any more, so the two lists are the same list. */
 export const maskChoices = (layers: Layer[], layerId: string): Layer[] => {
   const self = findLayer(layers, layerId);
   return self ? [...walkLayers(layers)].filter((l) => cutApplies(self, l)) : [];
@@ -982,24 +830,17 @@ export const layerLabel = (l: Layer) => {
  *  belong to the project and are drawn once over the whole wall, not per tile. */
 export const resolveLayers = (m: Manifest, id: string): Layer[] => m.tiles[id]?.layers ?? [];
 
-/** What one tile's copy of a caption actually says.
+/** What a caption says on one tile.
  *
- *  `??` and not `||`: an override of "" means the user emptied this tile's
- *  caption on purpose and it has to stay empty. Falling back on a falsy value
- *  would put the layer's default text back the moment the last character was
- *  deleted — so an override is only absent when its key is absent, and
- *  clearing the field stores "" rather than removing it. */
-export const layerText = (texts: Record<string, string>, layer: TextLayer, tileId: string) =>
-  (texts[layer.id] ?? layer.text).replaceAll("{{id}}", tileId);
-
-/** Which picture one tile shows for a live image layer, or "" for none.
+ *  Its own words, with "{{id}}" standing in for the portrait — one caption
+ *  added to forty tiles reads as forty different names without anything
+ *  further being typed, and this is the only place that substitution happens.
  *
- *  Same `??` reasoning as layerText: "" is a real answer — this tile shows no
- *  logo on purpose — and only an absent key falls back to the layer's own
- *  picture. `||` here would put the default back the moment someone chose
- *  "none". */
-export const layerAsset = (swaps: Record<string, string>, layer: ImageLayer) =>
-  swaps[layer.id] ?? layer.asset;
+ *  It used to consult the tile's wording record first, which is where a
+ *  Layout's shared caption kept each portrait's own text. A caption belongs to
+ *  its tile now, so there is one answer and nothing to prefer it over. */
+export const layerText = (layer: TextLayer, tileId: string) =>
+  layer.text.replaceAll("{{id}}", tileId);
 
 /** A tile's own placement of a shared layer: a nudge, a zoom and a turn, all
  *  relative to what the Layout asked for. Absent is the ordinary state and
@@ -1010,52 +851,6 @@ export const layerAsset = (swaps: Record<string, string>, layer: ImageLayer) =>
  *  every time; a bar drawn longer on one is a decision. Absent means "the same
  *  as `z`", which is what every placement written before this stored and what
  *  every other kind still means. */
-export type Frame = { x: number; y: number; z: number; a: number; zh?: number };
-
-export const NO_FRAME: Frame = { x: 0, y: 0, z: 1, a: 0 };
-
-/** The layer as this tile places it. Relative rather than absolute, so moving
- *  the layer in the Layout still moves every tile's copy with it and only the
- *  difference each tile chose stays its own.
- *
- *  The zoom is a factor rather than a width because a picture, an icon and a
- *  caption each store their size in a different field. It lands on whichever
- *  one that is — except on a caption, which takes none: the Layout owns the
- *  type size, and one caption larger than the other forty-three reads as a
- *  mistake rather than as a choice. The tool offers a caption no corner
- *  handles, which is the same rule seen from the other side. */
-export function framed<L extends Layer>(l: L, f: Frame | undefined): L {
-  if (!f) return l;
-  const size =
-    l.kind === "image"
-      ? { scale: l.scale * f.z }
-      : l.kind === "shape"
-        ? { w: l.w * f.z, h: l.h * (f.zh ?? f.z) }
-        : {};
-  // The generic is the promise that a framed layer is the kind it went in as;
-  // TypeScript cannot see that through a spread, hence the one cast.
-  return { ...l, x: l.x + f.x, y: l.y + f.y, rotation: l.rotation + f.a, ...size } as L;
-}
-
-/** Which class one tile shows for a live icon layer, or "" for none.
- *
- *  The same map as a picture's, one kind over. A wall of characters is the
- *  reason the icons exist at all: one layer, placed and coloured once in the
- *  Layout, and each portrait naming its own class. Stored by name — the
- *  artwork ships with the application, so there is nothing to import and
- *  nothing to carry. */
-export const layerIcon = (swaps: Record<string, string>, layer: ShapeLayer) =>
-  swaps[layer.id] ?? layer.icon;
-
-/** What colour one tile paints a live shape, or the layer's own.
- *
- *  `??` for the same reason as everywhere else in this family: an override is
- *  absent only when its key is absent. There is no "" here to mean "none" — a
- *  shape with no fill is a shape the Layout drew that way, and a tile saying so
- *  would be saying nothing at all. */
-export const layerPaint = (paints: Record<string, Paint>, layer: ShapeLayer) =>
-  paints[layer.id] ?? layer.fill;
-
 /** Brings a manifest into line with the folder it belongs to.
  *
  *  Characters get created and deleted between sessions — and a folder can be
@@ -1103,9 +898,7 @@ export function droppedWork(m: Manifest, ids: string[]): string[] {
     if (has.has(id) || !t) return false;
     return (
       !!t.base ||
-      t.layers.length > 0 ||
-      Object.keys(t.text).length > 0 ||
-      Object.keys(t.swap ?? {}).length > 0
+      t.layers.length > 0
     );
   });
 }
@@ -1223,7 +1016,7 @@ function toV6(m: Raw): Raw {
     const base = raw && "asset" in raw ? (raw as NonNullable<Base>) : ((raw as Tile)?.base ?? null);
     tiles[id] = { ...emptyTile(), base };
   }
-  const layouts = ((m.layouts ?? []) as Layout[]).map(({ stamped: _dropped, ...rest }) => rest);
+  const layouts = ((m.layouts ?? []) as V7Layout[]).map(({ stamped: _dropped, ...rest }) => rest);
   return {
     version: 6,
     order: (m.order as string[]) ?? [],
@@ -1298,7 +1091,180 @@ function toV7(m: Raw): Raw {
 
   for (const tile of Object.values(tiles)) dropOrphanLiveLayers(tile);
 
-  return { version: 7, projects: [main], tiles, layouts: (m.layouts ?? []) as Layout[] };
+  return { version: 7, projects: [main], tiles, layouts: (m.layouts ?? []) as V7Layout[] };
+}
+
+/* --- v7 → v8: the stamps come apart. -----------------------------------
+ *
+ * A design used to reach a tile as one baked PNG with the layout's id on it,
+ * plus live copies of whatever could not be baked. The wall could not edit any
+ * of it — everything wearing a layoutId was locked, because the layout was
+ * where the positions came from.
+ *
+ * v8 has no layouts. Each tile carries the design as ordinary layers it owns
+ * outright, which is what makes the grid the editor: the same layers, on the
+ * tile, editable, and still sharing their ids across tiles so one edit can
+ * reach all of them.
+ *
+ * The rules below are spelled out here rather than imported from stamps.ts,
+ * which this release deletes. A migration that reads a file written years from
+ * now must not depend on code that stopped existing. */
+
+/** A layer the tile is holding on a layout's behalf rather than a stamp.
+ *
+ *  A caption counts whether or not it carries the flag — the ones written
+ *  before `live` existed have none, and a stamp is never text. */
+const wasLiveCopy = (l: Layer) => !!l.layoutId && (!!l.live || l.kind === "text");
+
+/** A v7 layer's flag for "keep this one out of the rendered stamp and copy it
+ *  onto the tiles instead" — a caption naming the character, a logo for their
+ *  class. Read here and nowhere else: it described which side of a stamp a
+ *  layer stood on, and there are no stamps. */
+type V7Layer = Layer & { perTile?: boolean };
+
+/** The baked half of a layout: everything that is not kept live per tile.
+ *
+ *  Groups are rebuilt without their live members rather than dropped, so the
+ *  displacement a group applies to its remaining children still holds. */
+const bakedHalf = (layers: V7Layer[]): Layer[] =>
+  layers
+    .filter((l) => !(l.kind !== "group" && l.perTile))
+    .map((l) => (l.kind === "group" ? { ...l, children: bakedHalf(l.children) } : l));
+
+/** How a v7 tile framed its own copy of a shared picture: a difference from
+ *  where the design put it, not a placement. Declared here with the rest of the
+ *  old shape — folding one into the layer is the last thing anything does with
+ *  it, and a layer holds its own placement now. */
+type V7Frame = { x: number; y: number; z: number; a: number; zh?: number };
+
+type V7Tile = Tile & {
+  /** Wording per shared layer: where a Layout's one caption kept each
+   *  portrait's own name. A caption belongs to its tile now and carries its
+   *  words itself, so this is read once, folded in, and dropped. */
+  text?: Record<string, string>;
+  swap?: Record<string, string>;
+  paint?: Record<string, Paint>;
+  frame?: Record<string, V7Frame>;
+};
+
+/** The reusable tile-sized composition v7 stamped onto tiles. Declared here
+ *  rather than in the model above, because reading one is the only thing this
+ *  build still does with it: `stamped` was the fingerprint that told a stamp it
+ *  was out of date, and there are no stamps to tell. */
+type V7Layout = { id: string; name: string; layers: Layer[]; stamped?: string };
+
+function toV8(m: Raw): Raw {
+  const tiles = clone((m.tiles ?? {}) as Record<string, V7Tile>);
+  const layouts = new Map(
+    ((m.layouts ?? []) as V7Layout[]).map((l) => [l.id, l] as const),
+  );
+
+  for (const tile of Object.values(tiles)) {
+    if (!tile?.layers) continue;
+    /* Gathered before anything is rewritten: a frame only ever described a
+     * live copy, and framed() applies it at draw time for those and nothing
+     * else. Records left behind by a withdrawn copy survive by design, and
+     * folding one of those would move a layer that draws unframed today. */
+    const framedIds = new Set(tile.layers.filter(wasLiveCopy).map((l) => l.id));
+
+    const out: Layer[] = [];
+    for (const l of tile.layers) {
+      const stamp = l.kind === "image" && !!l.layoutId && !l.live;
+      if (!stamp) {
+        out.push(l);
+        continue;
+      }
+      const layout = layouts.get(l.layoutId!);
+      // A stamp naming a layout nobody has any more dissolves to nothing, which
+      // is what pruneDeadLayoutRefs did on open for the same case.
+      if (!layout) continue;
+      for (const baked of bakedHalf(layout.layers)) {
+        const copy = clone(baked);
+        /* The eye on a stamp was the switch for the whole assignment, so it has
+         * to reach every layer that assignment becomes — otherwise a design
+         * someone switched off comes back at migration. */
+        if (l.hidden) for (const inner of walkLayers([copy])) inner.hidden = true;
+        out.push(copy);
+      }
+    }
+
+    for (const l of walkLayers(out)) {
+      const text = tile.text?.[l.id];
+      if (l.kind === "text" && text !== undefined) l.text = text;
+      const swap = tile.swap?.[l.id];
+      if (swap !== undefined) {
+        // "" is a real answer on both — this tile shows no picture, no class.
+        if (l.kind === "image") l.asset = swap;
+        else if (l.kind === "shape" && l.shape === "icon") l.icon = swap;
+      }
+      const paint = tile.paint?.[l.id];
+      if (paint !== undefined && l.kind === "shape") l.fill = paint;
+      const f = framedIds.has(l.id) ? tile.frame?.[l.id] : undefined;
+      if (f) {
+        l.x += f.x;
+        l.y += f.y;
+        l.rotation += f.a;
+        if (l.kind === "image") l.scale *= f.z;
+        else if (l.kind === "shape") {
+          l.w *= f.z;
+          l.h *= f.zh ?? f.z;
+        }
+      }
+      // Only ever meant something while there were layouts to point at.
+      delete l.layoutId;
+      delete l.live;
+      delete (l as V7Layer).perTile;
+    }
+
+    tile.layers = out;
+    /* All four described a design the tile did not own — the words, the
+     * picture, the colour and the placement are on the layer now, folded in
+     * above. `text` is emptied rather than dropped: see the field itself. */
+    tile.text = {};
+    delete tile.swap;
+    delete tile.paint;
+    delete tile.frame;
+  }
+
+  return { version: 8, projects: m.projects, tiles };
+}
+
+/** Gives a fresh id to any layer whose id is already taken on its tile.
+ *
+ *  An id is unique within a tile, and everything here rests on it: every
+ *  lookup finds a layer by id and takes the first hit, so a second layer of
+ *  that name makes the eye, the lock, the delete and the drag land wherever
+ *  the walk reaches first. Worse, two rows in one list under one key is a
+ *  duplicate key, and the list refuses to render at all — the tile simply
+ *  stops opening.
+ *
+ *  Written by a build that let a group be pasted onto a tile already carrying
+ *  one of its members: the copy went in nested, and a later Ungroup put it
+ *  beside the original. Repaired on the way in rather than left for the user
+ *  to find, and by renaming rather than dropping — the second layer is real
+ *  work, and which of the two is "the copy" is not knowable from here. */
+/** A copy of a layer, with fresh ids all the way down.
+ *
+ *  Ids are shared across tiles on purpose — that is what makes one layer
+ *  editable on forty-four portraits at once — but never twice within a tile:
+ *  every lookup here finds a layer by id and takes the first hit. So a copy
+ *  landing beside its original needs its own, and so does every member of a
+ *  copied group. */
+export function copyOf(layer: Layer): Layer {
+  const made = clone(layer);
+  for (const l of walkLayers([made])) l.id = newId();
+  return made;
+}
+
+function unclash(m: Manifest): Manifest {
+  for (const tile of Object.values(m.tiles ?? {})) {
+    const seen = new Set<string>();
+    for (const l of walkLayers(tile.layers ?? [])) {
+      if (seen.has(l.id)) l.id = newId();
+      seen.add(l.id);
+    }
+  }
+  return m;
 }
 
 export function migrate(raw: unknown): Manifest {
@@ -1313,6 +1279,8 @@ export function migrate(raw: unknown): Manifest {
    * Reading it as v7 is a guess, but a bounded one: the spread keeps fields
    * this build has no name for, so what it cannot use it carries. Rewriting a
    * newer document as an older shape is not bounded at all. */
-  if (typeof m.version === "number" && m.version >= 7) return { ...emptyManifest(), ...m } as Manifest;
-  return { ...emptyManifest(), ...toV7(m.version === 6 ? m : toV6(m)) } as Manifest;
+  if (typeof m.version === "number" && m.version >= 8)
+    return unclash({ ...emptyManifest(), ...m } as Manifest);
+  const v7 = m.version === 7 ? m : toV7(m.version === 6 ? m : toV6(m));
+  return unclash({ ...emptyManifest(), ...toV8(v7) } as Manifest);
 }

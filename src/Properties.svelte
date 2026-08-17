@@ -18,9 +18,12 @@
   import { TILE_H, TILE_W } from "./lib/bmp";
   import { gridSize } from "./lib/geometry";
   import {
-    openLayout,
+    app,
+    openProject,
     resetCrop,
+    bulkTargets,
     setLayerField,
+    setTileLayerField,
     visibleIds,
     type LayerField,
   } from "./lib/editor.svelte";
@@ -29,7 +32,6 @@
     findLayer,
     layerLabel,
     maskChoices,
-    maskOffers,
     type Corners,
     type Layer,
     type Paint,
@@ -49,40 +51,47 @@
    *  attribute. */
   const css = (name: string) => `"${name.replace(/["\\]/g, "\\$&")}"`;
 
-  /** Some fields only mean something in a Layout — "editable in grid" is about what
-   *  happens at stamp time, and a layer already on a tile is past that. */
   let {
     layer,
-    inLayout = false,
     /* Opens the class grid on this layer. The grid lives in App, beside the one
        the toolbar opens, so this is a callback rather than a second copy. */
     onPickClass,
-  }: { layer: Layer; inLayout?: boolean; onPickClass?: (layerId: string) => void } = $props();
+  }: { layer: Layer; onPickClass?: (layerId: string) => void } = $props();
 
-  const set = (key: LayerField, value: unknown) => void setLayerField(layer.id, key, value);
+  /* An edit reaches every selected tile that carries this layer, in one undo
+   * step. A layer spanning the whole wall has no tiles behind it and takes the
+   * plain setter — bulkTargets answers with the empty list there, which is what
+   * chooses between the two. */
+  /** How many tiles a change here lands on. */
+  const reach = $derived(bulkTargets(layer.id).length);
 
-  /** The shapes this layer could be cut to. Empty outside a Layout, and empty
-   *  in one that holds no shape but this — which is what hides the control
-   *  rather than offering a list with nothing in it. */
-  const masks = $derived(inLayout ? maskChoices(openLayout()?.layers ?? [], layer.id) : []);
+  const set = (key: LayerField, value: unknown) => {
+    const tiles = bulkTargets(layer.id);
+    void (tiles.length
+      ? setTileLayerField(tiles, layer.id, key, value)
+      : setLayerField(layer.id, key, value));
+  };
 
-  /** What the dropdown lists. Wider than `masks`: a cutter that lives on the
-   *  tiles is offered to a layer that does not yet, because picking it takes
-   *  the layer along rather than doing nothing. */
-  const offers = $derived(inLayout ? maskOffers(openLayout()?.layers ?? [], layer.id) : []);
+  /** The stack this layer lives in — the tile it was picked on, or the wall's
+   *  own layers when it spans the grid. What a mask can be chosen from. */
+  const siblings = $derived(
+    app.selectedTile
+      ? (app.manifest.tiles[app.selectedTile]?.layers ?? [])
+      : (openProject()?.gridLayers ?? []),
+  );
+
+  /** The layers this one could be cut to. Empty in a stack that holds nothing
+   *  but this layer — which is what greys the control rather than offering a
+   *  list with nothing in it.
+   *
+   *  Read off the tile now. A mask used to be a Layout-only arrangement because
+   *  the cutter and the layer had to travel together to the tiles; both live on
+   *  the tile from the start, so the pair is an ordinary thing about a stack. */
+  const offers = $derived(maskChoices(siblings, layer.id));
 
   /** How many tiles the open wall holds — the span a grid-space layer's x and y
    *  are fractions of. A layer on a tile is measured against the tile. */
   const wallCount = () => visibleIds().length;
-
-  /** The name of a mask that is set but no longer a legal choice — an "Editable
-   *  in grid" toggle away, since a per-tile cutter may only cut a per-tile
-   *  layer. Empty when the mask is fine or absent. */
-  const stale = $derived.by(() => {
-    if (!layer.maskId || masks.some((m) => m.id === layer.maskId)) return "";
-    const held = findLayer(openLayout()?.layers ?? [], layer.maskId);
-    return held ? layerLabel(held) : "";
-  });
 
   /** A Paint is a colour or a gradient. The first swatch edits the colour a
    *  flat paint is and the start colour of a gradient, so it is the one thing
@@ -99,14 +108,27 @@
   const turn = (deg: number) => (deg === 360 ? 360 : ((deg % 360) + 360) % 360);
 </script>
 
-<h2 class="spaced">Properties</h2>
+<!-- Named for the layer rather than for the panel. "Properties" over a list of
+     fields says only what is already obvious from the fields; the one thing
+     that is not obvious is which of forty-four tiles' layers is being edited. -->
+<!-- How far this panel reaches, where it can be read before something is
+     changed rather than counted afterwards. Every control here writes to every
+     selected tile carrying this layer, and the tile row's own Text field
+     writes to one — nothing said which was which, so one keystroke here could
+     replace forty-four names typed by hand. -->
+<h2 class="spaced">
+  {layerLabel(layer)}{#if reach > 1}<span class="reach"> · {reach} tiles</span>{/if}
+</h2>
 
 {#if layer.kind === "text"}
   <!-- The placeholder is a real feature with nothing in the UI to announce it,
-       so the field says so itself. In the Layout there is no tile to expand it
-       against and it stays literal — which looked like a placeholder that does
-       not work. -->
-  <label class="field" title="{'{{id}}'} becomes each portrait's id when the layout is stamped">
+       so the field says so itself. -->
+  <label
+    class="field"
+    title={reach > 1
+      ? `Types onto all ${reach} selected tiles.`
+      : `{{id}} becomes this portrait's id on the wall`}
+  >
     <span>Text</span>
     <textarea rows="2" value={layer.text} oninput={(e) => set("text", e.currentTarget.value)}
     ></textarea>
@@ -210,22 +232,6 @@
     />
     {@render amount("size", layer.size * TILE_W, (n) => n / TILE_W, 1)}
   </label>
-  {#if inLayout}
-    <!-- A state, not an action: the rest of this panel's little buttons all do
-         something the moment they are pressed, and this one only says how the
-         layer is treated later. -->
-    <label
-      class="check"
-      title="Makes this layer editable on the wall — a mask travels with it"
-    >
-      <input
-        type="checkbox"
-        checked={layer.perTile}
-        onchange={(e) => set("perTile", e.currentTarget.checked)}
-      />
-      Editable in grid
-    </label>
-  {/if}
   <!-- The glyphs every text editor uses: a bold B, an italic I, and alignment
        as little line stacks whose ragged side says which way the text falls. -->
   <div class="row">
@@ -296,31 +302,6 @@
   </label>
   {@render shadowField()}
 {:else if layer.kind === "shape"}
-  {#if inLayout}
-    <!-- On shapes too, although a shape has no per-tile content of its own:
-         what varies is the thing cutting it. A gradient block cut by each
-         character's class icon needs the block to travel with the icon — the
-         rule says a per-tile cutter may only cut a per-tile layer, and until
-         the checkbox existed here a shape could never say yes to it. -->
-    <!-- An icon says what it is for. The switch is the same one, but for a
-         class icon it is not an option: without it the icon bakes into the
-         stamp and forty-four portraits wear the class the layer was made with,
-         with no error and no row in the tile panel to say otherwise. The label
-         that hides that is the reason the feature looked broken. -->
-    <label
-      class="check"
-      title={layer.shape === "icon"
-        ? "Each tile picks its own class. Without this, every tile wears this layer's class."
-        : "Makes this layer travel to the tiles — so a per-tile mask can cut it"}
-    >
-      <input
-        type="checkbox"
-        checked={layer.perTile}
-        onchange={(e) => set("perTile", e.currentTarget.checked)}
-      />
-      {layer.shape === "icon" ? "A class per tile" : "Editable in grid"}
-    </label>
-  {/if}
   <!-- The class the layer itself is. Until this row existed the only writer of
        it was the moment of insertion, so a wrong pick meant delete and insert
        again — which mints a new layer id and leaves every class already chosen
@@ -455,19 +436,6 @@
   {/if}
   {@render shadowField()}
 {:else if layer.kind === "image"}
-  {#if inLayout}
-    <label
-      class="check"
-      title="Makes this layer editable on the wall — a mask travels with it"
-    >
-      <input
-        type="checkbox"
-        checked={layer.perTile}
-        onchange={(e) => set("perTile", e.currentTarget.checked)}
-      />
-      Editable in grid
-    </label>
-  {/if}
   <!-- Mirrored triangles across a dashed axis — the flip icon every editor
        uses. The vertical one is the same drawing turned a quarter. -->
   <div class="row">
@@ -585,17 +553,37 @@
        angle nobody drew. Saying "no properties of its own" three lines above
        two working sliders was the other half of the same lie. -->
   <p class="empty">A group carries its children — only the fade below is its own.</p>
+  <!-- A colour for the row, and for the rows of everything in the group. It
+       draws nothing: the wall, the file written to the game and every field of
+       every member are untouched. It is there so a stack of a dozen layers can
+       be read at a glance — which of these belong together. -->
+  <label class="field" title="Colours this group's row and its members' rows. Nothing else.">
+    <span>Colour</span>
+    <input
+      type="color"
+      value={layer.tint ?? "#a685ff"}
+      oninput={(e) => set("tint", e.currentTarget.value)}
+    />
+    <button
+      disabled={!layer.tint}
+      title={layer.tint ? "Back to no colour" : "This group has no colour"}
+      onclick={() => set("tint", undefined)}
+    >
+      Clear
+    </button>
+  </label>
 {/if}
 
-{#if inLayout && layer.kind !== "group"}
-  <!-- Masking is a Layout matter: that is where shapes and pictures lie in one
-       stack. A tile carries only stamps and the copies a Layout keeps live,
-       and there is nothing there to cut with. -->
+{#if layer.kind !== "group"}
+  <!-- Masking used to be a Layout matter, because that was the one place shapes
+       and pictures lay in a single stack — a tile carried a flat stamp and the
+       copies kept live beside it, with nothing there to cut with. A tile is
+       that stack now, so the control belongs wherever a layer is picked. -->
   <label
     class="field"
-    title={offers.length || stale
-      ? "Clips this layer to another one in this Layout"
-      : "Add another layer to this Layout first — there is nothing to cut with"}
+    title={offers.length
+      ? "Clips this layer to the outline of another on this tile"
+      : "Add another layer to this tile first — there is nothing to cut with"}
   >
     <span>Mask</span>
     <!-- Shown even with nothing to offer. A control that appears and vanishes
@@ -604,26 +592,13 @@
          looked missing. -->
     <select
       value={layer.maskId ?? ""}
-      disabled={!offers.length && !stale}
+      disabled={!offers.length}
       onchange={(e) => set("maskId", e.currentTarget.value)}
     >
       <option value="">none</option>
       {#each offers as shape (shape.id)}
-        <!-- A cutter that lives on the tiles says so, because picking it takes
-             this layer there too: the rule is that a per-tile cutter can only
-             cut a per-tile layer, and the alternative was leaving it out of the
-             list with nothing said. -->
-        <option value={shape.id}>
-          {layerLabel(shape)}{shape.perTile && !layer.perTile ? " — also sends this to the tiles" : ""}
-        </option>
+        <option value={shape.id}>{layerLabel(shape)}</option>
       {/each}
-      <!-- A mask the list can no longer offer stays on the layer — switching
-           "Editable in grid" is enough to make one — and the row used to go
-           grey and read "none" while it was still set. That is a stored value
-           with no way back to "none" and a lie on top. It says so instead. -->
-      {#if stale}
-        <option value={layer.maskId}>{stale} — no longer allowed</option>
-      {/if}
     </select>
   </label>
   {#if layer.maskId}
@@ -770,6 +745,17 @@
     step="1"
     value={Math.round(shown)}
     onchange={(e) => {
+      /* "1e999" is a number a number field accepts, and it is Infinity. The
+         clamp below has no ceiling for most of these boxes, so it came through
+         whole; `String(Math.round(Infinity))` is "Infinity", which is not a
+         number this input can hold, so the box went blank — and the *next*
+         entry read that blank as 0 and stored the minimum. Typing a size too
+         big left the layer at the smallest one allowed. Put the old value back
+         and write nothing. */
+      if (!e.currentTarget.value.trim() || !Number.isFinite(num(e))) {
+        e.currentTarget.value = String(Math.round(shown));
+        return;
+      }
       const held = Math.min(Math.max(num(e), min), max ?? Infinity);
       /* Written straight back into the box, not left to the rebuild. Typing
          past a ceiling that the layer already sits at stores the same value it
@@ -967,6 +953,11 @@
 {/snippet}
 
 <style>
+  .reach {
+    color: #cbb8ff;
+    text-transform: none;
+    letter-spacing: 0;
+  }
   h2 {
     margin: 18px 0 6px;
     font-size: 11px;

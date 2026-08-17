@@ -11,70 +11,46 @@
   import RowIcon from "./RowIcon.svelte";
   import TileRow from "./TileRow.svelte";
   import GridCanvas from "./GridCanvas.svelte";
-  import LayoutCanvas from "./LayoutCanvas.svelte";
   import Properties from "./Properties.svelte";
   import {
     ARCHIVE,
     archived,
-    bedChoices,
-    bedFor,
-    setBedTile,
     changedHere,
     archiveSelection,
     onArchive,
     addGridImage,
-    addLayoutImage,
-    addLayoutShape,
-    addLayoutText,
+    addTileImage,
+    addTileShape,
+    addTileText,
     app,
-    assignLayoutToSelection,
-    assignLayoutToWall,
-    assignTileLayout,
     bakedCount,
     bakeMosaic,
     canAddGridImage,
     canBakeMosaic,
-    canGroupLayers,
     canSaveToGame,
-    canSaveLayout,
     clearMosaic,
     coverCounts,
     coverTheWall,
-    clearTileAsset,
-    clearTileFrame,
-    clearTileText,
     clearTiles,
-    closeLayoutDoc,
     deleteLayer,
-    deleteLayoutLayer,
-  deleteLayoutLayers,
-    dropLayoutLayer,
+    duplicateLayer,
     dropTileLayer,
-    duplicateLayoutDoc,
-    duplicateLayoutLayers,
     endGesture,
     fileSelectionInto,
     fileTile,
     folders,
     freeCount,
-    groupLayoutLayers,
     inbox,
     keepAllCharacters,
     keepCharacter,
-    layoutGroups,
     looseIds,
-    layoutTiles,
-    layouts,
-    moveLayersIntoGroup,
     moveTilesToProject,
     newFolderHere,
-    newLayoutDoc,
     newProjectFrom,
     nextSnapshotName,
     openFolder,
-    openLayout,
-    openLayoutDoc,
     openProject,
+    pickedLayer,
     openProjectView,
     placeTileAt,
     projects,
@@ -84,49 +60,50 @@
     redoLabel,
     redoable,
     releaseTilesToInbox,
-    remainingFor,
     replaceCharacter,
     renameLayer,
-    renameLayout,
     renameFolder,
     renameProject,
     restorableCount,
     removeFolder,
     renameSnapshot,
-    saveLayout,
     selectLayer,
-    selectLayoutLayer,
+    copiedLayer,
+    copyLayerProps,
+    pasteLayerProps,
+    pickedLayers,
+    alignPicked,
+    spreadPicked,
+    bulkTargets,
+    groupPicked,
+    ungroupLayer,
+    groupHolding,
+    takeOutOfGroup,
+    pasteLayerOntoTiles,
+    layersOnSelection,
+    removeLayerFromSelection,
+    setLayerHiddenOnSelection,
+    setLayerLockedOnSelection,
     strippableCount,
-    setTileText,
     pickTileImage,
     setLayerField,
-    setTileAsset,
-    tileAsset,
+    setTileLayerField,
     tileCaptions,
     tileHeadline,
     tileImageChoices,
-    tileFrame,
     tileIcons,
     tileImages,
     tileLayers,
-    tilePaint,
     tilePaintChoices,
     tileShapes,
-    setTilePaint,
-    clearTilePaint,
     shelfIds,
     snapshots,
     takeSnapshot,
     tileProject,
     unplace,
-    tileText,
     visibleIds,
-    wearing,
-    removeLayoutFrom,
     toggleLayerHidden,
     toggleLayerLocked,
-    toggleLayoutLayerHidden,
-    toggleLayoutPick,
     toggleTile,
     undoEdit,
     undoLabel,
@@ -138,7 +115,6 @@
     confirmed,
     dropSnapshot,
     putBack,
-    removeLayout,
     removeProject,
     resetProject,
     writeToGame,
@@ -162,10 +138,13 @@
   import { isTyping } from "./lib/geometry";
   import { ICON_NAMES, iconArt } from "./lib/icons";
   import { savePending } from "./lib/project";
-  import { findLayer, isGradient, layerLabel, layoutNeedsRestamp, type Layer } from "./lib/model";
-  import { isLiveCopy, layerShows, offLayouts } from "./lib/stamps";
-
-  const editing = $derived(openLayout());
+  import {
+    findLayer,
+    isGradient,
+    layerLabel,
+    type Layer,
+    type ShapeKind,
+  } from "./lib/model";
 
   /* The FaceTexture folder is the only one this tool ever edits, so asking
      which one on every start was a dialog with one right answer. */
@@ -174,6 +153,16 @@
   function shortcut(e: KeyboardEvent) {
     if (isTyping(e.target)) return;
     const key = e.key.toLowerCase();
+    /* Nothing that changes the document while a long action is reading it.
+       Every button carrying one of these is disabled for the duration; the keys
+       were not, and an undo pressed while "Write to game" was taking its
+       snapshot swapped the document out from under a write already in flight —
+       portraits rendered from the new document into the old one's slot order,
+       into the game's own folder, and recorded as written. */
+    if (app.busy && (key === "delete" || key === "backspace" || e.ctrlKey)) {
+      e.preventDefault();
+      return;
+    }
 
     /* The sheet answers to the key it documents, and closes on Escape like
        everything else that opens over the page. Checked before the Layout's own
@@ -196,40 +185,40 @@
       e.preventDefault();
       return;
     }
-    if (key === "escape" && framing) {
-      framing = false;
+    /* Escape used to leave the placing mode. With the mode gone it drops the
+       layer instead, which takes the frame with it — the same key doing the
+       same thing it always did from where the user was standing. */
+    if (key === "escape" && app.selected) {
+      selectLayer("");
       e.preventDefault();
       return;
     }
-    if (key === "escape" && editing && !e.ctrlKey) {
-      closeLayoutDoc();
-      e.preventDefault();
-      return;
-    }
-    /* Delete, and only inside a Layout. The same key on the wall would take a
-       stamp off a portrait with one press, and a stamp is the work of a whole
-       design rather than one layer. Typing is already excluded above, so a
-       caption being edited keeps its own Delete. */
+    /* Delete takes the picked layer off the tile it was picked on. Typing is
+       already excluded above, so a caption being edited keeps its own Delete,
+       and a sheet being up means the layer underneath is not what is being
+       looked at. */
     if (
       (key === "delete" || key === "backspace") &&
-      editing &&
-      app.layoutSelection.length &&
-      // Not while a sheet is up: the layer underneath is not what is being
-      // looked at, and Escape is the key that sheet answers to.
+      app.selected &&
+      app.selectedTile &&
       !keysOpen &&
       !iconsOpen
     ) {
-      void deleteLayoutLayers([...app.layoutSelection]);
+      void deleteLayer(app.selected);
       e.preventDefault();
       return;
     }
     if (!e.ctrlKey) return;
+    /* The duplicate the keyboard sheet has always listed. It needs a layer and
+       the tile it was picked on, the same pair Delete takes. */
+    if (key === "d" && app.selected && app.selectedTile) {
+      void duplicateLayer(app.selected, app.selectedTile);
+      e.preventDefault();
+      return;
+    }
     // Ctrl+Shift+Z as well as Ctrl+Y — both are in wide use and cost one clause.
     if (key === "z" && !e.shiftKey) void undoEdit();
     else if (key === "y" || (key === "z" && e.shiftKey)) void redoEdit();
-    // The repeat gesture, so it earns a shortcut. Only inside a Layout: the
-    // wall has no layers of its own to copy.
-    else if (key === "d" && editing) void duplicateLayoutLayers();
     else return;
     e.preventDefault();
   }
@@ -279,10 +268,6 @@
   let keysOpen = $state(false);
   let iconsOpen = $state(false);
   let iconFilter = $state("");
-  /* The wall's one mode: while it is on, a drag frames a tile's picture inside
-     its mask instead of sweeping a selection. Pressed-looking on purpose — a
-     mode nobody can see is a trap. */
-  let framing = $state(false);
   const closeIconSheet = () => {
     iconsOpen = false;
     iconTarget = null;
@@ -295,9 +280,11 @@
      tile asked, otherwise the layer's. */
   const iconInForce = () => {
     if (!iconTarget) return undefined;
-    const layer = findLayer(openLayout()?.layers ?? [], iconTarget.layer);
-    const own = layer?.kind === "shape" ? layer.icon : undefined;
-    return iconTarget.tile ? (tileAsset(iconTarget.tile, iconTarget.layer) ?? own) : own;
+    const layer = findLayer(
+      app.manifest.tiles[iconTarget.tile ?? ""]?.layers ?? openProject()?.gridLayers ?? [],
+      iconTarget.layer,
+    );
+    return layer?.kind === "shape" ? layer.icon : undefined;
   };
   /* Who the icon grid is answering for: a tile naming its class, a Layout
      layer changing the class it is, or nobody — in which case picking one
@@ -317,10 +304,14 @@
   const KEYS: Array<[string, string]> = [
     ["Ctrl + Z", "Undo"],
     ["Ctrl + Y  ·  Ctrl + Shift + Z", "Redo"],
-    ["Ctrl + D", "Duplicate the picked layers (in a Layout)"],
-    ["Delete  ·  Backspace", "Delete the picked layers (in a Layout)"],
-    ["Escape", "Leave the placing tool"],
-    ["Escape", "Close the Layout, or the menu over it"],
+    ["Delete  ·  Backspace", "Take the picked layer off its tile"],
+    ["Ctrl + D", "Duplicate the picked layer on its tile"],
+    ["Escape", "Drop the picked layer, or close the sheet over the page"],
+    /* Half of what this app can do is behind a right-click and nothing on
+       screen said so — a sheet that lists the gestures and leaves out the one
+       that opens the actions is a map with the roads missing. */
+    ["Right-click a layer row", "Duplicate, group, ungroup, copy and paste a look"],
+    ["Right-click the wall", "Act on the picked tiles: hide, lock, remove a layer, archive"],
     ["?", "This sheet"],
     ["Wheel", "Zoom"],
     ["Middle-drag", "Pan"],
@@ -330,7 +321,7 @@
     ["Shift + click", "Take the whole range up to it"],
     ["Alt + drag", "Swap two tiles instead of selecting"],
     ["Alt", "Held while dragging a handle: no snapping"],
-    ["Double-click", "Rename a row · open a Layout from its stamp"],
+    ["Double-click", "Rename a row"],
     ["Enter  ·  Escape", "While renaming: keep the new name · put the old one back"],
   ];
 
@@ -392,33 +383,6 @@
      wall knows that. Spelled once here rather than at each of the three call
      sites, so the answer cannot differ between them. */
 
-
-  /** Enter walks the tile list: this row closes, the next one opens, and the
-   *  cursor lands in its wording field. Shift+Enter goes back.
-   *
-   *  Naming a wall is the one job here that is forty-four of the same thing,
-   *  and it was forty-four reaches for the mouse — the list is an accordion, so
-   *  the next row has no field to jump into until something opens it. The row
-   *  is left closed behind you, which is what keeps the next one on screen
-   *  instead of a metre down the page.
-   *
-   *  Within the list the row is in: a drawer's tiles walk that drawer, loose
-   *  ones walk the loose pile. Nothing wraps at the end — a second pass that
-   *  starts itself would type over the first name. */
-  async function stepName(e: KeyboardEvent, from: string, inGroup: string) {
-    e.preventDefault();
-    (e.currentTarget as HTMLInputElement).blur();
-    const list = inGroup ? (folders().find((f) => f.id === inGroup)?.tiles ?? []) : looseIds();
-    const next = list[list.indexOf(from) + (e.shiftKey ? -1 : 1)];
-    if (!next) return;
-    toggleTileRow(next);
-    await tick();
-    const field = document.querySelector<HTMLInputElement>(`[data-tile="${next}"] .field input`);
-    field?.focus();
-    field?.select();
-    // `nearest`, so a row already in view is not yanked to the top of the pane.
-    field?.closest(".group")?.scrollIntoView({ block: "nearest" });
-  }
 
   /** The sidebar's scroller, and whether it has travelled far enough that
    *  getting back to the top is worth a button rather than a flick. */
@@ -506,49 +470,54 @@
    *  collapsible for a narrow window, where it would eat the sheet's width. */
   let bedStrip = $state(true);
 
-  /** The Layout canvas — the toolbar's align buttons act on its live objects. */
-  let sheet: LayoutCanvas | undefined = $state();
-  const noPick = $derived(!editing || !app.layoutSelection.length);
-  const fewPicked = $derived(!editing || app.layoutSelection.length < 3);
 
+  /** Whether there is anywhere to put a new layer: the picked tiles, or
+   *  nothing at all. A layer has to belong to something. */
+  /* Not on the overview. Leaving a wall does not drop its selection — that is
+     deliberate, so coming back finds the work where it was left — and the tool
+     rail read the selection alone. So the T button on the overview added a
+     caption to six tiles nobody could see, with its own tooltip saying so, one
+     undo step and nothing on screen. Every header button was already guarded
+     this way; the rail was not. */
+  const canInsert = $derived(app.selectedTiles.length > 0 && !home);
+  const addImage = () => void addTileImage();
+  const addText = () => void addTileText();
+  const addShape = (kind: ShapeKind, icon?: string) => void addTileShape(kind, icon);
+  /* Lining up needs something picked, and spreading needs a middle: two layers
+     are both outermost, so nothing between them can be spread. */
+  const canAlign = $derived(!home && !!app.selected);
+  const canSpread = $derived(!home && pickedLayers().length > 2);
+  /** How many portraits a press reaches, worked out the same way a drag is: it
+   *  is the difference between straightening one caption and straightening
+   *  forty-four, and that is worth reading before pressing. */
+  const alignWhere = $derived(
+    canAlign && bulkTargets(app.selected).length > 1
+      ? ` — on ${bulkTargets(app.selected).length} tiles`
+      : "",
+  );
+  /** What the insert buttons say they will do, so a greyed one has a readable
+   *  reason and a live one names what it is about to write to. */
+  const insertWhere = $derived(
+    canInsert
+      ? ` onto ${app.selectedTiles.length} selected ${app.selectedTiles.length === 1 ? "tile" : "tiles"}`
+      : "",
+  );
 
-
-  /** A holder's rows as the list draws them: topmost first, and without the
-   *  live copies a Layout keeps there — the stamp row speaks for them. */
-  const stampsOf = (layers: Layer[]) => [...layers].reverse().filter((l) => !isLiveCopy(l));
-
-  /** A stamp shows its Layout's name; anything else falls back to layerLabel. */
-  const stampName = (l: Layer) =>
-    (l.kind === "image" && l.layoutId && layouts().find((x) => x.id === l.layoutId)?.name) ||
-    layerLabel(l);
-
-  const stampDirty = (l: Layer) => {
-    if (l.kind !== "image" || !l.layoutId) return false;
-    const layout = layouts().find((x) => x.id === l.layoutId);
-    return !!layout && layoutNeedsRestamp(layout);
-  };
+  /** A tile's rows as the list draws them: topmost first. */
+  const stampsOf = (layers: Layer[]) => [...layers].reverse();
 
   /** The picture spread across the open project's wall, if one is placed. It
    *  belongs to the wall rather than to any tile, so it gets its own section. */
   const wallLayers = $derived([...(openProject()?.gridLayers ?? [])].reverse());
+  /* Re-read whenever the document moves, not only when the selection does: a
+     field written through setTileLayerField replaces nothing on screen unless
+     the panel is looking at the layer as it now is. */
+  const picked = $derived((void app.version, pickedLayer()));
 
-  const layoutLayers = $derived(editing ? [...editing.layers].reverse() : []);
-
-  /** The one layer the properties panel edits. Shown for a single pick only:
-   *  with several selected the fields would have to merge differing values,
-   *  which is a whole design of its own and nothing needs it yet. */
-  const selectedLayoutLayer = $derived(
-    editing && app.layoutSelection.length === 1
-      ? findLayer(editing.layers, app.layoutSelection[0])
-      : undefined,
-  );
-
-  /* One context menu serves both documents: the wall right-clicks tiles, the
-     Layout editor right-clicks layers, and only the item list differs. */
+  /* The wall's context menu, on tiles. */
   let menu: { x: number; y: number; items: Item[] } | null = $state(null);
 
   function wallMenu(e: MouseEvent) {
-    if (editing) return;
     /* The tile under the cursor is the one meant, unless it is already part of
        the selection — then the selection is what was meant, and a right-click
        on one of several picked tiles still acts on all of them. Exactly the
@@ -558,31 +527,49 @@
        clicking tile A while B and C were selected quietly acted on B and C.
        GridCanvas answers which tile is there, since only it knows the
        viewport; right-clicking bare wall with a selection leaves it alone. */
+    /* Not on the overview. The menu is bound to the stage, and on the overview
+       the stage holds the project cards — so a right-click on empty space there
+       opened the full tile menu ("Archive 6 tiles", "Clear all layers on 6
+       tiles") aimed at a wall that is not on screen, with no tile under the
+       cursor to re-target it. */
+    if (home) return;
     const under = grid?.tileAtEvent(e);
     if (under && !app.selectedTiles.includes(under)) app.selectedTiles = [under];
     if (!app.selectedTiles.length) return;
     e.preventDefault();
     const picked = app.selectedTiles.length;
     const elsewhere = projects().filter((p) => p.id !== app.openProjectId);
+    const onClipboard = copiedLayer();
+    const onSelection = layersOnSelection();
     menu = {
       x: e.clientX,
       y: e.clientY,
       items: [
-        {
-          /* "free", not "picked": only tiles no project has claimed can start
-             one, and the count said "New project from 0 tiles" with three
-             portraits highlighted — true, and no help at all. Same name as the
-             header button and the sidebar one, because it is the same action. */
-          label:
-            picked > 1
-              ? `Project from ${freeCount()} free tile(s)`
-              : "Project from selection",
-          run: () => {
-            reveal("projects");
-            void newProjectFrom("");
-          },
-          disabled: !freeCount(),
-        },
+        /* Only where a tile can actually be free. Inside a project every tile
+           on the wall belongs to it, so freeCount() is nought and the item was
+           permanently greyed out — an entry that can never do anything is a
+           row of noise on every right-click. It stays on the overview, which is
+           where starting a project is the thing you came to do. */
+        ...(app.openProjectId
+          ? []
+          : [
+              {
+                /* "free", not "picked": only tiles no project has claimed can
+                   start one, and the count said "New project from 0 tiles" with
+                   three portraits highlighted — true, and no help at all. Same
+                   name as the header button and the sidebar one, because it is
+                   the same action. */
+                label:
+                  picked > 1
+                    ? `Project from ${freeCount()} free tile(s)`
+                    : "Project from selection",
+                run: () => {
+                  reveal("projects");
+                  void newProjectFrom("");
+                },
+                disabled: !freeCount(),
+              } as Item,
+            ]),
         ...(elsewhere.length ? [{ separator: true } as Item] : []),
         // Moving carries the tile's layers with it: artwork belongs to the
         // portrait, not to the wall it happens to be arranged on.
@@ -593,77 +580,53 @@
           label: `Move to "${p.name}" shelf`,
           run: () => void moveTilesToProject(p.id),
         })),
-        /* Assigning used to be one dropdown per row — forty-four visits to
-           give a wall one design. The layouts are the same library the
-           sidebar lists; this is only a second way in, on the selection. */
-        /* Two rows rather than four per layout. With five designs the flat
-           list ran to twenty entries and off the bottom of the screen, and
-           adding "remove" would have doubled it again. Inside each submenu the
-           selection comes first and the whole wall after a rule, which is the
-           order the two are reached for in. */
-        ...(layouts().length
-          ? [
-              { separator: true } as Item,
-              {
-                label: "Assign layout",
-                items: [
-                  ...layouts().map((l) => ({
-                    label: picked === 1 ? `"${l.name}"` : `"${l.name}" to ${picked} tiles`,
-                    run: () => void assignLayoutToSelection(l.id),
-                  })),
-                  /* And the whole wall in one item, for the case the selection
-                     exists to serve: a second account's forty-four portraits,
-                     all wanting the same design. Counted as work left to do —
-                     a tile already wearing it is not offered a second stamp —
-                     so the number vanishes once the wall is dressed. */
-                  ...(layouts().some((l) => remainingFor(l.id).length)
-                    ? [{ separator: true } as Item]
-                    : []),
-                  ...layouts()
-                    .filter((l) => remainingFor(l.id).length)
-                    .map((l) => ({
-                      label: `"${l.name}" to all ${remainingFor(l.id).length} remaining`,
-                      run: () => void assignLayoutToWall(l.id),
-                    })),
-                ],
-              } as Item,
-              /* Named per layout, unlike the blunt "clear everything" below:
-                 a portrait can wear two designs, and taking the wrong one off
-                 is not something to discover afterwards. Only the designs
-                 actually on these tiles are offered — an item that would do
-                 nothing is worse than no item. */
-              {
-                label: "Remove layout",
-                disabled: !layouts().some((l) => wearing(l.id, app.selectedTiles).length),
-                items: [
-                  ...layouts()
-                    .filter((l) => wearing(l.id, app.selectedTiles).length)
-                    .map((l) => {
-                      const n = wearing(l.id, app.selectedTiles).length;
-                      return {
-                        label: n === 1 ? `"${l.name}"` : `"${l.name}" from ${n} tiles`,
-                        run: () => void removeLayoutFrom(l.id, [...app.selectedTiles]),
-                      };
-                    }),
-                  ...(layouts().some((l) => wearing(l.id, visibleIds()).length)
-                    ? [{ separator: true } as Item]
-                    : []),
-                  ...layouts()
-                    .filter((l) => wearing(l.id, visibleIds()).length)
-                    .map((l) => ({
-                      label: `"${l.name}" from all ${wearing(l.id, visibleIds()).length} on this wall`,
-                      run: () => void removeLayoutFrom(l.id, visibleIds()),
-                    })),
-                ],
-              } as Item,
-            ]
-          : []),
         /* The inverse of the Assign items above, and blunter than they are:
            one item for the whole selection rather than one per layout, because
            a wall given the wrong design is undressed all at once or not at
            all. Counts what it would actually take, so a selection with nothing
            on it says so instead of offering a no-op. */
         { separator: true } as Item,
+        {
+          /* Where a layer stops being one tile's business. The row menu copies
+             it; this puts it on the whole selection under one id, which is what
+             makes a later drag move all of them at once. */
+          label: onClipboard
+            ? `Paste "${layerLabel(onClipboard.layer)}" onto ${picked} tile(s)`
+            : "Paste layer",
+          run: () => void pasteLayerOntoTiles(),
+          disabled: !onClipboard,
+        },
+        ...(onSelection.length
+          ? [
+              /* One submenu per action, one entry per layer id on the
+                 selection, with the reach written out: "Descr — 14 tile(s)"
+                 answers "how far does this click go" before it is made rather
+                 than after.
+
+                 Hide and Show are separate items rather than one that toggles.
+                 Across fourteen tiles the flag can disagree, and a toggle would
+                 then hide seven and show seven — a result nobody asked for
+                 whichever way they meant it. */
+              ...(
+                [
+                  ["Hide layer", (id: string) => setLayerHiddenOnSelection(id, true)],
+                  ["Show layer", (id: string) => setLayerHiddenOnSelection(id, false)],
+                  ["Lock layer", (id: string) => setLayerLockedOnSelection(id, true)],
+                  ["Unlock layer", (id: string) => setLayerLockedOnSelection(id, false)],
+                  ["Remove layer", (id: string) => removeLayerFromSelection(id)],
+                ] as [string, (id: string) => Promise<void>][]
+              ).map(
+                ([label, act]) =>
+                  ({
+                    label,
+                    items: onSelection.map((l) => ({
+                      label: `${l.label} — ${l.tiles} tile(s)`,
+                      run: () => void act(l.id),
+                    })),
+                  }) as Item,
+              ),
+            ]
+          : []),
         {
           // Plain when it takes one tile, and when it can take none: "on 0
           // tiles" is a sentence no disabled item should have to say.
@@ -722,49 +685,78 @@
     };
   }
 
-
-
-  /** Right-click in the Layout's layer list. Picks the row first when it is
-   *  not already part of the selection, the way every list does. */
-  function layerMenu(e: MouseEvent, layerId: string) {
+  /** The same menu, on a layer's row. Photoshop's Copy/Paste Layer Style,
+   *  which is where the idea comes from and roughly where it stops: there the
+   *  placement stays behind, and here it travels, because lining two layers up
+   *  by hand across forty-four portraits is the job this saves.
+   *
+   *  Right-clicking a row picks its layer first, the way right-clicking a tile
+   *  re-targets the selection above. Otherwise "copy" would take whatever
+   *  happened to be picked before and the row you aimed at would be a
+   *  decoration. */
+  function layerMenu(e: MouseEvent, layerId: string, tileId: string) {
     e.preventDefault();
-    if (!app.layoutSelection.includes(layerId)) selectLayoutLayer(layerId);
-    const picked = [...app.layoutSelection];
-    const targets = layoutGroups().filter((g) => !picked.includes(g.id));
+    /* Not when the row is already part of the pick. Right-clicking one of
+       several picked layers means "act on these", the same rule the wall's own
+       menu keeps for tiles — and re-picking would throw the pick away a moment
+       before "Group" was clicked. */
+    if (!(pickedLayers().includes(layerId) && app.selectedTile === tileId))
+      selectLayer(layerId, tileId);
+    const held = copiedLayer();
+    const picked = pickedLayers();
+    const isGroup =
+      findLayer(app.manifest.tiles[tileId]?.layers ?? [], layerId)?.kind === "group";
     menu = {
       x: e.clientX,
       y: e.clientY,
       items: [
+        ...(picked.length > 1
+          ? [
+              {
+                label: `Group ${picked.length} layers`,
+                /* Opened as it is made. A group folds away like any other row,
+                   and one that arrived folded looked like the layers had been
+                   swallowed rather than gathered. `app.selected` is the new
+                   group — groupPicked picks it. */
+                run: () => void groupPicked().then(() => reveal(app.selected)),
+              } as Item,
+            ]
+          : []),
+        ...(isGroup
+          ? [{ label: "Ungroup", run: () => void ungroupLayer(layerId, tileId) } as Item]
+          : []),
+        ...(groupHolding(layerId, tileId)
+          ? [
+              {
+                label: "Take out of group",
+                run: () => void takeOutOfGroup(layerId, tileId),
+              } as Item,
+            ]
+          : []),
+        ...(picked.length > 1 || isGroup || groupHolding(layerId, tileId)
+          ? [{ separator: true } as Item]
+          : []),
         {
-          label: picked.length > 1 ? `Group ${picked.length} layers` : "Group",
-          run: () => void groupLayoutLayers(),
-          disabled: !canGroupLayers(),
+          // Ctrl+D as well, which the keyboard sheet has claimed for longer
+          // than the action has existed.
+          label: "Duplicate",
+          // Same as grouping: the copy is picked, so open it if it holds
+          // anything.
+          run: () => void duplicateLayer(layerId, tileId).then(() => reveal(app.selected)),
         },
-        ...(targets.length ? [{ separator: true } as Item] : []),
-        ...targets.map((g) => ({
-          label: `Move into "${layerLabel(g)}"`,
-          run: () => void moveLayersIntoGroup(g.id, picked),
-        })),
-        { separator: true },
         {
-          label: picked.length > 1 ? `Duplicate ${picked.length} layers (Ctrl+D)` : "Duplicate (Ctrl+D)",
-          run: () => void duplicateLayoutLayers(),
+          label: "Copy properties",
+          run: () => copyLayerProps(layerId, tileId),
         },
-        /* Rename stays on the clicked row on purpose: there is one field to
-           type into, and renaming three layers to the same thing is not a
-           thing anyone wants. Delete does not — see below. */
-        { label: "Rename", run: () => (renaming = layerId) },
         {
-          /* The two items above act on the whole selection; this one used to
-             take the clicked row alone and say nothing about it, so "Delete"
-             under "Duplicate 2 layers" removed one of the two. */
-          label:
-            picked.length > 1
-              ? `Delete ${picked.length} layers`
-              : findLayer(editing?.layers ?? [], layerId)?.kind === "group"
-                ? "Ungroup"
-                : "Delete",
-          run: () => void deleteLayoutLayers(picked),
+          // Named, so it says what is about to land rather than "paste" and a
+          // surprise. Its kind too: pasting a caption onto a shape carries the
+          // placement and nothing else, and that is worth knowing beforehand.
+          label: held ? `Paste from "${layerLabel(held.layer)}"` : "Paste properties",
+          run: () => void pasteLayerProps(layerId, tileId),
+          // Onto itself is the one paste that cannot do anything, and it would
+          // still cost an undo step saying it had.
+          disabled: !held || (held.tile === tileId && held.layer.id === layerId),
         },
       ],
     };
@@ -801,96 +793,6 @@
   </span>
 {/snippet}
 
-<!-- One Layout row per layer, recursing into groups. A snippet rather than a
-     component because it needs nothing but the list it draws, and a component
-     would mean threading every action through props. -->
-{#snippet layerRows(rows: Layer[], nested: boolean, parentId: string | null)}
-  <ul class:indent={nested}>
-    {#each rows as layer (layer.id)}
-      <li
-        class:selected={app.layoutSelection.includes(layer.id)}
-        aria-current={app.layoutSelection.includes(layer.id) ? "true" : undefined}
-        class:drop-before={drag.on?.id === layer.id && drag.on.where === "before"}
-        class:drop-after={drag.on?.id === layer.id && drag.on.where === "after"}
-        class:drop-into={drag.on?.id === layer.id && drag.on.where === "into"}
-        draggable="true"
-        ondragstart={(e) => startDrag(e, layer.id)}
-        ondragover={(e) => over(e, layer.id, layer.kind === "group")}
-        ondragleave={() => drag.on?.id === layer.id && (drag.on = null)}
-        ondragend={endDrag}
-        ondrop={(e) => {
-          e.preventDefault();
-          const spot = drag.on;
-          const moving = drag.id;
-          endDrag();
-          if (!spot || !moving) return;
-          const spotIn = landing(rows, spot.id, spot.where, parentId);
-          void dropLayoutLayer(moving, spotIn.parentId, spotIn.beforeId);
-        }}
-        oncontextmenu={(e) => layerMenu(e, layer.id)}
-      >
-        <button
-          class="eye"
-          title={layer.hidden ? "Show" : "Hide"}
-          onclick={() => toggleLayoutLayerHidden(layer.id)}
-        >
-          <RowIcon name="eye" on={!!layer.hidden} />
-        </button>
-        <button
-          class="eye"
-          class:on={layer.locked}
-          title={layer.locked ? "Unlock" : "Lock"}
-          onclick={() => toggleLayerLocked(layer.id)}
-        >
-          <RowIcon name="lock" on={!!layer.locked} />
-        </button>
-        {#if renaming === layer.id}
-          <!-- svelte-ignore a11y_autofocus -->
-          <input
-            class="rename"
-            autofocus
-            onfocus={selectAll}
-            value={layerLabel(layer)}
-            onblur={(e) => {
-              void renameLayer(layer.id, e.currentTarget.value);
-              renaming = "";
-            }}
-            onkeydown={(e) => renameKey(e, layerLabel(layer))}
-          />
-        {:else}
-          <button
-            class="name"
-            class:dimmed={layer.hidden}
-            class:group-name={layer.kind === "group"}
-            onclick={(e) => toggleLayoutPick(layer.id, e.ctrlKey || e.shiftKey)}
-            ondblclick={() => (renaming = layer.id)}
-            title="Ctrl-click picks several, double-click renames"
-          >
-            <!-- No ▾ here. Everywhere else in this sidebar that glyph is a
-                 twisty you can press; on a group row it was plain text in the
-                 middle of a name button, and groups do not collapse. The
-                 group-name class carries the distinction instead. -->
-            {layerLabel(layer)}
-          </button>
-        {/if}
-        <button
-          title="Duplicate (Ctrl+D)"
-          onclick={() => {
-            selectLayoutLayer(layer.id);
-            void duplicateLayoutLayers();
-          }}>⧉</button
-        >
-        <button
-          title={layer.kind === "group" ? "Ungroup, the layers stay" : "Delete"}
-          onclick={() => deleteLayoutLayer(layer.id)}>×</button
-        >
-      </li>
-      {#if layer.kind === "group"}
-        {@render layerRows([...layer.children].reverse(), true, layer.id)}
-      {/if}
-    {/each}
-  </ul>
-{/snippet}
 
 
 
@@ -901,14 +803,7 @@
 <main>
   <header>
     <div class="docs" role="group" aria-label="Document">
-      <button
-        class:active={!editing && home}
-        onclick={() => {
-          closeLayoutDoc();
-          home = true;
-        }}
-        disabled={!app.dir}>Home</button
-      >
+      <button class:active={home} onclick={() => (home = true)} disabled={!app.dir}>Home</button>
       {#if !home}
         {@const project = openProject()}
         {#if project && renaming === `proj:${project.id}`}
@@ -925,43 +820,20 @@
             onkeydown={(e) => renameKey(e, project.name)}
           />
         {:else}
-          <!-- Same gesture as the layout tab beside it: double-click renames,
-               right where the name is read. Unsorted is nobody's project and
-               keeps its name. -->
+          <!-- Double-click renames, right where the name is read. Unsorted is
+               nobody's project and keeps its name. -->
           <button
-            class:active={!editing}
-            onclick={closeLayoutDoc}
+            class="active"
             ondblclick={() => project && (renaming = `proj:${project.id}`)}
             title={project ? "Double-click renames" : undefined}
             disabled={!app.dir}
           >
-            {project?.name ?? "Unsorted"}
+            <!-- The archive is not a project, so `openProject` answers nothing for it
+                 and both of these read "Unsorted" — the same words the actually
+                 unsorted wall uses, while the sidebar said "On this wall". Three
+                 labels disagreeing about where you are. -->
+            {project?.name ?? (onArchive() ? "Archive" : "Unsorted")}
           </button>
-        {/if}
-      {/if}
-      {#if editing}
-        {#if renaming === editing.id}
-          <!-- svelte-ignore a11y_autofocus -->
-          <input
-            class="rename"
-            autofocus
-            onfocus={selectAll}
-            value={editing.name}
-            onblur={(e) => {
-              void renameLayout(editing.id, e.currentTarget.value);
-              renaming = "";
-            }}
-            onkeydown={(e) => renameKey(e, editing.name)}
-          />
-        {:else}
-          <!-- Double-click renames, the same gesture as in the layout list and
-               on a group row. The name is right here while you work on the
-               document; going back to the list to change it is a trip. -->
-          <button
-            class="active"
-            title="Esc closes · double-click renames"
-            ondblclick={() => (renaming = editing.id)}>{editing.name}</button
-          >
         {/if}
       {/if}
       <!-- The way to see a folder that changed underneath us. The portraits are
@@ -997,21 +869,6 @@
       </button>
     </div>
 
-    {#if editing}
-      <button
-        class="primary"
-        onclick={() => saveLayout(editing.id)}
-        disabled={!canSaveLayout(editing.id) || !!app.busy}
-        title={layoutTiles(editing.id)
-          ? `Applies the changes to ${layoutTiles(editing.id)} tile(s)`
-          : "Not stamped anywhere yet"}
-      >
-        <!-- Not "Save": the Layout is written to disk on every edit, so a
-             save button would promise something that already happened. What
-             this does is re-render and swap the picture in every stamp. -->
-        Update stamps{#if layoutTiles(editing.id)}&nbsp;({layoutTiles(editing.id)}){/if}
-      </button>
-    {:else}
       <!-- Every button below acts on the wall in front of you, and on the
            overview there is none. The open project is deliberately remembered
            while Home shows — that is what makes the way back one click — so
@@ -1106,17 +963,12 @@
       >
         Reset in game
       </button>
-    {/if}
 
     <span class="status">
       {#if app.busy}
         {app.busy}…
       {:else if app.error}
         {app.error}
-      {:else if editing && canSaveLayout(editing.id)}
-        Saved &middot; changes not on the tiles yet
-      {:else if editing}
-        Saved
       {:else if app.selectedTiles.length}
         <!-- The second half only where it can be anything but zero. Inside a
              project every picked tile is claimed by definition, so it read
@@ -1130,7 +982,8 @@
              the line that made "Home" feel like it had not left the project. -->
         {projects().length} project(s) &middot; {inbox().length} unassigned
       {:else if app.dir}
-        {openProject()?.name ?? "Unsorted"} &middot; {visibleIds().length}
+        {openProject()?.name ?? (onArchive() ? "Archive" : "Unsorted")} &middot; {visibleIds()
+          .length}
         {visibleIds().length === 1 ? "tile" : "tiles"} &middot; drag selects, Ctrl adds, Alt+drag
         swaps
       {/if}
@@ -1163,50 +1016,75 @@
         () => void redoEdit(),
         !redoable(),
       )}
-      <span class="gap"></span>
-      <!-- The wall's one mode, and the only button in this rail that stays
-           pressed. Its own group under the undo pair, away from the insert
-           tools: those add a layer to a Layout, this changes what a drag on the
-           wall means. A crop frame with a picture's diagonal inside it — the
-           mark every editor uses for "which part of this shows". -->
-      <button
-        class="mode"
-        class:on={framing}
-        aria-pressed={framing}
-        onclick={() => (framing = !framing)}
-        disabled={home || !!editing || !!app.busy}
-        title={framing
-          ? "Placing: pick a tile, then one of its own layers in the list — drag it, corners zoom, the top handle turns. Escape leaves"
-          : "Place a tile's own layers — its picture, caption or class icon"}
-      >
-        <RowIcon name="place" size={17} />
-      </button>
+      <!-- The wall had one mode, and it is gone. The frame it switched on now
+           appears by itself on the layers that need one — a class icon and a
+           masked layer, whose own object is a whole-tile bake — and every other
+           layer is dragged directly. A button that has to be found before a
+           drag will work is a button that gets forgotten; nothing here is worth
+           a mode. -->
       <span class="gap"></span>
       <!-- Framed mountain and sun, the icon every editor uses for a picture —
            no Unicode glyph reads as one at this size. -->
-      <button title="Insert image — opens a file picker" disabled={!editing || !!app.busy} onclick={() => void addLayoutImage()}>
+      <button
+        title={`Insert image${insertWhere} — opens a file picker`}
+        disabled={!canInsert || !!app.busy}
+        onclick={addImage}
+      >
         <svg width="16" height="14" viewBox="0 0 16 14" aria-hidden="true">
           <rect x="1" y="1" width="14" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4" />
           <circle cx="5.4" cy="5" r="1.4" fill="currentColor" />
           <path d="M3 11.4 L7 7 L9.5 9.6 L11.5 7.6 L13.6 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" />
         </svg>
       </button>
-      {@render tool("Insert text", "T", () => void addLayoutText(), !editing)}
-      {@render tool("Rectangle", "▭", () => void addLayoutShape("rect"), !editing)}
-      {@render tool("Ellipse", "◯", () => void addLayoutShape("ellipse"), !editing)}
-      {@render tool("Polygon", "⬡", () => void addLayoutShape("polygon"), !editing)}
+      {@render tool(`Insert text${insertWhere}`, "T", addText, !canInsert)}
+      {@render tool(`Rectangle${insertWhere}`, "▭", () => addShape("rect"), !canInsert)}
+      {@render tool(`Ellipse${insertWhere}`, "◯", () => addShape("ellipse"), !canInsert)}
+      {@render tool(`Polygon${insertWhere}`, "⬡", () => addShape("polygon"), !canInsert)}
       <!-- The fourth shape. A picker rather than a straight insert, because
            which class it is is the whole question. -->
-      {@render tool("Class icon", "✦", () => (iconsOpen = true), !editing)}
+      {@render tool(`Class icon${insertWhere}`, "✦", () => (iconsOpen = true), !canInsert)}
       <span class="gap"></span>
-      {@render tool("Align left", "⇤", () => sheet?.alignTo("left"), noPick)}
-      {@render tool("Align right", "⇥", () => sheet?.alignTo("right"), noPick)}
-      {@render tool("Center horizontally", "↔", () => sheet?.alignTo("centerX"), noPick)}
-      {@render tool("Center vertically", "↕", () => sheet?.alignTo("centerY"), noPick)}
-      {@render tool("Align top", "⤒", () => sheet?.alignTo("top"), noPick)}
-      {@render tool("Align bottom", "⤓", () => sheet?.alignTo("bottom"), noPick)}
-      {@render tool("Equal horizontal gaps", "⇹", () => sheet?.spreadBy("x"), fewPicked)}
-      {@render tool("Equal vertical gaps", "⇳", () => sheet?.spreadBy("y"), fewPicked)}
+      <!-- Lining up, against the tile and not against each other: on a wall
+           every portrait wears the same design, so "the same place on all of
+           them" is the thing being asked for, and the cell is the only thing
+           all of them share.
+
+           A row is a pair of opposites — the two sides, then the two ends, then
+           the two middles — rather than the strip's usual horizontal-left,
+           vertical-right split. Opposites are what the hand reaches for here:
+           having gone too far left, the way back is the button beside it. -->
+      {@render tool(`Line up on the left${alignWhere}`, "⇤", () => void alignPicked("left"), !canAlign)}
+      {@render tool(`Line up on the right${alignWhere}`, "⇥", () => void alignPicked("right"), !canAlign)}
+      {@render tool(`Line up at the top${alignWhere}`, "⤒", () => void alignPicked("top"), !canAlign)}
+      {@render tool(
+        `Line up at the bottom${alignWhere}`,
+        "⤓",
+        () => void alignPicked("bottom"),
+        !canAlign,
+      )}
+      {@render tool(
+        `Centre sideways${alignWhere}`,
+        "↔",
+        () => void alignPicked("centerX"),
+        !canAlign,
+      )}
+      {@render tool(`Centre upright${alignWhere}`, "↕", () => void alignPicked("centerY"), !canAlign)}
+      <!-- Spreading needs a middle to spread: with two layers the outermost
+           two are all there is and nothing would move, so the button is greyed
+           until a third is picked. -->
+      {@render tool(
+        "Equal gaps downwards — pick three or more layers",
+        "⋮",
+        () => void spreadPicked("y"),
+        !canSpread,
+      )}
+      {@render tool(
+        "Equal gaps sideways — pick three or more layers",
+        "⋯",
+        () => void spreadPicked("x"),
+        !canSpread,
+      )}
+      <span class="gap"></span>
     </div>
 
     <!-- Capture phase: Fabric stops contextmenu on its own canvas, so a
@@ -1230,53 +1108,7 @@
         if (moving) void placeTileAt(moving, grid?.tileAtEvent(e) || null);
       }}
     >
-      {#if editing}
-        <!-- The wall's faces beside the sheet, so the design can be tried on
-             one. Composing against black meant stamping to find out whether a
-             caption sat on a forehead; this is the same question answered
-             before the stamp. Clicking a face lays it under the sheet.
-             Deliberately still pictures: rendering the Layout into forty-four
-             of them on every slider drag would cost more than the answer is
-             worth, and the big one shows it already. -->
-        {#if bedChoices().length > 1}
-          <!-- A column of its own beside the tools, not a panel laid over the
-               sheet: the faces are for picking from, and something that covers
-               what it is meant to help with is not a help. Big enough to
-               recognise a character at a glance — at thumbnail size the point
-               of the strip was lost. -->
-          <div class="bedcol">
-            <button
-              class="bedtoggle"
-              title={bedStrip ? "Hide the tile strip" : "Show the tile strip"}
-              onclick={() => (bedStrip = !bedStrip)}
-            >
-              {bedStrip ? "‹" : "›"}
-            </button>
-            {#if bedStrip}
-              <div class="bedstrip">
-                {#each bedChoices() as id (id)}
-                  {@const wearing = tileLayers(id).some((l) => l.layoutId === editing.id)}
-                  <button
-                    class="bed"
-                    class:on={bedFor(editing.id) === id}
-                    class:wearing
-                    title={wearing ? `${id} — already wearing this layout` : id}
-                    onclick={() => setBedTile(id)}
-                  >
-                    <canvas
-                      class="thumb"
-                      width="62"
-                      height="80"
-                      use:portrait={{ id, ready: !!app.deps }}
-                    ></canvas>
-                  </button>
-                {/each}
-              </div>
-            {/if}
-          </div>
-        {/if}
-        <LayoutCanvas bind:this={sheet} />
-      {:else if home}
+      {#if home}
         <!-- The start view, always. With several accounts sharing one folder
              there is no single "the" wall to open, and a newly created
              character has to be visible the moment it turns up — so the way in
@@ -1393,33 +1225,45 @@
           {/if}
         </div>
       {:else}
-        <GridCanvas bind:this={grid} {framing} />
+        <GridCanvas bind:this={grid} />
       {/if}
     </div>
 
-    <aside bind:this={pane} onscroll={() => (scrolled = pane!.scrollTop > 200)}>
-      {#if editing}
-        <h2>Layers in the layout</h2>
-        {#if !layoutLayers.length}
-          <p class="empty">No layers.</p>
-        {/if}
-        {@render layerRows(layoutLayers, false, null)}
-        {#if layoutLayers.length}
-          <!-- Only with something to right-click on. Under "No layers." it read
-               as an instruction for the empty list itself. -->
-          <p class="empty">Right-click a layer to group, duplicate, rename or delete.</p>
-        {/if}
-        {#if selectedLayoutLayer}
-          <Properties
-            layer={selectedLayoutLayer}
-            inLayout
-            onPickClass={(layerId) => {
-              iconTarget = { layer: layerId };
-              iconsOpen = true;
-            }}
-          />
-        {/if}
-      {:else}
+    <!-- `pane?`, not `pane!`. Svelte clears a bind:this on unmount and the
+         scroll event can still arrive after that, so the assertion was a lie
+         waiting for the pane to be long enough to scroll — which it became the
+         day the layer panel moved in. -->
+    <!-- The picked layer's own fields. Everything with no other way in: a
+         caption's face and colour, a shape's corners and gradient, a picture's
+         grading, the mask. Position, rotation and size are not here — those are
+         the canvas handles, and repeating them would give two answers to the
+         same question.
+
+         One home for both kinds of layer. A tile's layer and one spread across
+         the whole wall carry the same fields, and Properties knows which it
+         has: it writes through every picked tile when there are tiles, and
+         straight to the layer when there are none.
+
+         Its own column, not the top of the list beside it. It sat there first,
+         and the cost was paid on every edit: the tile list is forty-four rows
+         of accordion, so picking a layer near the bottom scrolled its fields
+         off the screen — the panel was above the list and moved with it. A
+         column of its own has one scroll each and neither pushes the other
+         away. Only while something is picked, so the wall keeps the width the
+         rest of the time. -->
+    {#if picked}
+      <aside class="props">
+        <Properties
+          layer={picked}
+          onPickClass={(layerId) => {
+            iconTarget = { tile: app.selectedTile || undefined, layer: layerId };
+            iconsOpen = true;
+          }}
+        />
+      </aside>
+    {/if}
+
+    <aside bind:this={pane} onscroll={() => (scrolled = (pane?.scrollTop ?? 0) > 200)}>
         {#if wallLayers.length}
           <h2>Wall</h2>
           <ul>
@@ -1523,109 +1367,6 @@
           </button>
         {/if}
 
-        <!-- One library across every project: a design fits characters from
-             any account, and keeping a copy per wall would mean editing the
-             same frame twice. Collapsible, because that library is the list
-             that grows without bound. -->
-        <h2 class="spaced">
-          <button class="head" onclick={() => toggleOpen("layouts")} aria-expanded={isOpen("layouts")}>
-            <span class="twisty inline">{isOpen("layouts") ? "▾" : "▸"}</span>
-            Layouts{#if layouts().length}&nbsp;({layouts().length}){/if}
-          </button>
-        </h2>
-        {#if !layouts().length}
-          <p class="empty">None yet.</p>
-        {/if}
-        <ul class:collapsed={!isOpen("layouts")}>
-          {#each layouts() as layout (layout.id)}
-            <li>
-              {#if renaming === layout.id}
-                <!-- svelte-ignore a11y_autofocus -->
-                <input
-                  class="rename"
-                  autofocus
-                  onfocus={selectAll}
-                  value={layout.name}
-                  onblur={(e) => {
-                    void renameLayout(layout.id, e.currentTarget.value);
-                    renaming = "";
-                  }}
-                  onkeydown={(e) => renameKey(e, layout.name)}
-                />
-              {:else}
-                <!-- Double-click renames, like a group row — and opening lives
-                     on the pencil, not on the name. Both cannot share the
-                     name: the first click of a double-click would open the
-                     document, unmount this row, and the second click would
-                     land on nothing, which is exactly how layouts were
-                     unrenamable for a while. -->
-                <!-- The same dot the stamp rows carry, one level up. Those are
-                     inside a tile that has to be expanded to be seen, so
-                     closing a Layout after editing left the wall looking
-                     finished while it was showing older art.
-
-                     And it is the button now. It used to be a span inside the
-                     name, whose tooltip read "open it and press Update stamps"
-                     — an instruction to go somewhere else and press a button,
-                     printed on the exact spot the eye was already on.
-                     saveLayout has been keyed by id for a while, so there was
-                     nothing to open. A button cannot be nested in a button,
-                     which is why it moved out here rather than growing an
-                     onclick where it stood.
-
-                     Before the name, because the name is what gets ellipsised
-                     and a dot behind "…" is no dot at all. -->
-                {#if canSaveLayout(layout.id)}
-                  <button
-                    class="dirty"
-                    disabled={!!app.busy}
-                    title="Stamps are older than this Layout — press to update them"
-                    onclick={() => void saveLayout(layout.id)}>●</button
-                  >
-                {/if}
-                <!-- `inert-name`, because it is the one name button in this
-                     sidebar a single click does nothing with, and it looked
-                     exactly like the ones that respond. -->
-                <button
-                  class="name inert-name"
-                  ondblclick={() => (renaming = layout.id)}
-                  title="Double-click to rename — the pencil opens it"
-                >
-                  {layout.name}
-                  <!-- Both numbers, because they answer different questions:
-                       the stamps are what a refresh or a delete touches, the
-                       tiles are how much of the wall wears the design. One
-                       group of fifteen tiles used to read "stamped 1 time". -->
-                  <span class="usage">
-                    <!-- One number. It read "1 stamp(s) · 1 tile(s)" because
-                         the two were the same count wearing different words —
-                         see tilesWearing. -->
-                    {layoutTiles(layout.id) ? `${layoutTiles(layout.id)} tile(s)` : "unused"}
-                  </span>
-                </button>
-              {/if}
-              <button title="Edit layout" onclick={() => openLayoutDoc(layout.id)}>✎</button>
-              <!-- No shortcut in the tooltip: Ctrl+D duplicates the picked
-                   layers inside a Layout, and this copies the whole Layout. -->
-              <button title="Duplicate" onclick={() => duplicateLayoutDoc(layout.id)}>⧉</button>
-              <button title="Delete" onclick={() => removeLayout(layout.id, layout.name)}>×</button
-              >
-            </li>
-          {/each}
-        </ul>
-        <!-- Inside the section, like every other "+". It sat outside because
-             the list above is hidden with CSS rather than dropped, so the
-             button stayed on screen under a collapsed heading and offered to
-             add to a list nobody could see. -->
-        {#if isOpen("layouts")}
-          <button
-            class="wide"
-            onclick={() => void newLayoutDoc(`Layout ${layouts().length + 1}`)}
-            disabled={!app.dir || !!app.busy}
-          >
-            + New layout
-          </button>
-        {/if}
 
         <!-- A wall put aside under a name, so it can be tried out and walked
              back from. Twenty kilobytes each — the assets and the vault copies
@@ -1649,7 +1390,14 @@
             </p>
           {/if}
           <ul>
-            {#each snapshots() as snap (snap.name)}
+            <!-- Keyed on the wall as well as the name. Names are only kept
+                 apart within one scope, and the overview deliberately lists the
+                 document-wide ones together with any left behind by a deleted
+                 project — so two "Snapshot 1" taken on different walls can meet
+                 here, and a keyed each throws on the pair rather than drawing
+                 it. That takes the sidebar down, in the build as well as in
+                 development. -->
+            {#each snapshots() as snap (`${snap.projectId}~${snap.name}`)}
               <li>
                 {#if renaming === `snap:${snap.name}`}
                   <!-- svelte-ignore a11y_autofocus -->
@@ -1700,7 +1448,7 @@
             <!-- Named for its reach. On the Unsorted wall there is no project
                  to scope to, so the same button in the same place takes the
                  whole document — which is a different promise. -->
-            + Snapshot{app.openProjectId ? "" : " (whole document)"}
+            + Snapshot{app.openProjectId && !onArchive() ? "" : " (whole document)"}
           </button>
         {/if}
 
@@ -1822,9 +1570,7 @@
               <button
                 title="Put the picked tiles in here"
                 disabled={!app.selectedTiles.length}
-                onclick={() => {
-                  for (const id of app.selectedTiles) void fileTile(id, folder.id);
-                }}>+</button
+                onclick={() => void fileSelectionInto(folder.id)}>+</button
               >
               <!-- Dissolve, not delete: the tiles keep their slots and every
                    layer on them. That is the whole difference from the group
@@ -1836,7 +1582,7 @@
             {#if isOpen(folder.id)}
               <div class="indent">
                 {#each folder.tiles as id (id)}
-                  <TileRow {id} inGroup={folder.id} bind:framing {openIcons} />
+                  <TileRow {id} inGroup={folder.id} {openIcons} {layerMenu} />
                 {/each}
               </div>
             {/if}
@@ -1859,7 +1605,7 @@
           {#if isOpen("tiles")}
             <div class="indent">
               {#each looseIds() as id (id)}
-                <TileRow {id} inGroup="" bind:framing {openIcons} />
+                <TileRow {id} inGroup="" {openIcons} {layerMenu} />
               {/each}
             </div>
           {/if}
@@ -1879,7 +1625,6 @@
           </button>
         {/if}
 
-      {/if}
       <!-- The way back up. Only once there is a way back: a button that is
            always there is furniture, one that appears when you have travelled
            says something. -->
@@ -1974,9 +1719,11 @@
           onclick={() => {
             const target = iconTarget;
             closeIconSheet();
-            if (target?.tile) void setTileAsset(target.tile, target.layer, name);
+            if (target?.tile) void setTileLayerField([target.tile], target.layer, "icon", name);
             else if (target) void setLayerField(target.layer, "icon", name);
-            else void addLayoutShape("icon", name);
+            // Nothing asked for it: the toolbar did, so it lands wherever a new
+            // layer lands — the sheet, or every picked tile.
+            else addShape("icon", name);
           }}
         >
           <!-- Drawn from the same parsed paths the layer is drawn from, so the
@@ -2169,54 +1916,6 @@
     border-bottom: 1px solid #241e3a;
   }
 
-  /* Its own column in the row, so the sheet keeps the space it had — and no
-     surface of its own: the tools column beside it is separated by one hairline
-     and nothing else, and a second shade here would invent a panel the app does
-     not otherwise have. */
-  .bedcol {
-    display: flex;
-    flex: none;
-    flex-direction: column;
-    align-items: stretch;
-    min-height: 0;
-    border-right: 1px solid #241e3a;
-  }
-
-  .bedstrip {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    padding: 6px;
-    overflow-y: auto;
-    min-height: 0;
-  }
-
-  .bed {
-    padding: 3px;
-    border: 1px solid transparent;
-    border-radius: 4px;
-    background: none;
-    line-height: 0;
-  }
-
-  .bed.on {
-    border-color: #a685ff;
-  }
-
-  /* A tile already carrying this layout — the ones worth checking first. */
-  .bed.wearing {
-    box-shadow: inset 0 0 0 2px #3a2b5e;
-  }
-
-  .bedtoggle {
-    flex: none;
-    padding: 2px 5px;
-    border: 0;
-    border-bottom: 1px solid #241e3a;
-    border-radius: 0;
-    background: none;
-  }
-
   .sheetback {
     position: fixed;
     inset: 0;
@@ -2364,16 +2063,6 @@
     height: 6px;
   }
 
-  /* A mode reads as pressed, not as hovered: filled, outlined in the accent,
-     and it stays that way with the pointer somewhere else entirely. The tool
-     buttons beside it do something and are done; this one is a state. */
-  .tools button.mode.on {
-    background: #3a2f68;
-    border-color: #a685ff;
-    box-shadow: inset 0 0 0 1px #a685ff;
-    color: #efeaff;
-  }
-
   /* A glyph, not a word: it sits inside the document group but is not a
      document, and the tabs beside it are the ones that should carry the reading
      weight. Same height as those tabs so the row keeps one baseline. */
@@ -2414,6 +2103,12 @@
     overflow-y: auto;
     padding: 8px;
     border-left: 1px solid #241e3a;
+  }
+
+  /* Narrower than the list beside it: it holds fields and no tile names, and
+     every pixel here is one the wall does not get. */
+  .props {
+    width: 256px;
   }
 
   /* The browser's own scrollbar is a bright slab in a dark app. Chromium draws

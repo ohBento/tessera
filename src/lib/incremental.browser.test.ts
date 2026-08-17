@@ -17,7 +17,7 @@ import {
   newTextLayer,
   type Manifest,
 } from "./model";
-import { buildGrid, gridSize, rebuildTile, soleTileChange, wallPrint, type Wall } from "./scene";
+import { buildGrid, gridSize, rebuildTile, soleTileChange, tilesChanged, wallPrint, type Wall } from "./scene";
 import { testDeps } from "../test/images";
 
 function manifest(count: number): Manifest {
@@ -96,6 +96,88 @@ describe("deciding whether one tile is enough", () => {
     expect(soleTileChange(print(m), print(m))).toBe("");
   });
 
+  it("keeps the portrait underneath when only a layer changed", async () => {
+    /* The one part of a tile a layer edit cannot reach: it comes from the
+     * game's own file and from `base`. Rebuilding it anyway decoded into a
+     * fresh 624x804 canvas on every pointer event of every slider drag.
+     * Identity is the assertion — a new object that draws the same thing is
+     * exactly what this stops. */
+    const m = dressed(9);
+    const [target] = order(m);
+    const canvas = wallCanvas(9);
+    try {
+      await buildGrid(canvas, view(m), m, testDeps, true);
+      const base = () =>
+        canvas.getObjects().find((o) => {
+          const t = o as { tileId?: string; space?: string };
+          return t.tileId === target && t.space === "base";
+        });
+      const bases = () =>
+        canvas.getObjects().filter((o) => {
+          const t = o as { tileId?: string; space?: string };
+          return t.tileId === target && t.space === "base";
+        });
+      const was = base();
+      expect(bases()).toHaveLength(1);
+
+      (m.tiles[target].layers[1] as { text: string }).text = "changed";
+      await rebuildTile(canvas, target, view(m), m, testDeps, true);
+      expect(base()).toBe(was);
+      expect(bases()).toHaveLength(1);
+
+      // And it is replaced when it really is a different picture.
+      m.tiles[target].base = { asset: "block:#654321", crop: { x: 0, y: 0, w: 624, h: 804 } };
+      await rebuildTile(canvas, target, view(m), m, testDeps, true);
+      expect(base()).not.toBe(was);
+    } finally {
+      canvas.dispose();
+    }
+  });
+
+  it("draws the rest of the wall when one portrait will not decode", async () => {
+    /* Every background is fetched in one Promise.all, so one rejection
+     * rejected the lot and the build threw: an empty wall — this wall and any
+     * other — for the rest of the session, under a message naming no tile.
+     * A truncated BMP is not exotic; a crash mid-write or a half-synced
+     * Documents folder produces one. */
+    const m = dressed(9);
+    const [bad] = order(m);
+    const deps = {
+      ...testDeps,
+      original: (id: string) =>
+        id === bad ? Promise.reject(new Error("not a bitmap")) : testDeps.original(id),
+    };
+
+    const canvas = wallCanvas(9);
+    try {
+      await buildGrid(canvas, view(m), m, deps, true);
+      // Every tile's layers are on the canvas, the bad one's included.
+      for (const id of order(m))
+        expect(canvas.getObjects().some((o) => (o as { tileId?: string }).tileId === id)).toBe(true);
+    } finally {
+      canvas.dispose();
+    }
+  });
+
+  it("counts a padlock as no change, and the eye as a change", () => {
+    /* Locking fourteen tiles' layers named fourteen changed tiles, which is
+       past the incremental limit, which threw the wall away and built it again
+       — every mask baked a second time — for a change that alters not one
+       pixel. Reported as an occasional freeze on lock, reproducible only with
+       masks on the wall and nine or more tiles picked.
+       `hidden` is the neighbouring flag and does reach the picture, so the two
+       are checked together: the fingerprint has to tell them apart. */
+    const m = dressed(9);
+    const [a, b] = order(m);
+    const before = print(m);
+
+    for (const id of [a, b]) m.tiles[id].layers[0].locked = true;
+    expect(tilesChanged(before, print(m))).toEqual([]);
+
+    m.tiles[a].layers[0].hidden = true;
+    expect(tilesChanged(before, print(m))).toEqual([a]);
+  });
+
   it("refuses when two tiles changed", () => {
     const m = dressed(9);
     const before = print(m);
@@ -135,19 +217,18 @@ describe("deciding whether one tile is enough", () => {
   });
 
   it("notices a change that adds no layer at all", () => {
-    /* Wording, a swapped picture, a frame and a paint colour live beside the
-       layers rather than in them, and each one changes what the tile draws.
-       A comparison that only looked at `layers` would call all four "no
-       change" and leave the edit off the wall. */
+    /* Wording lives beside the layers rather than in them, and so does the
+       baked background, and each changes what the tile draws. A comparison that
+       only looked at `layers` would call both "no change" and leave the edit
+       off the wall. There were four of these: a swapped picture, a paint colour
+       and a frame were records the tile kept about a design it wore, and every
+       one of them is on the layer now. */
     const m = dressed(9);
     const [target] = order(m);
     const caption = m.tiles[target].layers[1];
 
     for (const edit of [
-      () => (m.tiles[target].text = { [caption.id]: "renamed" }),
-      () => (m.tiles[target].swap = { [caption.id]: "block:#123456" }),
-      () => (m.tiles[target].frame = { [caption.id]: { x: 0.1, y: 0, z: 1, a: 0 } }),
-      () => (m.tiles[target].paint = { [caption.id]: "#abcdef" }),
+      () => ((m.tiles[target].layers[1] as { text: string }).text = "renamed"),
       // A baked mosaic: the tile's own background stops being the game's file.
       () =>
         (m.tiles[target].base = {
@@ -277,6 +358,53 @@ describe("rebuilding one tile", () => {
       expect(shape(canvas)).toEqual(before);
     } finally {
       await canvas.dispose();
+    }
+  });
+});
+
+describe("a canvas that does not paint per object still paints on a zoom", () => {
+  /* renderOnAddRemove is off on the wall, so building it does not repaint once
+   * per object — a wall of forty-four was asking for hundreds of frames it
+   * threw away. Fabric hangs something else on that same flag:
+   *
+   *   setViewportTransform(vpt) {
+   *     this.viewportTransform = vpt;
+   *     this.calcViewportBoundaries();
+   *     this.renderOnAddRemove && this.requestRenderAll();
+   *   }
+   *
+   * So with it off, a zoom and a pan change the transform and ask for nothing.
+   * The screen then catches up only when something else happens to paint —
+   * reported as "zoom only takes effect when I click something", and as a pan
+   * that moves in steps. The flag reads as "render on add/remove"; it is the
+   * canvas's auto-render switch, and the viewport rides on it. */
+  it("asks for no frame at all — which is why GridCanvas asks for its own", async () => {
+    const el = document.createElement("canvas");
+    document.body.append(el);
+    const canvas = new fabric.Canvas(el, { width: 400, height: 300, renderOnAddRemove: false });
+    try {
+      let asked = 0;
+      const original = canvas.requestRenderAll.bind(canvas);
+      canvas.requestRenderAll = () => {
+        asked++;
+        return original();
+      };
+
+      /* Asserted the way it actually is, so that a Fabric upgrade which starts
+         requesting the frame itself fails here and whoever reads it can take
+         the explicit calls in GridCanvas back out. */
+      canvas.zoomToPoint(new fabric.Point(10, 10), 2);
+      expect(asked).toBe(0);
+      canvas.relativePan(new fabric.Point(15, 15));
+      expect(asked).toBe(0);
+
+      // And with the flag on, Fabric does ask — so this really is that switch.
+      canvas.renderOnAddRemove = true;
+      canvas.zoomToPoint(new fabric.Point(10, 10), 3);
+      expect(asked).toBeGreaterThan(0);
+    } finally {
+      await canvas.dispose();
+      el.remove();
     }
   });
 });

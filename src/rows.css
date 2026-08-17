@@ -153,6 +153,14 @@ li:hover:not(.selected):not(:has(li:hover)) {
    an insertion point has to be visible before the mouse is released or the
    drop is a guess. box-shadow rather than a border, so nothing shifts by a
    pixel as the marker moves from row to row. */
+/* A layer's colour: a bar down the leading edge of its row, and the same bar on
+   everything inside it when the layer is a group. Deliberately not the row's
+   background — a dozen coloured rows read as a warning rather than as an
+   arrangement, and the selected row has to stay the one that stands out. */
+li.tinted {
+  box-shadow: inset 3px 0 0 var(--tint);
+}
+
 li.drop-before {
   box-shadow: inset 0 2px 0 #a685ff;
 }

@@ -54,6 +54,18 @@ export function localStamp(len: 16 | 19 = 16) {
     .replace("T", " ");
 }
 
+/** The same moment, spelled so a filename can hold it.
+ *
+ *  Windows refuses `:` in a name, and a stamp to the second has two of them —
+ *  so both places that set a damaged file aside were building a path the OS
+ *  rejects, and the rename threw. Which is worse than it sounds: the recovery
+ *  is deliberately not wrapped in a catch, so the folder then does not open at
+ *  all, this time and every time after, and the only way out is renaming a
+ *  file by hand in Explorer. Snapshots have always been named through
+ *  `snapshotKey`, which strips these — this is the same rule, said where the
+ *  other two callers can reach it. */
+export const fileStamp = () => localStamp(19).replace(/:/g, "_");
+
 /** The document lined up with the folder, plus what that cost.
  *
  *  `lost` are the ids the folder no longer has that still carried work, and
@@ -72,9 +84,18 @@ export function localStamp(len: 16 | 19 = 16) {
 export async function loadManifest(
   dir: string,
   ids: string[],
-): Promise<{ manifest: Manifest; lost: string[]; snapshot: string; broken: string }> {
+): Promise<{
+  manifest: Manifest;
+  lost: string[];
+  snapshot: string;
+  broken: string;
+  /** The file's own version when it was older than this build's, and the name
+   *  of the copy kept of it. Empty when nothing was migrated. */
+  migrated: { from: number; backup: string } | null;
+}> {
   let m = emptyManifest();
   let broken = "";
+  let migrated: { from: number; backup: string } | null = null;
   let text = "";
   try {
     text = await readTextFile(await manifestPath(dir));
@@ -84,7 +105,27 @@ export async function loadManifest(
   }
   if (text) {
     try {
-      m = migrate(JSON.parse(text));
+      const raw = JSON.parse(text) as { version?: unknown };
+      const from = typeof raw.version === "number" ? raw.version : 0;
+      m = migrate(raw);
+      /* A copy of the file exactly as it was, before this build gets a chance
+       * to write over it.
+       *
+       * Migration happens on open and the first edit saves the new shape, so
+       * without this the old document is gone one keystroke after a version
+       * that misreads it. Undo is no help — it lives in memory and starts
+       * empty — and neither are snapshots, which re-run the same migration
+       * when they are read. One file copy is the whole insurance.
+       *
+       * Written once per version: the name carries the version it holds, and
+       * a document that has already been migrated never comes through here
+       * again. */
+      if (from > 0 && from < m.version) {
+        const name = `manifest.v${from}.bak.json`;
+        const to = await join(await projectDir(dir), name);
+        if (!(await exists(to))) await writeTextFile(to, text);
+        migrated = { from, backup: name };
+      }
     } catch {
       /* A file that is there but will not parse used to share the catch above,
        * so a damaged document was indistinguishable from a first run: the app
@@ -99,7 +140,7 @@ export async function loadManifest(
        * the right way round. Starting clean over a manifest we could neither
        * read nor set aside is the one outcome this whole path exists to
        * prevent. */
-      broken = `manifest.unreadable ${localStamp(19)}.json`;
+      broken = `manifest.unreadable ${fileStamp()}.json`;
       await rename(await manifestPath(dir), await join(await projectDir(dir), broken));
     }
   }
@@ -117,7 +158,7 @@ export async function loadManifest(
     );
   }
   // Characters get created and deleted between sessions; the folder wins.
-  return { manifest: pruneToFolder(m, ids), lost, snapshot, broken };
+  return { manifest: pruneToFolder(m, ids), lost, snapshot, broken, migrated };
 }
 
 /* --- Knowing when the game changed a file under us.
@@ -182,7 +223,7 @@ export async function loadFingerprints(
      * their own pristine portrait is never captured. Set aside instead, and
      * said out loud, because what the user loses is a warning they will never
      * see missing. */
-    const broken = `fingerprints.unreadable ${localStamp(19)}.json`;
+    const broken = `fingerprints.unreadable ${fileStamp()}.json`;
     await rename(await printsPath(dir), await join(await projectDir(dir), broken));
     return { prints: {}, broken };
   }
@@ -268,12 +309,21 @@ export async function hashTiles(dir: string, ids: string[]): Promise<Record<stri
  *  A queue rather than a lock, because a dropped save is worse than a late
  *  one: every caller still gets its turn, in order. */
 let writing: Promise<void> = Promise.resolve();
-let queuedWrite: { dir: string; m: Manifest } | null = null;
+/** The newest state waiting to be written, one entry per folder. */
+const queued = new Map<string, Manifest>();
+/** Set while a write is actually touching the disk.
+ *
+ *  The queue slot is emptied the moment a turn picks it up, which is before
+ *  the four awaits that do the writing — so `savePending` answered "nothing
+ *  pending" for the whole of the slow part, which is exactly the window the
+ *  guard exists to cover. In the common case of a single edit and an
+ *  immediate close it was never true at all. */
+let writingNow = false;
 
-/** Whether a manifest write is still waiting its turn. Closing the window with
- *  one queued drops the last edit on the floor — the model has it, the disk
- *  never gets it — and the queue is what makes that window exist at all. */
-export const savePending = () => queuedWrite !== null;
+/** Whether a manifest write is queued or in flight. Closing the window with
+ *  one of either drops the last edit on the floor — the model has it, the disk
+ *  never gets it. */
+export const savePending = () => queued.size > 0 || writingNow;
 
 export function saveManifest(dir: string, m: Manifest): Promise<void> {
   /* Newer state supersedes older: a burst of edits — a slider being dragged —
@@ -281,18 +331,30 @@ export function saveManifest(dir: string, m: Manifest): Promise<void> {
    * document that is about to change again is work nobody reads. The last one
    * contains all of them, so an earlier caller's promise resolving on a later
    * write is not a compromise. */
-  queuedWrite = { dir, m };
+  /* One slot per folder. Superseding is only true within one document: a save
+     for folder A waiting its turn when a save for B arrives was dropped
+     outright, its promise resolving as though it had been written. There is
+     one folder open at a time today, so this is insurance rather than a
+     symptom — but it is the mechanism that exists to stop a write going
+     missing, and it went missing in exactly the case it is for. */
+  queued.set(dir, m);
   writing = writing
     .catch(() => {})
     .then(async () => {
-      const next = queuedWrite;
+      const [entry] = queued;
       // Already covered by a later call that ran ahead of this turn.
-      if (!next) return;
-      queuedWrite = null;
-      const path = await manifestPath(next.dir);
-      await mkdir(await projectDir(next.dir), { recursive: true });
-      await writeTextFile(`${path}.tmp`, JSON.stringify(next.m, null, 2));
-      await rename(`${path}.tmp`, path);
+      if (!entry) return;
+      const next = { dir: entry[0], m: entry[1] };
+      queued.delete(next.dir);
+      writingNow = true;
+      try {
+        const path = await manifestPath(next.dir);
+        await mkdir(await projectDir(next.dir), { recursive: true });
+        await writeTextFile(`${path}.tmp`, JSON.stringify(next.m, null, 2));
+        await rename(`${path}.tmp`, path);
+      } finally {
+        writingNow = false;
+      }
     });
   return writing;
 }
@@ -324,14 +386,14 @@ const attrOf = (tag: string, name: string) =>
   tag.match(new RegExp(`\\s${name}\\s*=\\s*("[^"]*"|'[^']*')`, "i"))?.[1].slice(1, -1);
 
 /** A length the browser can measure without a containing block. Percentages
- *  cannot: they resolve against a block an `<img>` never gives them, which is
- *  why "100%" counts as no size at all here. */
+ *  cannot: they resolve against a block an image element never gives them,
+ *  which is why "100%" counts as no size at all here. */
 const absolute = (v: string | undefined) => !!v && v.trim() !== "" && !v.trim().endsWith("%");
 
 /** Writes a viewBox-only SVG's size onto its root tag, or null if there is
  *  nothing to fix.
  *
- *  An `<img>` needs an intrinsic size, and a raster file carries one in its
+ *  An image element needs an intrinsic size, and a raster file carries one in its
  *  header. An SVG is a description: without absolute width/height on the root
  *  there is nothing to measure, so the browser falls back to the CSS default
  *  object size for replaced elements — 300×150, the same historical 2:1 a bare
@@ -366,7 +428,18 @@ export function svgWithSize(text: string): string | null {
  *  after that, which is the point of hashing the bytes that get stored: the
  *  same icon imported twice still lands on one file. */
 export async function importAsset(dir: string, sourcePath: string): Promise<string> {
-  const ext = sourcePath.slice(sourcePath.lastIndexOf(".")).toLowerCase() || ".png";
+  /* The dot in the *name*, not the last dot anywhere in the path.
+     `lastIndexOf` answers -1 when there is none, and `slice(-1)` is the last
+     character rather than "", so the `|| ".png"` fallback was dead: a file
+     called `klasse` was stored as `<hash>e`. Worse when only a directory
+     carried the dot — `C:\my.icons\klasse` gave `.icons\klasse`, a path
+     separator inside the asset name, and the write landed in a folder that
+     does not exist. */
+  const name = sourcePath.slice(
+    Math.max(sourcePath.lastIndexOf("/"), sourcePath.lastIndexOf("\\")) + 1,
+  );
+  const dot = name.lastIndexOf(".");
+  const ext = dot > 0 ? name.slice(dot).toLowerCase() : ".png";
   let bytes = await readFile(sourcePath);
   if (ext === ".svg") {
     const sized = svgWithSize(new TextDecoder().decode(bytes));
@@ -543,7 +616,17 @@ export type SnapshotRef = { name: string; projectId: string };
  *  "a/b" and "a_b" are two names and one file, so a rename that only checked
  *  the typed text walked straight over the other snapshot — measured, and with
  *  no undo behind it. Anything that picks or accepts a name asks this. */
-export const snapshotKey = (name: string) => name.replace(/[^\w \-.]/g, "_");
+export const snapshotKey = (name: string) =>
+  /* Letters and digits of any language, plus space, dash, underscore and dot.
+     `\w` without the u flag is ASCII only, so every umlaut became an
+     underscore — "Vor dem Löschen" was filed and then *shown* as
+     "Vor dem L_schen", because the list reads the name back off the filename.
+     The app quietly renamed what the user typed, in the language the user
+     types in.
+     What still goes: the characters Windows refuses in a name, `~` because it
+     separates the project id from the name in that filename, and anything
+     else outside this set. */
+  name.replace(/[^\p{L}\p{N} \-._]/gu, "_");
 
 const sanitise = snapshotKey;
 
@@ -581,7 +664,16 @@ export type Snapshot = { manifest: Manifest; prints: Fingerprints };
 
 export async function writeSnapshot(dir: string, ref: SnapshotRef, snap: Snapshot) {
   await mkdir(await snapshotDir(dir), { recursive: true });
-  await writeTextFile(await snapshotFile(dir, ref), JSON.stringify(snap, null, 2));
+  /* Temp file then rename, the way the manifest and the fingerprints are
+     written, and for a sharper reason: a snapshot is what the app offers as the
+     way back from the two actions that cannot be undone, and this was the one
+     write here that truncated its target first. A power cut during the one
+     "Before write" takes on every save to the game left a half file that
+     `listSnapshots` still offers and `readSnapshot` throws on — and unlike a
+     damaged manifest there is no path that sets a damaged snapshot aside. */
+  const path = await snapshotFile(dir, ref);
+  await writeTextFile(`${path}.tmp`, JSON.stringify(snap, null, 2));
+  await rename(`${path}.tmp`, path);
 }
 
 /** Reads one back, migrating it the same way the manifest itself is.
@@ -636,9 +728,23 @@ export async function vaultedIds(dir: string): Promise<string[]> {
  *  as that tile's "original" forever. Same for the reset route: delete the folder,
  *  let the game regenerate, and the regenerated files are the new originals.
  *  Running this on open keeps the vault honest for one readDir per session. */
-export async function pruneVault(dir: string, ids: string[]) {
+export async function pruneVault(dir: string, ids: string[]): Promise<number> {
   const keep = new Set(ids);
-  for (const id of await vaultedIds(dir)) {
-    if (!keep.has(id)) await remove(await vaultPath(dir, id));
-  }
+  const held = await vaultedIds(dir);
+  const gone = held.filter((id) => !keep.has(id));
+  /* A folder listing that lost most of the vault at once is not evidence that
+     most of the characters are gone. It is what a fresh install looks like
+     before anyone has logged in, what a half-synced Documents folder looks
+     like, and what an antivirus holding the directory looks like — and acting
+     on it deletes the only copy of what the game shipped, on open, unattended,
+     with no undo anywhere near it. A stale copy is one tile showing a wrong
+     original; this was forty of them, permanently.
+
+     ponytail: half is a threshold, not a proof. It costs one comparison and
+     catches both the empty listing and the "three files did not sync" case; if
+     it ever refuses a real cleanup, the answer is to ask rather than to widen
+     it — the count comes back so the caller can say so. */
+  if (gone.length > held.length / 2) return gone.length;
+  for (const id of gone) await remove(await vaultPath(dir, id));
+  return 0;
 }

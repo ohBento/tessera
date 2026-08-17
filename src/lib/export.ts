@@ -1,7 +1,7 @@
 /* Export renders the same scene the editor shows and moves a 624x804 window
  * across it, once per tile. There is no separate export renderer to keep in
  * sync — that is the whole point. */
-import { writeFile } from "./platform";
+import { rename, writeFile } from "./platform";
 
 import { encodeBmp32, TILE_H, TILE_W } from "./bmp";
 import { type Manifest } from "./model";
@@ -56,7 +56,17 @@ export async function saveTiles(
   try {
     for (const [id, bytes] of tiles) {
       await vaultOriginal(dir, id);
-      await writeFile(await tilePath(dir, id), bytes);
+      /* Temp file then rename, the way every other write in this app goes —
+         and here it guards someone else's folder. A write that stops halfway
+         through a 2 MB portrait leaves a truncated BMP the game will read, and
+         the next open sees bytes that match neither hash and reports it as
+         "changed in the game". The answer that fits what the user sees — the
+         portrait broke, so it must be a stranger — is the one that deletes its
+         own vault copy. Rename is atomic, so the file is either the old one or
+         the new one. */
+      const path = await tilePath(dir, id);
+      await writeFile(`${path}.tmp`, bytes);
+      await rename(`${path}.tmp`, path);
       /* Remembered here rather than re-read on the next open: this is the one
        * place that knows the bytes were ours. Without it every open after a
        * write would report the whole wall as changed by the game — by the app's

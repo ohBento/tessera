@@ -11,3 +11,6 @@ __screenshots__
 
 # the design hook rewrites this cache on every edit; the rule config beside it is the part worth keeping
 .impeccable/hook.cache.json
+
+# graphify's code graph — a build artefact of the repo, not part of it
+graphify-out

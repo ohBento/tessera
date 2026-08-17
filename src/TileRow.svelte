@@ -25,182 +25,146 @@
     over,
     renameKey,
     startDrag,
+    toggleOpen,
     toggleTileRow,
   } from "./lib/rows.svelte";
   import {
     app,
-    assignTileLayout,
-    clearTileAsset,
-    clearTileFrame,
-    clearTilePaint,
-    clearTileText,
     dropTileLayer,
     fileTile,
     folders,
-    layouts,
     looseIds,
     pickTileImage,
+    alsoSelect,
     deleteLayer,
-    openLayoutDoc,
+    renameLayer,
     selectLayer,
     toggleLayerHidden,
     toggleLayerLocked,
     toggleTile,
-    setTileAsset,
-    setTilePaint,
-    setTileText,
-    tileAsset,
-    tileCaptions,
-    tileFrame,
+    setTileLayerField,
     tileHeadline,
     tileIcons,
     tileImageChoices,
     tileImages,
     tileLayers,
-    tilePaint,
     tilePaintChoices,
     tileProject,
     tileShapes,
-    tileText,
     unplace,
   } from "./lib/editor.svelte";
   import { ICON_NAMES, iconArt } from "./lib/icons";
-  import { isGradient, layerLabel, layoutNeedsRestamp, type Layer } from "./lib/model";
-  import { isLiveCopy, layerShows, offLayouts } from "./lib/stamps";
+  import { isGradient, layerLabel, type Layer } from "./lib/model";
 
   let {
     id,
     inGroup,
-    framing = $bindable(),
     openIcons,
+    layerMenu,
   }: {
     id: string;
     inGroup: string;
-    framing: boolean;
     /** Asks App to open the class grid for this tile's badge. The sheet is
      *  App's — one of them serves the whole window — so the row asks rather
      *  than owns. */
     openIcons: (target: { tile: string; layer: string }) => void;
+    /** Likewise for the right-click menu on a layer row: one menu serves the
+     *  window, so the row hands over the pair and App builds the items. */
+    layerMenu: (e: MouseEvent, layerId: string, tileId: string) => void;
   } = $props();
 
-  /** A holder's rows as the list draws them: topmost first, and without the
-   *  live copies a Layout keeps there — the stamp row speaks for them. */
-  const stampsOf = (layers: Layer[]) => [...layers].reverse().filter((l) => !isLiveCopy(l));
+  /** A tile's rows as the list draws them: topmost first. Every layer gets a
+   *  row now — the filter that hid a layout's live copies went with layouts. */
+  const stampsOf = (layers: Layer[]) => [...layers].reverse();
 
   /* What the row is drawing, read once per render. These opened the snippet as
      {@const}; a component's markup has no such holder, and $derived is the
      same idea with a name. */
+  /** The layer whose name is being typed, "" for none. Local to the row: two
+   *  rows can never be renaming at once, because opening one blurs the other. */
+  let renaming = $state("");
+
+  /** Focus *and* select, the way the tile's own name field does it. Focus
+   *  alone leaves the caret at the end of the existing name, so the first
+   *  thing typed is appended to it — "rect01" became "rect01Nameplate". The
+   *  point of double-clicking a name is to replace it. */
+  const takeName = (el: HTMLInputElement) => {
+    el.focus();
+    el.select();
+  };
+
   const own = $derived(stampsOf(tileLayers(id)));
   const owner = $derived(tileProject(id));
   const said = $derived(tileHeadline(id));
   const badge = $derived(tileIcons(id)[0]);
 
-  /** A stamp shows its Layout's name; anything else falls back to layerLabel. */
-  const stampName = (l: Layer) =>
-    (l.kind === "image" && l.layoutId && layouts().find((x) => x.id === l.layoutId)?.name) ||
-    layerLabel(l);
 
-  const stampDirty = (l: Layer) => {
-    if (l.kind !== "image" || !l.layoutId) return false;
-    const layout = layouts().find((x) => x.id === l.layoutId);
-    return !!layout && layoutNeedsRestamp(layout);
-  };
-
-  /** Enter walks the tile list: this row closes, the next one opens, and the
-   *  cursor lands in its wording field. Shift+Enter goes back.
-   *
-   *  Naming a wall is the one job here that is forty-four of the same thing,
-   *  and it was forty-four reaches for the mouse — the list is an accordion, so
-   *  the next row has no field to jump into until something opens it. The row
-   *  is left closed behind you, which is what keeps the next one on screen
-   *  instead of a metre down the page.
-   *
-   *  Within the list the row is in: a drawer's tiles walk that drawer, loose
-   *  ones walk the loose pile. Nothing wraps at the end — a second pass that
-   *  starts itself would type over the first name. */
-  async function stepName(e: KeyboardEvent, from: string, group: string) {
-    e.preventDefault();
-    (e.currentTarget as HTMLInputElement).blur();
-    const list = group ? (folders().find((f) => f.id === group)?.tiles ?? []) : looseIds();
-    const next = list[list.indexOf(from) + (e.shiftKey ? -1 : 1)];
-    if (!next) return;
-    toggleTileRow(next);
-    await tick();
-    const field = document.querySelector<HTMLInputElement>(`[data-tile="${next}"] .field input`);
-    field?.focus();
-    field?.select();
-    // `nearest`, so a row already in view is not yanked to the top of the pane.
-    field?.closest(".group")?.scrollIntoView({ block: "nearest" });
-  }
 </script>
 
-<!-- Where a tile says "this one, here". The tool needs a tile and one of its
-     live layers; both are on this row already, so the button hands it the pair
-     and switches the mode on rather than asking for three clicks in two places.
-     Beside it the way back: the layer as the Layout placed it. -->
-{#snippet placeRow(tileId: string, layer: Layer)}
-  {@const layerId = layer.id}
-  {@const on =
-    framing && app.selected === layerId && app.selectedTiles.length === 1 && app.selectedTiles[0] === tileId}
-  <!-- Asked, not read: a live copy's own `hidden` is the Layout's answer, and
-       the eye on its stamp is the tile's. Both switch it off. -->
-  {@const shows = layerShows(layer, offLayouts(tileLayers(tileId)))}
-  <button
-    class="swatch"
-    class:on
-    disabled={!shows}
-    title={shows
-      ? on
-        ? "Placing this on the wall — drag its frame"
-        : "Place this on this tile"
-      : "Switched off on this tile — nothing to place"}
-    onclick={() => {
-      app.selectedTiles = [tileId];
-      selectLayer(layerId);
-      framing = true;
-    }}
-  >
-    <RowIcon name="place" size={13} />
-  </button>
-  <button
-    class="swatch"
-    title="Put it back where the Layout placed it"
-    disabled={!tileFrame(tileId, layerId)}
-    onclick={() => void clearTileFrame(tileId, layerId)}>⤢</button
-  >
-{/snippet}
-
+<!-- The "place this" button stood here. It handed the wall a tile and a layer
+     and switched the mode on; with the mode gone, picking the layer is the
+     whole of what it did, and the name beside it already does that. -->
 
 
 <!-- The stamps on one holder — a group's stack or a single tile's own. Same
      row either way, so `drop` is the only thing that differs: which list the
      reorder writes back to. -->
-{#snippet stampRows(rows: Layer[], drop: (moving: string, beforeId: string | null) => void)}
+{#snippet stampRows(
+  rows: Layer[],
+  drop: (moving: string, parentId: string | null, beforeId: string | null) => void,
+  /* The group these rows are the children of, "" for the tile's own stack.
+     Carried because a drop lands in the list the row it was aimed at lives in:
+     without it every drop was written as `parentId: null` and a row dragged
+     between two members of a group escaped to the top of the tile. */
+  parentId: string | null,
+  /* The colour of the group these rows sit in, "" at the top level. A member
+     wears its group's rather than carrying one of its own: recolouring a group
+     is then one write that cannot half-apply, and a layer taken out of the
+     group loses the colour by leaving, which is what the colour meant. */
+  inherited: string,
+)}
   <ul class="indent">
     {#each rows as layer (layer.id)}
+      {@const tint = layer.tint ?? inherited}
+      <!-- A group's row takes a drop in its middle third: that is how a layer
+           joins a group that already exists. `canHold` was hard-coded false, so
+           the only way in was to dissolve the group and make it again — three
+           actions, all right-click-only, one of them the button labelled
+           "Delete". relocateLayer has always taken a parent and folded the
+           group's displacement in and out on the way; nothing else was
+           missing. -->
       <li
-        class:selected={app.selected === layer.id}
-        aria-current={app.selected === layer.id ? "true" : undefined}
+        class:tinted={!!tint}
+        style={tint ? `--tint: ${tint}` : undefined}
+        class:selected={app.selectedTile === id &&
+          (app.selected === layer.id || app.alsoSelected.includes(layer.id))}
+        aria-current={app.selectedTile === id &&
+        (app.selected === layer.id || app.alsoSelected.includes(layer.id))
+          ? "true"
+          : undefined}
         class:drop-before={drag.on?.id === layer.id && drag.on.where === "before"}
         class:drop-after={drag.on?.id === layer.id && drag.on.where === "after"}
+        class:drop-into={drag.on?.id === layer.id && drag.on.where === "into"}
         draggable="true"
         ondragstart={(e) => startDrag(e, layer.id)}
-        ondragover={(e) => over(e, layer.id, false)}
+        ondragover={(e) => over(e, layer.id, layer.kind === "group")}
         ondragleave={() => drag.on?.id === layer.id && (drag.on = null)}
         ondragend={endDrag}
+        oncontextmenu={(e) => layerMenu(e, layer.id, id)}
         ondrop={(e) => {
           e.preventDefault();
           const spot = drag.on;
           const moving = drag.id;
           endDrag();
           if (!spot || !moving) return;
-          drop(moving, landing(rows, spot.id, spot.where, null).beforeId);
+          const to = landing(rows, spot.id, spot.where, parentId);
+          drop(moving, to.parentId, to.beforeId);
         }}
       >
         <button
           class="eye"
           title={layer.hidden ? "Show" : "Hide"}
-          onclick={() => toggleLayerHidden(layer.id)}
+          onclick={() => toggleLayerHidden(layer.id, id)}
         >
           <RowIcon name="eye" on={!!layer.hidden} />
         </button>
@@ -208,26 +172,66 @@
           class="eye"
           class:on={layer.locked}
           title={layer.locked ? "Unlock" : "Lock"}
-          onclick={() => toggleLayerLocked(layer.id)}
+          onclick={() => toggleLayerLocked(layer.id, id)}
         >
           <RowIcon name="lock" on={!!layer.locked} />
         </button>
-        <button
-          class="name"
-          class:dimmed={layer.hidden}
-          onclick={() => selectLayer(layer.id)}
-          ondblclick={() => layer.layoutId && openLayoutDoc(layer.layoutId)}
-          title={layer.layoutId ? "Double-click opens the layout" : "Select this layer"}
-        >
-<!-- Marker before the name, not after: the name is what gets
-               ellipsised when the row runs out of width, and a dot hidden
-               behind "…" is the same as no dot at all. -->{#if stampDirty(layer)}<span
-              class="dirty"
-              title="Layout changed — press Update stamps">●&nbsp;</span
-            >{/if}{stampName(layer)}
-        </button>
-        <button title="Delete" onclick={() => deleteLayer(layer.id)}>×</button>
+        <!-- A group folds away, the way a tile's own row does. Its members were
+             always drawn, so a tile with three groups of four was a column of
+             fifteen rows to scroll past to reach the next tile — and the point
+             of a group is to be one thing. Uses the same open set as every
+             other row in the sidebar; a layer id can never collide with a tile
+             id. -->
+        {#if layer.kind === "group" && layer.children.length}
+          <button
+            class="twisty"
+            title={isOpen(layer.id) ? "Fold the group away" : "Show what is in the group"}
+            onclick={() => toggleOpen(layer.id)}
+          >
+            {isOpen(layer.id) ? "▾" : "▸"}
+          </button>
+        {/if}
+        <!-- Double-click to rename, the way the tile above it is renamed. The
+             input replaces the button rather than sitting beside it, so the row
+             keeps its width and nothing shifts under the pointer.
+
+             `layerLabel`, not `layer.name`: an unnamed layer shows what the
+             list calls it, which is the text somebody double-clicking means to
+             change. renameLayer knows that fallback and refuses to write it
+             back as a real name — see the note there. -->
+        {#if renaming === layer.id}
+          <input
+            class="name"
+            use:takeName
+            value={layerLabel(layer)}
+            onkeydown={(e) => renameKey(e, layerLabel(layer))}
+            onblur={(e) => {
+              renaming = "";
+              void renameLayer(layer.id, e.currentTarget.value, id);
+            }}
+          />
+        {:else}
+          <button
+            class="name"
+            class:dimmed={layer.hidden}
+            onclick={(e) =>
+              e.ctrlKey || e.metaKey ? alsoSelect(layer.id, id) : selectLayer(layer.id, id)}
+            ondblclick={() => (renaming = layer.id)}
+            title="Select this layer · Ctrl adds one · double-click to rename"
+          >
+            {layerLabel(layer)}
+          </button>
+        {/if}
+        <button title="Delete" onclick={() => deleteLayer(layer.id, id)}>×</button>
       </li>
+      <!-- A group's members, indented under it. The same snippet again, so a
+           child row has everything a loose one has — its own eye, its own lock,
+           its own name to rename. `drop` is the parent's: reordering inside a
+           group writes the tile's stack, and relocateLayer is what works out
+           which list the row actually landed in. -->
+      {#if layer.kind === "group" && layer.children.length && isOpen(layer.id)}
+        {@render stampRows(stampsOf(layer.children), drop, layer.id, tint)}
+      {/if}
     {/each}
   </ul>
 {/snippet}
@@ -270,7 +274,7 @@
            control everywhere else in this app, and a row that shows a class
            without letting you change it is a row you have to expand anyway. -->
       {#if badge}
-        {@const showing = tileAsset(id, badge.id) ?? badge.icon}
+        {@const showing = badge.icon}
         <button
           class="rowicon"
           title={showing ? `${showing} — pick another class` : "Pick a class"}
@@ -300,14 +304,18 @@
              forty-four portraits the list was a column of digits to be matched
              against the wall by counting. The number stays — it is what the
              folder is sorted by and the only way to line a row up with a file —
-             but as the second line, where the layout count already lives.
+             but as the second line, where the layer count already lives.
 
              A tile that has not been named keeps the id as its headline, so
              the row never loses the one thing that always identifies it. -->
         {said || id}
         <span class="usage">
           {#if said}{id} &middot;
-          {/if}{own.length ? `${own.length} layout(s)` : owner ? "no layout" : "unassigned"}
+          {/if}{own.length
+            ? `${own.length} layer${own.length === 1 ? "" : "s"}`
+            : owner
+              ? "bare"
+              : "unassigned"}
         </span>
       </button>
       {#if inGroup}
@@ -327,52 +335,18 @@
     {#if isOpen(id)}
       {@render stampRows(
         own,
-        (moving, beforeId) => void dropTileLayer(id, moving, beforeId),
+        (moving, parentId, beforeId) => void dropTileLayer(id, moving, parentId, beforeId),
+        null,
+        "",
       )}
-      <select
-        class="indent assign"
-        disabled={!layouts().length || !!app.busy}
-        onchange={(e) => {
-          const layoutId = e.currentTarget.value;
-          e.currentTarget.value = "";
-          if (layoutId) void assignTileLayout(id, layoutId);
-        }}
-      >
-        <option value="">+ Assign layout…</option>
-        {#each layouts() as layout (layout.id)}
-          <option value={layout.id}>{layout.name}</option>
-        {/each}
-      </select>
-
-      <!-- What this tile alone says and shows. In the row rather
-           than in a panel below the list: with forty-four rows,
-           editing the first one meant scrolling past all of them
-           and back. Here the fields cannot be further away than
-           the row they belong to. -->
-      {#each tileCaptions(id) as caption (caption.id)}
-        <label class="field indent">
-          <span>{layerLabel(caption)}</span>
-          <!-- The default shows as a placeholder, not as a value:
-               typing over a real value and clearing a field look
-               identical, and only one of them should mean "this
-               tile says nothing". -->
-          <input
-            value={tileText(id, caption.id) ?? ""}
-            placeholder={caption.text}
-            oninput={(e) => void setTileText(id, caption.id, e.currentTarget.value)}
-            onkeydown={(e) => e.key === "Enter" && void stepName(e, id, inGroup)}
-          />
-          <button
-            title="Use the layer's default text again"
-            disabled={tileText(id, caption.id) === undefined}
-            onclick={() => void clearTileText(id, caption.id)}>↺</button
-          >
-          {@render placeRow(id, caption)}
-        </label>
-      {/each}
+      <!-- A wording field stood here, one per caption. It was a single-line
+           input, so the one thing a caption most often needs — a second line —
+           could not be typed into it; the panel's Text box is a textarea and
+           can. Two fields for one value, and only one of them able to hold
+           what the layer accepts, so the row keeps the pictures and icons and
+           leaves the words to the panel. -->
 
       {#each tileImages(id) as pic (pic.id)}
-        {@const chosen = tileAsset(id, pic.id)}
         <p class="sub">{layerLabel(pic)}</p>
         <!-- A gallery rather than a file dialog per tile: class
              logos repeat across a wall, so from the second tile
@@ -383,11 +357,9 @@
           {#each tileImageChoices(id, pic.id) as asset (asset)}
             <button
               class="swatch"
-              class:on={(chosen ?? pic.asset) === asset}
-              title={asset === pic.asset
-                ? "The layer's own picture"
-                : "Use this picture"}
-              onclick={() => void setTileAsset(id, pic.id, asset)}
+              class:on={pic.asset === asset}
+              title="Use this picture"
+              onclick={() => void setTileLayerField([id], pic.id, "asset", asset)}
             >
               {#await assetUrl(asset) then url}
                 <img src={url} alt="" />
@@ -405,9 +377,9 @@
                which is a choice here and not the absence of one. -->
           <button
             class="swatch none"
-            class:on={chosen === ""}
+            class:on={pic.asset === ""}
             title="Show no picture on this tile"
-            onclick={() => void setTileAsset(id, pic.id, "")}
+            onclick={() => void setTileLayerField([id], pic.id, "asset", "")}
           >
             <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
               <circle
@@ -428,17 +400,10 @@
               />
             </svg>
           </button>
-          <button
-            class="swatch"
-            title="Use the layer's own picture again"
-            disabled={chosen === undefined}
-            onclick={() => void clearTileAsset(id, pic.id)}>↺</button
-          >
           <!-- Placing it, and the way back from a placing that went wrong. No
                numbers beside them: the frame on the wall is where placing is
                done, and a row of fields here would ask why moving has them and
                everything else does not. -->
-          {@render placeRow(id, pic)}
         </div>
       {/each}
 
@@ -448,22 +413,17 @@
            the artwork grid rather than a gallery of what happens to be in
            play. -->
       {#each tileIcons(id) as badge (badge.id)}
-        {@const chosen = tileAsset(id, badge.id)}
-        {@const showing = chosen ?? badge.icon}
+        {@const showing = badge.icon}
         <!-- "Class", not the layer's name. An icon layer is auto-named after
              the class it was made with — Witch01 — so the layer's name over a
              tile showing Ranger asserted a class the tile does not have, forty
-             times down the list. The name is still reachable in the Layout;
-             here the question is which class this portrait is. -->
+             times down the list. Here the question is which class this
+             portrait is. -->
         <p class="sub">Class</p>
         <div class="gallery indent">
           <button
             class="swatch art"
-            title={chosen
-              ? `${chosen} — pick another class`
-              : showing
-                ? `${showing}, from the layer — pick a class for this tile`
-                : "Pick a class"}
+            title={showing ? `${showing} — pick another class` : "Pick a class"}
             onclick={() => {
               openIcons({ tile: id, layer: badge.id });
             }}
@@ -481,22 +441,15 @@
           </button>
           <button
             class="swatch none"
-            class:on={chosen === ""}
+            class:on={showing === ""}
             title="Show no icon on this tile"
-            onclick={() => void setTileAsset(id, badge.id, "")}
+            onclick={() => void setTileLayerField([id], badge.id, "icon", "")}
           >
             <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
               <circle cx="9" cy="9" r="7" fill="none" stroke="currentColor" stroke-width="1.6" />
               <line x1="4" y1="14" x2="14" y2="4" stroke="currentColor" stroke-width="1.6" />
             </svg>
           </button>
-          <button
-            class="swatch"
-            title="Use the layer's own class again"
-            disabled={chosen === undefined}
-            onclick={() => void clearTileAsset(id, badge.id)}>↺</button
-          >
-          {@render placeRow(id, badge)}
         </div>
       {/each}
 
@@ -506,17 +459,16 @@
            the colour, and the row that carries it carries the way into the
            placing tool too. -->
       {#each tileShapes(id) as shape (shape.id)}
-        {@const chosen = tilePaint(id, shape.id)}
         <p class="sub">{layerLabel(shape)}</p>
         <div class="gallery indent">
           {#each tilePaintChoices(id, shape.id) as colour (colour)}
             <button
               class="swatch flat"
-              class:on={!isGradient(chosen ?? shape.fill) && (chosen ?? shape.fill) === colour}
+              class:on={!isGradient(shape.fill) && shape.fill === colour}
               style="background: {colour}"
-              title={colour === shape.fill ? "The layer's own colour" : `Paint it ${colour}`}
+              title={`Paint it ${colour}`}
               aria-label={colour}
-              onclick={() => void setTilePaint(id, shape.id, colour)}
+              onclick={() => void setTileLayerField([id], shape.id, "fill", colour)}
             ></button>
           {/each}
           <!-- The browser's picker, as the "+" that feeds the row — the same
@@ -525,17 +477,11 @@
             +
             <input
               type="color"
-              value={isGradient(chosen ?? shape.fill) ? "#ffffff" : (chosen ?? shape.fill)}
-              oninput={(e) => void setTilePaint(id, shape.id, e.currentTarget.value)}
+              value={isGradient(shape.fill) ? "#ffffff" : shape.fill}
+              oninput={(e) =>
+                void setTileLayerField([id], shape.id, "fill", e.currentTarget.value)}
             />
           </label>
-          <button
-            class="swatch"
-            title="Use the layer's own colour again"
-            disabled={chosen === undefined}
-            onclick={() => void clearTilePaint(id, shape.id)}>↺</button
-          >
-          {@render placeRow(id, shape)}
         </div>
       {/each}
     {/if}

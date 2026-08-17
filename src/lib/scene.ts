@@ -22,17 +22,13 @@ import {
   findLayer,
   groupShift,
   isGradient,
-  framed,
-  layerAsset,
-  layerPaint,
-  layerIcon,
   layerText,
   nestingShift,
   resolveLayers,
   stencilIds,
   type Base,
+  type GroupLayer,
   type Layer,
-  type Layout,
   type Manifest,
   type Corners,
   type Inset,
@@ -41,11 +37,6 @@ import {
   type TextLayer,
   type Tile,
 } from "./model";
-import {
-  isLiveCopy,
-  layerShows,
-  offLayouts,
-} from "./stamps";
 
 /** Which wall to draw: an ordered, dense list of tile ids — position n is grid
  *  slot n — and the layers spread across the whole of it.
@@ -82,6 +73,10 @@ export type Tagged = fabric.Object & {
   /** Whether this object refuses to be grabbed, carried along so a caller that
    *  hands out grabbability by some other rule can still honour the lock. */
   locked: boolean;
+  /** A whole-tile bake of the layer rather than the layer itself — a mask or a
+   *  class icon. Its transform describes the bake, not the placement, so
+   *  readBack must never be written back from one. */
+  flattened?: boolean;
 };
 
 /** Fabric's ImageSource does not include ImageBitmap even though a 2d context
@@ -121,6 +116,15 @@ export async function withTileCanvas<T>(
     width: TILE_W,
     height: TILE_H,
     enableRetinaScaling: false,
+    /* The same ground the editor paints on. Without it the export canvas is
+       transparent, and encodeBmp32 forces every pixel opaque on the way out —
+       which is right for the game and wrong for what it was given: a
+       transparent pixel handed over its straight colour, which for anything
+       Fabric had not drawn is black. A PNG with transparency showed the
+       editor's dark grey on the wall and came out with black holes in the
+       file. Semi-transparent edges came out unblended for the same reason;
+       compositing them against this is what makes them match the screen. */
+    backgroundColor: "#17171a",
   });
   try {
     return await fn(canvas);
@@ -322,9 +326,21 @@ function frameImage(
     ctx.stroke();
   }
 
+  /* Emptied before the swap. `setElement` re-runs the filter chain whenever
+     the object still has one — and by this point the grading is already in the
+     pixels being handed over, so it landed a second time: Brightness +20%
+     rendered as +40%, a 30° hue turn as 60°, and the frame drawn just above
+     was graded along with the picture, so a green border on a hue-turned
+     photograph was not green. Both canvases agreed, which is why it never
+     looked like a bug — it was simply twice what was asked for, in the editor
+     and in the file written to the game. */
+  img.filters = [];
   img.setElement(out);
   img.cropX = 0;
   img.cropY = 0;
+  // What the baked window was cut from, for cropOff — which can no longer
+  // measure it off an element that is already the cut.
+  Object.assign(img, { bakedCrop: l.crop });
 }
 
 /** A colour, or a Fabric gradient built from one of ours.
@@ -430,6 +446,28 @@ export function textWidth(l: TextLayer): number {
  *  (see textObject), so a line of it has to be carried across the aspect ratio
  *  or the frame comes out 804/624 — 29% — too tall. `l.h` needs no such thing;
  *  it is a height fraction already. */
+/** The layer cutting this one, if any is and it is showing.
+ *
+ *  A cutter that is hidden stops cutting: the eye has to mean the same thing
+ *  everywhere, and something that is not there cannot be why half a picture is
+ *  missing. */
+export const cutterOf = (l: Layer, siblings: Layer[]): Layer | undefined => {
+  const c = l.maskId ? siblings.find((x) => x.id === l.maskId) : undefined;
+  return c && cutApplies(l, c) && !c.hidden ? c : undefined;
+};
+
+/** Whether the wall draws this layer as a tile-sized picture rather than as
+ *  itself: a class icon, which wears its artwork as a clipPath and so cannot
+ *  also wear the cell, or anything a mask is cutting.
+ *
+ *  Read outside the renderer as well — the wall's frame appears exactly on
+ *  these, because their own object is a whole-tile bake whose handles would sit
+ *  at the corners of the cell rather than at the edges of the layer. One rule
+ *  in one place, so the frame and the bake can never disagree about which
+ *  layers need it. */
+export const isFlattened = (l: Layer, siblings: Layer[]) =>
+  !!cutterOf(l, siblings) || (l.kind === "shape" && l.shape === "icon");
+
 export const layerSize = (l: Layer): { w: number; h: number } =>
   l.kind === "image"
     ? { w: l.scale, h: l.scale }
@@ -437,7 +475,37 @@ export const layerSize = (l: Layer): { w: number; h: number } =>
       ? { w: l.w, h: l.h }
       : l.kind === "text"
         ? { w: textWidth(l), h: l.h ?? (l.size * LINE_HEIGHT * TILE_W) / TILE_H }
-        : { w: 1, h: 1 };
+        : l.kind === "group"
+          ? groupReach(l)
+          : { w: 1, h: 1 };
+
+/** How far a group's members reach from the group's own point, doubled — the
+ *  box a frame has to be to cover them while staying centred on what the drag
+ *  writes.
+ *
+ *  Centred rather than tight on purpose: the group's x/y is the thing being
+ *  moved, so a box measured around the members' own middle would slide out
+ *  from under the handles the moment it was dragged. A little larger than it
+ *  needs to be is the price, and an empty group falls back to the whole cell
+ *  so there is still something to grab. */
+function groupReach(g: GroupLayer): { w: number; h: number } {
+  let w = 0;
+  let h = 0;
+  /* Measured from the neutral middle, not from the group's own x/y. A group's
+     position is a *displacement*: `groupShift` reads it as `x - 0.5`, and a
+     member is drawn at its own coordinate plus that. So the distance from the
+     frame's centre to a member is `c.x - 0.5`, and using `g.x` made the box
+     grow by twice the displacement every time the group was moved — half a
+     tile to the right and the frame came out three times too wide, hanging off
+     the members it is supposed to enclose, with the snap reasoning about that
+     box too. */
+  for (const c of g.children) {
+    const size = layerSize(c);
+    w = Math.max(w, Math.abs(c.x - 0.5) + size.w / 2);
+    h = Math.max(h, Math.abs(c.y - 0.5) + size.h / 2);
+  }
+  return w && h ? { w: w * 2, h: h * 2 } : { w: 1, h: 1 };
+}
 
 /** The rectangle a caption with a fixed height is held to, in scene
  *  coordinates — or nothing when it has none and may grow with its lines.
@@ -465,14 +533,14 @@ export function captionBox(
  *  should wrap rather than bleed into the neighbour — a tile is a hard edge,
  *  not a suggestion. Sizes are fractions of tile width so a layout survives a
  *  change of tile resolution, the same rule the rest of the model follows. */
-function textObject(l: TextLayer, box: { w: number; h: number; x: number; y: number }, tileId: string, texts: Record<string, string>) {
+function textObject(l: TextLayer, box: { w: number; h: number; x: number; y: number }, tileId: string) {
   const size = l.size * box.w;
   /* A Layout shows the caption as written, placeholder and all: it is a
    * template, and what you edit there has to be what you typed. Only a tile
    * resolves "{{id}}", because only a tile knows which id. This is also what
    * makes typing on the canvas safe — what is drawn is what gets written
    * back, so editing cannot silently swallow the placeholder. */
-  const words = tileId ? layerText(texts, l, tileId) : l.text;
+  const words = tileId ? layerText(l, tileId) : l.text;
   const style = {
     fontSize: size,
     fontFamily: l.font,
@@ -507,15 +575,24 @@ function textObject(l: TextLayer, box: { w: number; h: number; x: number; y: num
     else if (align === "right") anchored.left -= (here - own) / 2;
   }
 
+  /* A set width wins over measuring: that is the whole point of it. What the
+     words do inside is wrap, which is what a Textbox is for. */
+  const width = l.w ? l.w * box.w : boxWidth(words, style, size, box.w);
+  /* Measured on the caption, not on the tile. Fabric anchors a pixel gradient
+     at the object's own top-left and spans its width, so a ramp built 624 wide
+     put its first sixth on a caption a hundred pixels across: a red-to-blue
+     fade read as flat red, the Angle slider behaved as a two-position switch,
+     and Balance and Reach barely moved anything. The height is the line box
+     for the same reason. */
+  const tall = size * LINE_HEIGHT * (words.split("\n").length || 1);
+
   const obj = new fabric.Textbox(words, {
     ...anchored,
-    /* A set width wins over measuring: that is the whole point of it. What the
-       words do inside is wrap, which is what a Textbox is for. */
-    width: l.w ? l.w * box.w : boxWidth(words, style, size, box.w),
+    width,
     ...style,
     textAlign: l.align ?? "center",
     lineHeight: LINE_HEIGHT,
-    fill: paintOf(l.color, box.w, size),
+    fill: paintOf(l.color, width, tall),
     stroke: l.strokeWidth ? l.strokeColor : undefined,
     strokeWidth: l.strokeWidth * box.w,
     // Stroke centred on the glyph outline eats into the letter shapes; painted
@@ -701,13 +778,12 @@ async function layerObject(
   deps: SceneDeps,
   box: { w: number; h: number; x: number; y: number },
   tileId: string,
-  texts: Record<string, string>,
   /* Set by the two paths that want a cutter rather than a drawing. Only the
    * class icon reads it — every other kind is already its own outline. */
   stencilOnly = false,
 ): Promise<fabric.Object | undefined> {
   if (l.kind === "image") return imageObject(l, deps, box);
-  if (l.kind === "text") return textObject(l, box, tileId, texts);
+  if (l.kind === "text") return textObject(l, box, tileId);
   if (l.kind === "shape") return shapeObject(l, box, stencilOnly);
   return undefined;
 }
@@ -746,12 +822,26 @@ async function background(
     });
     return img;
   }
-  const bmp = toCanvas(await deps.original(tileId));
-  return new fabric.FabricImage(bmp, {
-    ...common,
-    scaleX: TILE_W / bmp.width,
-    scaleY: TILE_H / bmp.height,
-  });
+  try {
+    const bmp = toCanvas(await deps.original(tileId));
+    return new fabric.FabricImage(bmp, {
+      ...common,
+      scaleX: TILE_W / bmp.width,
+      scaleY: TILE_H / bmp.height,
+    });
+  } catch {
+    /* One portrait the decoder will not take — truncated by a crash, half
+       synced, written by something that is not the game — used to take the
+       whole wall with it: every background is fetched in one Promise.all, one
+       rejection rejects the lot, and the build throws. What the user got was
+       an empty wall, on this wall and every other, for the rest of the
+       session, under a message naming no tile.
+       An empty cell instead. The tile is still there, still has its layers,
+       and the gap says which one it is. Silent on purpose: the folder is read
+       on every open and a message per bad file, per rebuild, would bury the
+       one line the status bar has. */
+    return new fabric.Rect({ ...common, width: TILE_W, height: TILE_H, fill: "#1b1b20" });
+  }
 }
 
 /** Which layers can be stretched out of proportion.
@@ -1159,40 +1249,24 @@ async function cutToShape(
   cutter: Layer,
   deps: SceneDeps,
   tileId: string,
-  texts: Record<string, string>,
-  swaps: Record<string, string>,
 ): Promise<fabric.FabricImage | undefined> {
-  /* The cutter's own per-tile picture, where the tile chose one. It is the
-   * same layer either way — it just happens to be cutting rather than drawing,
-   * and it used to keep the Layout's picture in that role while honouring the
-   * tile's in the other.
-   *
-   * "" is a real answer, and it means this tile shows nothing: no picture to
+  /* "" is a real answer, and it means this tile shows nothing: no picture to
    * cut with is not the same as no mask, so the layer does not fall back to
    * drawing whole — the caller drops it. Chosen deliberately on 2026-08-09
    * over the other reading, because a tile that was told "no icon here" asking
-   * for a bare rectangle of paint instead is the louder surprise. The comment
-   * used to promise the opposite of what the code did. */
-  const stencilLayer =
-    cutter.kind === "image"
-      ? { ...cutter, asset: layerAsset(swaps, cutter) }
-      : /* And the tile's own class, where a class icon is the one cutting. The
-         * whole point of the pair — a block of colour cut to each character's
-         * class — lives here, and it read the Layout's class for every tile
-         * while the tile row went on offering a picker that moved nothing. */
-        cutter.kind === "shape" && cutter.shape === "icon"
-        ? { ...cutter, icon: layerIcon(swaps, cutter) }
-        : cutter;
-  if (stencilLayer.kind === "image" && !stencilLayer.asset) return undefined;
-  if (stencilLayer.kind === "shape" && stencilLayer.shape === "icon" && !stencilLayer.icon)
-    return undefined;
+   * for a bare rectangle of paint instead is the louder surprise.
+   *
+   * The cutter is read as it stands. It used to be resolved against the tile's
+   * swap record first — the Layout owned the picture, the tile owned which one
+   * — and the layer carries its own answer now. */
+  if (cutter.kind === "image" && !cutter.asset) return undefined;
+  if (cutter.kind === "shape" && cutter.shape === "icon" && !cutter.icon) return undefined;
 
   const shape = await layerObject(
-    silhouette(stencilLayer),
+    silhouette(cutter),
     deps,
     { w: TILE_W, h: TILE_H, x: 0, y: 0 },
     tileId,
-    texts,
     true,
   );
   if (!shape) return undefined;
@@ -1223,55 +1297,6 @@ const silhouette = (l: Layer): Layer => {
   if (bare.kind === "image") return { ...bare, borderWidth: 0 };
   return bare;
 };
-
-/** One layer as a given tile shows it: its picture, its class and its colour,
- *  wherever the tile has an answer of its own.
- *
- *  Wording is not here — a caption is resolved as it is drawn, because that is
- *  the first point at which the tile's id is known and "{{id}}" can be filled
- *  in. Placement is not here either: framed() is a difference from the design,
- *  and the two callers disagree about whether they want it (see buildLayout).
- *
- *  Lifted out of buildGrid so the Layout editor can show a composition against
- *  a real portrait's content instead of against the template's placeholders.
- *  One expression rather than two, or the wall and the editor would eventually
- *  disagree about what a tile looks like — which is the whole reason the editor
- *  is trusted as a preview at all. */
-export function asTileShows(
-  raw: Layer,
-  swaps: Record<string, string>,
-  paints: Record<string, Paint>,
-): Layer {
-  /* Both flags, because the same layer wears a different one depending on which
-   * side of the stamp it is standing on. A tile holds copies, and syncLiveLayers
-   * marks those `live` while explicitly clearing `perTile` — "meaningless once
-   * it is on a tile". A Layout holds the sources, and those only ever carry
-   * `perTile`.
-   *
-   * Gating on `live` alone was therefore right for the wall and silently wrong
-   * for the Layout editor, which is the caller this function was extracted for:
-   * every branch fell through, and the sheet kept drawing the Layout's own
-   * placeholder class and picture over whichever portrait was underneath. The
-   * wording went on working, because captions never come through here — which
-   * is exactly why it looked finished. */
-  const mine = !!raw.live || !!raw.perTile;
-  /* This tile's own picture, where it has one. Resolved before the object is
-   * built rather than inside imageObject, so the swap map stays a wall concern.
-   * "" is a real answer — no picture on this tile — and the layer simply does
-   * not render, which is why callers check the resolved value rather than
-   * whether a key exists. */
-  if (raw.kind === "image" && mine) return { ...raw, asset: layerAsset(swaps, raw) };
-  /* And this tile's own class, where it names one. Same map, same bargain: the
-   * Layout places and colours the icon once, each portrait says which class it
-   * is. */
-  if (raw.kind === "shape" && raw.shape === "icon" && mine)
-    return { ...raw, icon: layerIcon(swaps, raw), fill: layerPaint(paints, raw) };
-  /* And this tile's own colour, where a shape has one. An icon takes it too —
-   * it is a shape wearing artwork, and a wall where each portrait's badge
-   * carries its own class colour is the reason to ask for this at all. */
-  if (raw.kind === "shape" && mine) return { ...raw, fill: layerPaint(paints, raw) };
-  return raw;
-}
 
 /** Fills `canvas` with the whole wall. Backgrounds are inert; layers are
  *  interactive when `interactive` is set (the editor) and not when it is not
@@ -1331,7 +1356,13 @@ export async function buildGrid(
      a layer and carries no layerId — but an untagged object is one no
      incremental pass can reason about. */
   for (const [index, obj] of backgrounds.entries())
-    Object.assign(obj, { tileId: ids[index], space: "base" });
+    Object.assign(obj, {
+      tileId: ids[index],
+      space: "base",
+      // What this background stands for, so a single-tile rebuild can tell
+      // whether it still stands for it. See rebuildTile.
+      baseKey: JSON.stringify(m.tiles[ids[index]]?.base ?? null),
+    });
 
   /* The picture spread across this wall. Once, not per tile — drawing it per
    * cell would paint the same pixels COLS*rows times over.
@@ -1379,6 +1410,48 @@ export async function buildGrid(
  *  shares one icon bake across every tile that wants it; a single-tile rebuild
  *  hands in a map of its own and throws it away, which is the same rule as
  *  before — a cache that outlives its render can go stale. */
+/** A stack with its groups dissolved into it. A group draws nothing of its own
+ *  — it is a displacement, a shared fade and a shared lock — so folding all
+ *  three into its children leaves a flat list that paints the same picture.
+ *  layoutObjects reaches the same result by recursing; the wall flattens first
+ *  instead, because everything downstream of it (stencilIds, offLayouts, the
+ *  cutter lookup, the draw loop) then goes on reading one list and needs no
+ *  tree walk of its own.
+ *
+ *  A hidden group takes its children with it, exactly as in a Layout: the eye
+ *  on the row has to mean what it says. */
+/** What the wall actually draws for one tile: its stack with the groups folded
+ *  away, each member carrying its group's displacement, fade and lock.
+ *
+ *  Exported because the frame has to follow the same list. Reading the tile's
+ *  own stack instead meant a layer inside a group could not be found at all —
+ *  it is not in that array — so picking one showed no frame and no ghost. The
+ *  positions here are the drawn ones, which is what a frame is for; the write
+ *  goes back through applyTransform, which subtracts the nesting again. */
+export const drawnLayers = (m: Manifest, tileId: string): Layer[] =>
+  dissolved(resolveLayers(m, tileId));
+
+function dissolved(layers: Layer[], dx = 0, dy = 0, fade = 1, locked = false): Layer[] {
+  const out: Layer[] = [];
+  for (const l of layers) {
+    if (l.kind === "group") {
+      if (l.hidden) continue;
+      const own = groupShift(l);
+      out.push(
+        ...dissolved(l.children, dx + own.dx, dy + own.dy, fade * l.opacity, locked || !!l.locked),
+      );
+      continue;
+    }
+    const moved = dx || dy || fade !== 1 || locked;
+    out.push(
+      moved
+        ? ({ ...l, x: l.x + dx, y: l.y + dy, opacity: l.opacity * fade, locked: locked || !!l.locked } as Layer)
+        : l,
+    );
+  }
+  return out;
+}
+
 async function tileLayerObjects(
   id: string,
   index: number,
@@ -1391,89 +1464,94 @@ async function tileLayerObjects(
   {
     const at = cellAt(index);
     const box = { w: TILE_W, h: TILE_H, x: at.x, y: at.y };
-    const texts = m.tiles[id]?.text ?? {};
-    const swaps = m.tiles[id]?.swap ?? {};
-    // Which part of its picture this tile shows — see framed().
-    const frames = m.tiles[id]?.frame ?? {};
-    // And what colour it paints a shape — see layerPaint().
-    const paints = m.tiles[id]?.paint ?? {};
     /* A tile can carry a cutter now: a per-tile layer that is masked brings the
      * shape along, because the Layout it came from is not there to look it up
      * in. Same rule as in a Layout — a shape that is cutting something has
      * stopped being a picture and does not draw itself. */
-    const own = resolveLayers(m, id);
+    const own = dissolved(resolveLayers(m, id));
     const stencils = stencilIds(own);
-    /* Which assignments this tile has switched off. A live copy has no row and
-       no eye of its own, so the eye on its stamp answers for it — see
-       layerShows. A live cutter needs no entry here: it can only cut live
-       layers of the same Layout, so it goes dark exactly when they do. */
-    const off = offLayouts(own);
-    for (const raw of own) {
-      if (!layerShows(raw, off) || raw.space === "grid" || stencils.has(raw.id)) continue;
-      /* This tile's own picture, where it has one. Resolved before the object
-       * is built rather than inside imageObject, so the swap map stays a wall
-       * concern: a Layout has no tiles and nothing to swap. "" is a real
-       * answer — no picture on this tile — and the layer simply does not
-       * render, which is why the check is on the resolved value and not on
-       * whether a key exists. */
-      /* And where this tile put it. Every live layer, not only pictures: a
-       * caption that sits well on forty-three portraits sits over an eyebrow on
-       * the forty-fourth, and the tile is the only place that can say so. The
-       * Layout still owns the design; framed() is a difference from it. */
-      const l = framed(
-        asTileShows(raw, swaps, paints),
-        /* isLiveCopy and not `raw.live`: a caption is live whether or not it
-         * carries the flag — the ones stamped before the flag existed have
-         * none — and a layer the tile owns outright has nothing to differ
-         * from, since editing it *is* editing the layer. */
-        isLiveCopy(raw) ? frames[raw.id] : undefined,
-      );
+    /* Empty, and kept as a name rather than deleted at every call site: a
+     * layer's own eye is the only one there is now. It used to compose with
+     * the eye on the stamp that put it here, because a live copy had no row of
+     * its own to switch off. */
+    for (const l of own) {
+      if (l.hidden || l.space === "grid") continue;
+      /* A layer that is cutting another one draws nothing — but it is still a
+       * layer somebody has to be able to move and resize, and until now it had
+       * no object at all: nothing on the canvas to click, so the placing tool's
+       * stand-in was the only handle it had. Built like any other and made
+       * fully transparent instead, which puts it back on the ordinary path —
+       * drag, scale, snap and read-back all work on it without a case of their
+       * own.
+       *
+       * Invisible and clickable is only safe because of the rule the wall
+       * already keeps: none but the layer picked in the list is evented, so
+       * this can never swallow a click meant for something else. In the export
+       * it is transparent and inert like everywhere else, so the picture
+       * written to the game is unchanged. */
+      const stencil = stencils.has(l.id);
+      // "" is a real answer — no picture on this tile — and the layer simply
+      // does not render.
       if (l.kind === "image" && !l.asset) continue;
-      // Groups are a wall-side concept only in Layouts; on a tile they would
-      // need the same flattening layoutObjects does, and nothing creates one
-      // here yet.
       /* Cut before placed. The shape sits in tile coordinates, so the layer is
        * built at the tile's own origin, composited against it, and the finished
        * picture is moved into the cell — after which the cell clip below
        * applies to it like to anything else.
        *
-       * A cutter that is hidden stops cutting, exactly as in a Layout: the eye
-       * has to mean the same thing everywhere, and something that is not there
-       * cannot be why half a picture is missing.
-       *
-       * Framed like anything else, and easy to miss because a cutter never
-       * draws itself: taken raw, a shape the tile had placed cut the old hole
-       * and the drag did nothing at all — which for a badge (a block cut to a
-       * class icon) meant the tool wrote into the manifest and changed no
-       * pixel. */
-      const rawCutter = l.maskId ? own.find((x) => x.id === l.maskId) : undefined;
-      const cutter =
-        rawCutter && isLiveCopy(rawCutter) ? framed(rawCutter, frames[rawCutter.id]) : rawCutter;
-      const cut = cutApplies(l, cutter) && layerShows(cutter!, off) ? cutter : undefined;
+       * A cutter that is hidden stops cutting: the eye has to mean the same
+       * thing everywhere, and something that is not there cannot be why half a
+       * picture is missing. */
+      const cut = cutterOf(l, own);
       /* A class icon is paint wearing the artwork as its clipPath, and every
        * tile layer is about to be given the cell as its clipPath — Fabric
        * allows one, so the cell would replace the artwork and the icon would
        * reach the wall as the bare rectangle behind it. Flattened to pixels
        * first, like a cut layer, it arrives as a picture that the cell can clip
        * like any other. */
-      const flat = !!cut || (l.kind === "shape" && l.shape === "icon");
+      const flat = isFlattened(l, own);
       const local = flat ? { ...box, x: 0, y: 0 } : box;
-      const drawn = await layerObject(l, deps, local, id, texts);
-      if (!drawn) continue;
-      let obj = cut ? await cutToShape(l, drawn, cut, deps, id, texts, swaps) : drawn;
-      if (!obj) continue;
-      if (flat && !cut) {
-        /* Keyed on the whole resolved layer: everything that changes the
-         * picture is in it, so two tiles share a canvas only when they would
-         * have drawn the same pixels. Over-keying costs a miss, never a wrong
-         * tile. */
-        const key = JSON.stringify(l);
-        let baked = flattened.get(key);
-        if (!baked) {
-          baked = await toTileCanvas(obj);
-          flattened.set(key, baked);
+      /* Keyed on the whole resolved layer — and, for a cut one, on the cutter
+       * and the tile's choice of picture for it too: everything that changes
+       * the pixels is in the key, so two tiles share a canvas only when they
+       * would have drawn the same ones. Over-keying costs a miss, never a wrong
+       * tile.
+       *
+       * Captions are left out of the cut cache rather than keyed carefully.
+       * layerText resolves "{{id}}" against the tile, so two tiles almost never
+       * agree on a caption's pixels — the entry would be written once per tile
+       * and read never, which is the cost of a cache with none of the benefit.
+       *
+       * The cut half of this was the note cutToShape left open: cache by cutter
+       * and picture, but measure a real masked wall first. Measured. Two
+       * tile-sized canvases per masked layer per tile is 602 of them on a wall
+       * of 301, about 1.2GB, and the browser goes down mid-render rather than
+       * merely slowing — the entire wall shares one bake now. */
+      const cacheable = flat && l.kind !== "text" && (!cut || cut.kind !== "text");
+      const key = cacheable
+        ? JSON.stringify([l, cut ?? null])
+        : "";
+      const hit = key ? flattened.get(key) : undefined;
+      let obj: fabric.Object;
+      if (hit) {
+        obj = new fabric.FabricImage(hit, { originX: "left", originY: "top" });
+      } else {
+        const drawn = await layerObject(l, deps, local, id);
+        if (!drawn) continue;
+        const made = cut ? await cutToShape(l, drawn, cut, deps, id) : drawn;
+        if (!made) continue;
+        if (flat) {
+          /* A cut layer arrives as a picture already — cutToShape composited it
+           * onto a canvas of its own — so it is taken as it is rather than
+           * rasterised a second time. */
+          const canvas =
+            cut && made instanceof fabric.FabricImage
+              ? (made.getElement() as HTMLCanvasElement)
+              : await toTileCanvas(made);
+          if (key) flattened.set(key, canvas);
+          obj = new fabric.FabricImage(canvas, { originX: "left", originY: "top" });
+        } else {
+          obj = made;
         }
-        obj = new fabric.FabricImage(baked, { originX: "left", originY: "top" });
       }
       if (flat) {
         obj.left = at.x;
@@ -1500,16 +1578,37 @@ async function tileLayerObjects(
       const top = held ? Math.max(cell.top, held.top) : cell.top;
       const right = held ? Math.min(cell.right, held.left + held.width) : cell.right;
       const bottom = held ? Math.min(cell.bottom, held.top + held.height) : cell.bottom;
-      obj.clipPath = new fabric.Rect({
-        left,
-        top,
-        width: Math.max(0, right - left),
-        height: Math.max(0, bottom - top),
-        originX: "left",
-        originY: "top",
-        absolutePositioned: true,
-      });
-      obj.objectCaching = false;
+      /* A clip only has to exist where something would otherwise escape. A
+       * layer that already sits inside its cell is clipped by a rectangle it
+       * never touches — and pays for it twice, because the clip is what forces
+       * objectCaching off, so every repaint of the wall rasterises the layer
+       * from scratch.
+       *
+       * That is most of what a wall costs. At 301 tiles the paint was 423 of
+       * 450ms with two layers a tile, and it grew faster than the object count
+       * once tiles carried more: 3.0x the objects, 4.7x the paint. Letting the
+       * layers that stay home keep Fabric's cache is what closes that gap.
+       *
+       * Shadows are excluded rather than measured: getBoundingRect does not
+       * account for one, so a shadow is exactly the thing that reaches past a
+       * box this check believes is safe. */
+      const inside = (() => {
+        if (l.shadow) return false;
+        const b = obj.getBoundingRect();
+        return b.left >= left && b.top >= top && b.left + b.width <= right && b.top + b.height <= bottom;
+      })();
+      if (!inside) {
+        obj.clipPath = new fabric.Rect({
+          left,
+          top,
+          width: Math.max(0, right - left),
+          height: Math.max(0, bottom - top),
+          originX: "left",
+          originY: "top",
+          absolutePositioned: true,
+        });
+        obj.objectCaching = false;
+      }
       /* Anything a Layout put here is positioned in the Layout, full stop. The
        * wall would be the wrong place to judge it from — the game's grid has
        * gaps, so a caption nudged towards an edge here can end up in a gap or
@@ -1519,7 +1618,26 @@ async function tileLayerObjects(
       const locked = !!l.locked || !!l.layoutId;
       if (interactive) makeInteractive(obj, locked ? { ...l, locked: true } : l);
       else obj.selectable = obj.evented = false;
-      Object.assign(obj, { layerId: l.id, tileId: id, space: "tile", locked });
+      /* A bake is tile-sized whatever the layer inside it measures, so a scale
+       * factor read off it says nothing about the layer — the handles were
+       * offering a gesture whose result could not be written down. Dragging
+       * one still works: the distance from the cell's origin is the distance
+       * the hand moved, which is what object:modified writes. */
+      if (flat && interactive) {
+        obj.hasControls = false;
+        obj.lockScalingX = obj.lockScalingY = obj.lockRotation = true;
+      }
+      /* `flattened` says this object is a whole-tile picture of a layer rather
+       * than the layer itself — a mask or a class icon, baked because the cell
+       * clip has the one clipPath slot. It sits at the cell's origin at scale 1
+       * whatever the layer says, so `readBack` measures the bake and not the
+       * placement: dragging one and writing that back puts the layer at 0,0 and
+       * loses where it actually was. The wall's stand-in exists for these, and
+       * the flag is how it knows. */
+      // The cutter's own pixels are not the point — the hole it makes in
+      // something else is. It is here to be grabbed, not to be seen.
+      if (stencil) obj.opacity = 0;
+      Object.assign(obj, { layerId: l.id, tileId: id, space: "tile", locked, flattened: flat });
       out.push(obj);
     }
   }
@@ -1541,25 +1659,46 @@ export type WallPrint = { ids: string; grid: string; tiles: Map<string, string> 
 export const wallPrint = (wall: Wall, m: Manifest): WallPrint => ({
   ids: wall.ids.join(","),
   grid: JSON.stringify(wall.gridLayers),
-  tiles: new Map(wall.ids.map((id) => [id, JSON.stringify(m.tiles[id] ?? null)])),
+  /* `locked` is left out on purpose: it decides what a hand can grab and not
+     one pixel of what is drawn. In it, a padlock clicked across fourteen tiles
+     reported fourteen changed tiles, which is past REDRAW_MAX, which threw
+     away and rebuilt the whole wall — every mask baked again, 635ms measured
+     on forty-four tiles and four seconds on three hundred, for a change no
+     rebuild could show. GridCanvas reads the lock off the document instead.
+     `tint` is out for the same reason and more plainly: it colours a row in
+     the sidebar and nothing else.
+     Everything else in the record does reach the picture, `hidden` included,
+     and stays in. */
+  tiles: new Map(
+    wall.ids.map((id) => [
+      id,
+      JSON.stringify(m.tiles[id] ?? null, (k, v) =>
+        k === "locked" || k === "tint" ? undefined : v,
+      ),
+    ]),
+  ),
 });
 
-/** The one tile that changed between two states, or "" when the answer is
- *  anything else — no previous state, a different id list, a moved picture
- *  across the wall, several tiles at once, or nothing at all.
+/** Which tiles changed between two states, or null when the wall itself did —
+ *  no previous state, a different id list, or a moved picture across the grid.
+ *  An empty list means nothing changed at all.
  *
- *  Deliberately timid. Every "" is a full rebuild, which is only slow; a wrong
- *  "just this one" is a wall that quietly disagrees with the document, which
- *  is a bug the user finds long after the edit that caused it. */
+ *  Deliberately timid about null. Every null is a full rebuild, which is only
+ *  slow; a wrong "just these" is a wall that quietly disagrees with the
+ *  document, which is a bug the user finds long after the edit that caused it. */
+export function tilesChanged(before: WallPrint | null, after: WallPrint): string[] | null {
+  if (!before || before.ids !== after.ids || before.grid !== after.grid) return null;
+  const changed: string[] = [];
+  for (const [id, print] of after.tiles) if (before.tiles.get(id) !== print) changed.push(id);
+  return changed;
+}
+
+/** The one tile that changed, or "" when the answer is anything else —
+ *  including several at once. Kept as its own name because "exactly one" is
+ *  the question the single-tile redraw path asks. */
 export function soleTileChange(before: WallPrint | null, after: WallPrint): string {
-  if (!before || before.ids !== after.ids || before.grid !== after.grid) return "";
-  let only = "";
-  for (const [id, print] of after.tiles) {
-    if (before.tiles.get(id) === print) continue;
-    if (only) return "";
-    only = id;
-  }
-  return only;
+  const changed = tilesChanged(before, after);
+  return changed?.length === 1 ? changed[0] : "";
 }
 
 /** Where an object sits in the wall's stack. Backgrounds under the picture
@@ -1611,14 +1750,38 @@ export async function rebuildTile(
   m: Manifest,
   deps: SceneDeps,
   interactive = false,
+  /* Off when a caller is redrawing several tiles in a row, so the wall is
+   * painted once at the end instead of once per tile.
+   *
+   * Painting is nearly the whole cost of this function — at 301 tiles a single
+   * tile measured 497ms, of which 449ms was the paint — so a loop that repaints
+   * per tile is slower than rebuilding the entire wall: eight tiles came to
+   * 4126ms against a full build's 990ms. Measured, after a small-set redraw was
+   * added and turned out to be a pessimisation. */
+  render = true,
 ): Promise<void> {
   const index = wall.ids.indexOf(id);
   if (index < 0) return;
 
-  const fresh = await background(m.tiles[id]?.base ?? null, id, deps, cellAt(index));
-  Object.assign(fresh, { tileId: id, space: "base" });
+  /* The portrait underneath is the one part of a tile that a layer edit cannot
+     change: it comes from the game's own file and from `base`, and neither
+     moves when a slider does. Rebuilding it anyway meant decoding into a fresh
+     624x804 canvas on every pointer event of every drag — measured at about
+     half of what a single-tile rebuild costs. Kept when it still stands for
+     the same thing, which is what the key says. */
+  const baseKey = JSON.stringify(m.tiles[id]?.base ?? null);
+  const standing = canvas
+    .getObjects()
+    .find(
+      (o) =>
+        (o as Tagged).tileId === id &&
+        (o as { space?: string }).space === "base" &&
+        (o as { baseKey?: string }).baseKey === baseKey,
+    );
+  const fresh = standing ?? (await background(m.tiles[id]?.base ?? null, id, deps, cellAt(index)));
+  Object.assign(fresh, { tileId: id, space: "base", baseKey });
   const objects = [
-    fresh,
+    ...(standing ? [] : [fresh]),
     ...(await tileLayerObjects(id, index, m, deps, interactive, new Map())),
   ];
 
@@ -1628,7 +1791,12 @@ export async function rebuildTile(
      redrawn. */
   const mine = canvas
     .getObjects()
-    .filter((o) => !(o as { keep?: boolean }).keep && (o as { tileId?: string }).tileId === id);
+    .filter(
+      (o) =>
+        o !== standing &&
+        !(o as { keep?: boolean }).keep &&
+        (o as { tileId?: string }).tileId === id,
+    );
   canvas.remove(...mine);
 
   const key = stackKey(new Map(wall.ids.map((tile, i) => [tile, i])));
@@ -1647,282 +1815,9 @@ export async function rebuildTile(
     }
     canvas.insertAt(at, obj);
   }
-  canvas.renderAll();
+  if (render) canvas.renderAll();
 }
 
-/** Fills `canvas` with one Layout's own layers, at tile scale (624x804) — the
- *  document a Layout is always edited as, per scale/mosaicBakeCrops in
- *  geometry.ts caring only about tile-sized content elsewhere too.
- *
- *  Images only for now: text, shapes and groups arrive with the render depth
- *  work, at which point this gains the same kind-by-kind branches buildGrid's
- *  tile loop will gain. Until then a non-image layer is silently skipped
- *  rather than left to throw, so an old layout doc missing that support still
- *  opens and shows what it can. */
-export async function buildLayout(
-  canvas: fabric.StaticCanvas,
-  layout: Layout,
-  deps: SceneDeps,
-  interactive = false,
-  /* Overridable because the stamp path renders a stripped copy of the Layout
-   * (see bakeable) and the answer has to come from the whole of it. */
-  stencils = stencilIds(layout.layers),
-  /* A tile to lay the composition over, so it can be judged against a face
-   * rather than against black. Whatever that tile actually shows — the baked
-   * mosaic where there is one, the game's own portrait otherwise — through the
-   * same function the wall uses, so the two cannot disagree about what a tile
-   * looks like. Absent for the stamp and the golden tests, which must render
-   * the design and nothing under it.
-   *
-   * `content` carries that tile's own answers up into the layers as well, so a
-   * caption reads "Nachtklinge" rather than "text01" and a badge wears the
-   * class the portrait is. `except` is the layers being edited, which keep
-   * showing the Layout's own — see the note in layoutObjects for why that is
-   * load-bearing rather than a nicety.
-   *
-   * Deliberately not the tile's placement: framed() is one portrait's
-   * departure from the design, and a design shown at somebody's private offset
-   * is a design nobody is editing. */
-  under?: { id: string; base: Base; content?: Tile; except?: string[] },
-  /* Asked once, immediately before the canvas is swapped — see there. Returns
-   * whether the swap happened, so a caller that caches "what is drawn" does not
-   * record a frame it stood down from. */
-  keep: () => boolean = () => true,
-): Promise<boolean> {
-  /* Everything is built before anything is cleared. Emptying the canvas first
-   * and then awaiting the pictures leaves it blank for as long as the loading
-   * takes, and Fabric paints that gap — which is the flicker on every slider
-   * drag, one blank frame per edit. Held this way the old frame stays up until
-   * the new one is ready to replace it in a single pass. */
-  const bed = under ? await background(under.base, under.id, deps, { x: 0, y: 0 }) : undefined;
-  const over =
-    under?.content && under.id
-      ? {
-          id: under.id,
-          text: under.content.text ?? {},
-          swap: under.content.swap ?? {},
-          paint: under.content.paint ?? {},
-          except: new Set(under.except ?? []),
-        }
-      : undefined;
-  const objs = await layoutObjects(
-    layout.layers,
-    deps,
-    interactive,
-    { dx: 0, dy: 0 },
-    false,
-    1,
-    { root: layout.layers, stencils },
-    over,
-  );
-  /* Last chance to stand down, asked immediately before the swap and after
-   * every await above.
-   *
-   * The awaits are the whole problem: reading and decoding a picture takes long
-   * enough for a hand to start a drag in the middle of it, and the swap below
-   * would then take the object out from under Fabric's live transform — the
-   * detached copy follows the mouse while the visible one stands still. The
-   * caller's own "is the button down" flag cannot help on its own, because it
-   * is read when the rebuild is *scheduled*, and a rebuild triggered from
-   * outside the canvas (picking a layer in the sidebar list) starts while no
-   * button is down and lands while one is.
-   *
-   * Standing down leaves the previous frame up, which is correct: it is the one
-   * the drag is happening on. The caller re-runs when the gesture ends. */
-  if (!keep()) return false;
-  canvas.remove(...canvas.getObjects());
-  if (bed) canvas.add(bed);
-  for (const obj of objs) canvas.add(obj);
-  canvas.renderAll();
-  return true;
-}
-
-/** What a layer needs to know about masking that its own fields cannot say:
- *  where to look a mask id up, and which shapes have stopped being pictures. */
-type Masking = { root: Layer[]; stencils: Set<string> };
-
-/** The portrait a Layout is being composed against, and the layers that must
- *  keep showing the Layout's own content while they are edited. */
-type Over = {
-  id: string;
-  text: Record<string, string>;
-  swap: Record<string, string>;
-  paint: Record<string, Paint>;
-  except: Set<string>;
-};
-
-/** Builds the clip path for one layer, or nothing when it has no mask.
- *
- *  The shape is drawn at its own place on the sheet, group displacement folded
- *  in exactly as the visible copy would have been — a mask that ignored the
- *  group it sits in would cut somewhere else entirely.
- *
- *  `absolutePositioned` because a clipPath is otherwise expressed relative to
- *  the clipped object's own centre, which would drag the hole around with
- *  whatever it is cutting. A dangling id resolves to nothing and the layer
- *  draws unclipped, which is the documented behaviour of a deleted shape. */
-async function maskFor(l: Layer, deps: SceneDeps, m: Masking): Promise<fabric.Object | undefined> {
-  if (!l.maskId) return undefined;
-  const cutter = findLayer(m.root, l.maskId);
-  /* Anything that draws: a shape cuts with its outline, a picture with the
-   * pixels it has, a caption with its letters. A group draws nothing of its
-   * own — it is a displacement — so there is nothing there to cut with.
-   *
-   * A switched-off layer stops cutting. The eye has to mean the same thing
-   * everywhere: something that is not there cannot be why half a picture is
-   * missing, and nothing else on screen would have explained it. */
-  /* One rule, one function — see cutApplies. Asked here as well as by the
-   * dropdown, so a manifest that already names a cutter the list would not
-   * offer behaves the same in both places. */
-  if (!cutter || cutter.hidden || !cutApplies(l, cutter)) return undefined;
-  const shift = nestingShift(m.root, cutter.id) ?? { dx: 0, dy: 0 };
-  /* Through silhouette, because the mask is about to become a picture and a
-   * picture carries what the shape itself does not mean: a half-transparent
-   * cutter would cut half-way, and an outline would widen the hole. The wall
-   * has always cut through this; the editor used to get the same effect from
-   * Fabric ignoring both in a clipPath. */
-  const placed = silhouette({ ...cutter, x: cutter.x + shift.dx, y: cutter.y + shift.dy } as Layer);
-  const obj = await layerObject(placed, deps, { w: TILE_W, h: TILE_H, x: 0, y: 0 }, "", {}, true);
-  if (!obj) return undefined;
-  /* Wrapped in a group of its own, and that is not decoration. Fabric resets
-   * the transform of whatever it is handed as a clipPath — measured: a class
-   * icon's stencil sat at scale 0.22 at rest and jumped to 1 on the first
-   * mousemove of a drag, so the mask went four and a half times too big and the
-   * layer it was cutting came out whole. The reset lands on the wrapper now,
-   * and the fitted scale inside it survives. */
-  const mask = new fabric.Group([obj], { objectCaching: false });
-  mask.absolutePositioned = true;
-  mask.inverted = !!l.maskInvert;
-  return mask;
-}
-
-/** One Layout's layers as Fabric objects, groups flattened into their members.
- *
- *  A group is a displacement, not a container: children carry absolute
- *  coordinates and the group's x/y shifts them (see groupShift in model.ts).
- *  Drawing them as loose objects shifted by that amount therefore renders
- *  identically to nesting them in a fabric.Group, and keeps every child
- *  individually clickable — which is the whole point of grouping here, since
- *  the list is what selects a group and the canvas is what edits one layer.
- *
- *  A group's opacity is multiplied into its members on the way down, like the
- *  displacement — the panel offers the slider, so ignoring the value made a
- *  control that does nothing.
- *
- *  ponytail: multiplied opacity is not the same as fading a merged picture —
- *  half-transparent overlapping children show through each other. Swap in a
- *  real fabric.Group when that difference matters. */
-async function layoutObjects(
-  layers: Layer[],
-  deps: SceneDeps,
-  interactive: boolean,
-  shift: { dx: number; dy: number },
-  locked: boolean,
-  fade: number,
-  masking: Masking,
-  /* One portrait's answers, so the composition is judged against "Nachtklinge"
-   * and a Sorceress badge rather than against "text01" and the placeholder
-   * class. Absent everywhere but the Layout editor. */
-  over?: Over,
-): Promise<fabric.Object[]> {
-  const out: fabric.Object[] = [];
-  for (const l of layers) {
-    if (l.hidden) continue;
-    if (l.kind === "group") {
-      const own = groupShift(l);
-      // Hiding, locking or fading a group has to reach its members, or the
-      // row would claim something the canvas does not do.
-      out.push(
-        ...(await layoutObjects(
-          l.children,
-          deps,
-          interactive,
-          { dx: shift.dx + own.dx, dy: shift.dy + own.dy },
-          locked || !!l.locked,
-          fade * l.opacity,
-          masking,
-          over,
-        )),
-      );
-      continue;
-    }
-    const placed = { ...l, x: l.x + shift.dx, y: l.y + shift.dy, opacity: l.opacity * fade } as Layer;
-    /* The layer being edited keeps showing the Layout's own content, and that
-     * exception is load-bearing rather than a nicety. layerText reads the
-     * tile's wording in preference to the layer's, so a caption drawn as
-     * "Nachtklinge" while its own text is being typed swallows every keystroke
-     * — what is on the canvas is what gets written back. And setLayerField
-     * moves a flush caption by a width measured from what is drawn, which would
-     * be the wrong string. The layer under your hands tells the truth about
-     * itself; its neighbours show you the wall. */
-    const mine = over && !over.except.has(l.id) ? over : undefined;
-    const shown = mine ? asTileShows(placed, mine.swap, mine.paint) : placed;
-    // Nothing to draw for a picture this tile turned off, same as on the wall.
-    if (shown.kind === "image" && !shown.asset) continue;
-    let obj = await layerObject(
-      shown,
-      deps,
-      { w: TILE_W, h: TILE_H, x: 0, y: 0 },
-      mine?.id ?? "",
-      mine?.text ?? {},
-    );
-    if (!obj) continue;
-    const mask = await maskFor(l, deps, masking);
-    if (mask) {
-      /* A class icon already wears a clipPath of its own — the artwork is what
-       * makes it an icon — and Fabric allows exactly one. Assigning the mask
-       * over it left a plain rectangle of paint being cut by the other layer,
-       * which is what "the icon went huge" looks like from the outside. Baked
-       * to pixels first, the artwork is in the picture rather than in a clip,
-       * and the mask has the one slot to itself. The tile path does the same
-       * thing for the same reason. */
-      if (obj.clipPath) {
-        obj = new fabric.FabricImage(await toTileCanvas(obj), {
-          originX: "left",
-          originY: "top",
-          left: 0,
-          top: 0,
-        });
-      }
-      obj.clipPath = mask;
-      /* A cached object is painted from a bitmap rendered before the clip
-       * applied, which shows up as the mask simply not working — the same trap
-       * the tile clip fell into further up. */
-      obj.objectCaching = false;
-      /* A clip changes what is painted, not the box Fabric hit-tests, so a
-       * masked picture goes on swallowing clicks across its whole original
-       * extent — over empty canvas, and over the layers below it. Per-pixel
-       * finding answers the question by rendering the object, clipPath and all,
-       * so what can be clicked is what can be seen. Only on masked layers: it
-       * costs a render per hit test, and everywhere else the bounding box is
-       * both cheaper and the right answer. */
-      obj.perPixelTargetFind = true;
-    }
-    // A locked group locks its members, so the flag has to travel down.
-    if (interactive) makeInteractive(obj, locked ? { ...l, locked: true } : l);
-    else obj.selectable = obj.evented = false;
-
-    /* A shape someone masks with is the hole, not something in the picture, so
-     * it paints nothing — in the editor and in the stamp alike.
-     *
-     * It still gets an object, though, or it could never be moved again: the
-     * list picks a layer by finding its object, and a stencil skipped outright
-     * would be a mask you can set and then never adjust. Deaf to the pointer,
-     * because it lies exactly over the part of the picture it lets through and
-     * would otherwise swallow every click meant for what is underneath. The
-     * row remains the way in. */
-    if (masking.stencils.has(l.id)) {
-      obj.opacity = 0;
-      obj.evented = false;
-      // Said outright rather than inferred from the opacity: a layer someone
-      // faded to nothing by hand is still an ordinary layer.
-      Object.assign(obj, { stencil: true });
-    }
-    Object.assign(obj, { layerId: l.id, tileId: "", space: "tile" });
-    out.push(obj);
-  }
-  return out;
-}
 
 /** Reads a dragged/scaled/rotated object back out in model terms. The inverse
  *  of the placement in imageObject, and the only place that inverse exists. */
@@ -1934,23 +1829,29 @@ export function readBack(obj: Tagged, tileCount: number, index: number) {
   return {
     x: ((obj.left ?? 0) - box.x) / box.w,
     y: ((obj.top ?? 0) - box.y) / box.h,
-    scale: obj.getScaledWidth() / box.w,
-    scaleH: obj.getScaledHeight() / box.h,
+    /* The object's own box, without the outline around it. `getScaledWidth`
+       adds the stroke, and a Textbox is built with `strokeWidth` set and no
+       `strokeUniform` — so a caption with an outline reported itself wider
+       than it is, `resize` wrote that back as its wrap width, and every plain
+       move made it a little wider again. Ten repositionings of a caption at
+       full outline and the words wrap somewhere else. The stand-in's own path
+       fixed this for itself months ago and said why; this is the same
+       subtraction on the direct one. */
+    scale: ((obj.width ?? 0) * (obj.scaleX ?? 1)) / box.w,
+    scaleH: (obj.height ?? 0) * (obj.scaleY ?? 1) / box.h,
     fx: obj.scaleX ?? 1,
     fy: obj.scaleY ?? 1,
+    /* The same two the Layout reads back. The side and height handles are put
+     * on wall objects too (makeInteractive does not ask which canvas it is on),
+     * so leaving these out meant a crop or a caption height dragged on the wall
+     * was measured, applied to the object, and then dropped on the way to the
+     * model — the gesture worked and the next rebuild undid it. */
+    crop: cropOff(obj),
+    boxH: (obj as { boxH?: number }).boxH,
     rotation: obj.angle ?? 0,
   };
 }
 
-/** Same inverse as readBack, for a Layout's own canvas — a document with no
- *  grid index to look a cell up by, always exactly one tile in size.
- *
- *  Read off the transform matrix rather than left/top/angle, because those are
- *  relative to the parent once an object sits inside a multi-selection: Fabric
- *  re-expresses children of an ActiveSelection around that selection's centre,
- *  so a dragged group of layers would otherwise write back positions near the
- *  origin. The matrix is absolute either way, which makes this one code path
- *  instead of one per case. */
 /** The trim a picture is currently showing through, or nothing at all.
  *
  *  Undefined rather than four zeroes for an untrimmed picture, so a layer that
@@ -1958,6 +1859,22 @@ export function readBack(obj: Tagged, tileCount: number, index: number) {
  *  answers the same way. */
 function cropOff(obj: fabric.Object): Inset | undefined {
   const img = obj as fabric.FabricImage;
+  /* A framed picture is a different picture by the time it gets here: drawing
+     the border means baking the trimmed window into a canvas of its own and
+     handing that to Fabric, so `getOriginalSize` reports the window and cropX
+     is nought — and the measurement below then answers "not trimmed at all".
+     `resize` reads that as the trim having been let go and deletes it, so
+     turning on a border and nudging the picture untrimmed it, and did so on
+     every selected tile at once.
+
+     What was baked in is remembered at the moment it is baked, and handed back
+     here unchanged. ponytail: it comes back unchanged, so the side handles do
+     nothing on a framed picture rather than measuring it against the wrong
+     image — a dead handle where there used to be a compounding wrong crop.
+     Trimming a framed picture wants frameImage to stop replacing the element;
+     that is a bigger change than this one. */
+  const baked = (obj as { bakedCrop?: Inset }).bakedCrop;
+  if (baked) return { ...baked };
   if (typeof img.getOriginalSize !== "function") return undefined;
   const src = img.getOriginalSize();
   if (!src.width || !src.height) return undefined;
@@ -1972,40 +1889,3 @@ function cropOff(obj: fabric.Object): Inset | undefined {
   return trimmed ? crop : undefined;
 }
 
-export function readBackLayout(obj: fabric.Object) {
-  const { translateX, translateY, scaleX, scaleY, angle } = fabric.util.qrDecompose(
-    obj.calcTransformMatrix(),
-  );
-  /* A mirrored object carries its flip in the matrix as a negative scale, and
-   * a decomposition has no way to tell that apart from a half turn: it reports
-   * angle + 180 and, on one axis, a negative factor. The model keeps flipX and
-   * flipY as their own fields and the renderer applies them itself, so the
-   * half turn has to come back out here — otherwise a plain drag of a mirrored
-   * picture wrote rotation 180 into the model and the next rebuild stood it on
-   * its head. */
-  const fx = Math.abs(scaleX);
-  const fy = Math.abs(scaleY);
-  const turn = obj.flipX ? 180 : 0;
-  return {
-    x: translateX / TILE_W,
-    y: translateY / TILE_H,
-    scale: (fx * (obj.width ?? 0)) / TILE_W,
-    // Read separately rather than assumed equal: a shape keeps width and
-    // height apart, so stretching one side has to survive the round trip.
-    scaleH: (fy * (obj.height ?? 0)) / TILE_H,
-    /* The raw factors, for layers whose size is written straight onto the
-     * object rather than derived from it. A shape is built at its exact w×h
-     * with no scaling, so after a plain drag these are 1 and its size must not
-     * change — deriving the size from obj.width instead shrank a polygon by
-     * 13% on every drag, because a regular n-gon's bounding box is smaller
-     * than the box it is inscribed in. */
-    fx,
-    fy,
-    /** What the side handles trimmed off the picture, if anything. */
-    crop: cropOff(obj),
-    /** What a caption's top or bottom handle dragged its box to, if either
-     *  was used. Scene pixels; the model keeps a fraction. */
-    boxH: (obj as { boxH?: number }).boxH,
-    rotation: (((angle - turn) % 360) + 360) % 360,
-  };
-}

@@ -10,15 +10,12 @@ import {
   folderOf,
   emptyManifest,
   emptyTile,
-  duplicateLayout,
   findLayer,
   findList,
   inboxIds,
   archivedIds,
   setArchived,
   layerLabel,
-  layerAsset,
-  layerIcon,
   layerText,
   migrate,
   maskChoices,
@@ -28,9 +25,6 @@ import {
   newGroupLayer,
   newImageLayer,
   uncrop,
-  layoutFingerprint,
-  layoutNeedsRestamp,
-  newLayout,
   newFolder,
   newProject,
   newShapeLayer,
@@ -53,17 +47,13 @@ import {
   walkLayers,
   type Layer,
   type Manifest,
+  type ShapeLayer,
   type TextLayer,
 } from "./model";
-import {
-  deleteStampCascade,
-  bakeable,
-  pruneDeadLayoutRefs,
-  tilesWearing,
-  refreshStamps,
-  stampInto,
-  syncLiveLayers,
-} from "./stamps";
+
+/** A v7 Layout, for the migration fixtures below — the only thing that still
+ *  has to be able to describe one. The model type went with the editor. */
+const newLayout = (name: string) => ({ id: `L-${name}`, name, layers: [] as Layer[] });
 
 /** Three tiles in one project, the shape everything below starts from. */
 const withProject = (): Manifest => {
@@ -151,8 +141,7 @@ describe("projects own tiles exclusively", () => {
      * refilled. The layers on it were composed for a face that no longer
      * exists — keeping them would dress a stranger. */
     const m = withProject();
-    m.tiles.a.layers.push({ ...newTextLayer(), id: "stale" });
-    m.tiles.a.text = { stale: "Alter Name" };
+    m.tiles.a.layers.push({ ...newTextLayer(), id: "stale", text: "Alter Name" });
 
     removeFromProjectToInbox(m, "a", true);
     expect(m.tiles.a).toEqual(emptyTile());
@@ -321,72 +310,7 @@ describe("placing tiles in the grid", () => {
   });
 });
 
-describe("dropOrphanLiveLayers", () => {
-  const stamp = (layoutId: string) => ({ ...newImageLayer("sheet.png"), layoutId });
-  const caption = (layoutId: string) => ({ ...newTextLayer(), layoutId, live: true });
 
-  it("drops a live caption whose stamp is gone", () => {
-    /* Deleting a stamp used to leave its captions behind, and the list hides
-     * live captions because the stamp row speaks for them — with no stamp row
-     * nothing did. Four tiles on the real wall carried captions that rendered,
-     * could not be selected and could not be deleted. */
-    const tile = { ...emptyTile(), layers: [caption("L1")] };
-    expect(dropOrphanLiveLayers(tile)).toBe(1);
-    expect(tile.layers).toEqual([]);
-  });
-
-  it("keeps a live caption that still has its stamp", () => {
-    const tile = { ...emptyTile(), layers: [stamp("L1"), caption("L1")] };
-    expect(dropOrphanLiveLayers(tile)).toBe(0);
-    expect(tile.layers).toHaveLength(2);
-  });
-
-  it("never touches a layer the user made by hand", () => {
-    const tile = { ...emptyTile(), layers: [newTextLayer(), newImageLayer("own.png")] };
-    expect(dropOrphanLiveLayers(tile)).toBe(0);
-    expect(tile.layers).toHaveLength(2);
-  });
-
-  it("drops a caption written before the live flag existed", () => {
-    // Legacy shape: text with a layoutId and no `live`. It can never gain the
-    // flag afterwards, so a rule that required it would orphan these forever.
-    const legacy = { ...newTextLayer(), layoutId: "L1" };
-    const tile = { ...emptyTile(), layers: [legacy] };
-    expect(dropOrphanLiveLayers(tile)).toBe(1);
-  });
-});
-
-describe("deleteStampCascade", () => {
-  it("takes the layout's live layers with the stamp", () => {
-    const s = { ...newImageLayer("sheet.png"), layoutId: "L1" };
-    const cap = { ...newTextLayer(), layoutId: "L1", live: true };
-    const logo = { ...newImageLayer("logo.png"), layoutId: "L1", live: true };
-    const mine = { ...newTextLayer(), id: "mine" };
-    const layers: Layer[] = [s, cap, logo, mine];
-
-    expect(deleteStampCascade(layers, s.id)).toBe(3);
-    expect(layers.map((l) => l.id)).toEqual(["mine"]);
-  });
-
-  it("leaves another layout's stamp and captions alone", () => {
-    const s1 = { ...newImageLayer("a.png"), layoutId: "L1" };
-    const s2 = { ...newImageLayer("b.png"), layoutId: "L2" };
-    const cap2 = { ...newTextLayer(), layoutId: "L2", live: true };
-    const layers: Layer[] = [s1, s2, cap2];
-
-    deleteStampCascade(layers, s1.id);
-    expect(layers.map((l) => l.id)).toEqual([s2.id, cap2.id]);
-  });
-
-  it("deletes an ordinary layer without dragging anything along", () => {
-    const plain = { ...newImageLayer("hand.png"), id: "plain" };
-    const cap = { ...newTextLayer(), layoutId: "L1", live: true };
-    const layers: Layer[] = [plain, cap];
-
-    expect(deleteStampCascade(layers, "plain")).toBe(1);
-    expect(layers.map((l) => l.id)).toEqual([cap.id]);
-  });
-});
 
 describe("bakeMosaicInto", () => {
   const withMosaic = () => {
@@ -434,253 +358,10 @@ const tilesWith = (spec: Record<string, Layer[]>): Manifest => {
   return m;
 };
 
-describe("tilesWearing", () => {
-  it("finds every tile carrying a stamp of this layout, and no others", () => {
-    const m = tilesWith({
-      t0: [{ ...newImageLayer("render1.png"), layoutId: "L1" }],
-      t1: [{ ...newImageLayer("render2.png"), layoutId: "L2" }],
-      t2: [newImageLayer("hand-picked.png")], // never stamped from any layout
-    });
-    expect(tilesWearing(m, "L1")).toHaveLength(1);
-    expect(tilesWearing(m, "L1")[0].layers[0].layoutId).toBe("L1");
-    expect(tilesWearing(m, "nope")).toEqual([]);
-  });
 
-  it("counts the portraits wearing the design", () => {
-    const m = tilesWith({
-      t0: [stampOf("L1")],
-      t1: [stampOf("L1")],
-      t2: [stampOf("L2")],
-      t3: [],
-    });
-    expect(tilesWearing(m, "L1")).toHaveLength(2);
-    expect(tilesWearing(m, "L2")).toHaveLength(1);
-    expect(tilesWearing(m, "nope")).toHaveLength(0);
-  });
 
-  it("does not count a tile that only carries live copies", () => {
-    /* A live copy is a per-tile picture or a cutter that travelled, not a
-     * stamp — the same rule stampInto and refreshStamps already follow. It
-     * cannot come up today, because a live copy only exists beside its stamp;
-     * this is here so the three predicates cannot drift apart unnoticed. */
-    const m = tilesWith({ t0: [{ ...stampOf("L1"), live: true }] });
-    expect(tilesWearing(m, "L1")).toEqual([]);
-  });
-});
 
-describe("layoutNeedsRestamp", () => {
-  const withImage = () => {
-    const layout = newLayout("L");
-    layout.layers.push(newImageLayer("a.png"));
-    return layout;
-  };
 
-  it("says no for a layout that was never stamped", () => {
-    // Nothing on any tile to bring up to date; the action for this case is
-    // stamping it somewhere, not saving.
-    expect(layoutNeedsRestamp(withImage())).toBe(false);
-  });
-
-  it("says no right after stamping", () => {
-    const layout = withImage();
-    layout.stamped = layoutFingerprint(layout);
-    expect(layoutNeedsRestamp(layout)).toBe(false);
-  });
-
-  it("says yes once a layer moves", () => {
-    const layout = withImage();
-    layout.stamped = layoutFingerprint(layout);
-    layout.layers[0].x = 0.9;
-    expect(layoutNeedsRestamp(layout)).toBe(true);
-  });
-
-  it("notices a layer being hidden, added, removed or reordered", () => {
-    const layout = withImage();
-    layout.layers.push(newImageLayer("b.png"));
-    layout.stamped = layoutFingerprint(layout);
-    layout.layers[0].hidden = true;
-    expect(layoutNeedsRestamp(layout)).toBe(true);
-
-    const reordered = withImage();
-    reordered.layers.push(newImageLayer("b.png"));
-    reordered.stamped = layoutFingerprint(reordered);
-    [reordered.layers[0], reordered.layers[1]] = [reordered.layers[1], reordered.layers[0]];
-    expect(layoutNeedsRestamp(reordered)).toBe(true);
-
-    const removed = withImage();
-    removed.stamped = layoutFingerprint(removed);
-    removed.layers.pop();
-    expect(layoutNeedsRestamp(removed)).toBe(true);
-  });
-
-  it("can report a change that turns out to look identical", () => {
-    // Hiding then unhiding leaves `hidden: false` where the key was absent
-    // before, which serialises differently even though it renders the same.
-    // Pinned rather than papered over with a normaliser: the cost is one
-    // redundant re-render of an identical picture, and the alternative is a
-    // second definition of "same" to keep in step with the layer types.
-    const layout = withImage();
-    layout.stamped = layoutFingerprint(layout);
-    layout.layers[0].hidden = true;
-    layout.layers[0].hidden = false;
-    expect(layoutNeedsRestamp(layout)).toBe(true);
-  });
-
-  it("ignores a rename, which changes nothing about the picture", () => {
-    const layout = withImage();
-    layout.stamped = layoutFingerprint(layout);
-    layout.name = "Anderer Name";
-    expect(layoutNeedsRestamp(layout)).toBe(false);
-  });
-});
-
-describe("pruneDeadLayoutRefs", () => {
-  const stamp = (layoutId: string) => ({ ...newImageLayer("sheet.png"), layoutId });
-  const caption = (layoutId: string) => ({ ...newTextLayer(), layoutId, live: true });
-
-  /** A manifest whose library knows exactly one layout, "alive". */
-  const withLibrary = () => {
-    const m = emptyManifest();
-    const layout = newLayout("Alive");
-    layout.id = "alive";
-    m.layouts.push(layout);
-    return m;
-  };
-
-  it("drops stamp and live caption of a layout the library no longer has", () => {
-    /* The measured wound: sixteen layers on a real wall named layouts deleted
-     * long before, rendering pictures nobody could account for. */
-    const m = withLibrary();
-    m.tiles["t"] = { ...emptyTile(), layers: [stamp("dead"), caption("dead")] };
-    expect(pruneDeadLayoutRefs(m)).toBe(2);
-    expect(m.tiles["t"].layers).toEqual([]);
-  });
-
-  it("keeps layers of a layout that still exists, and everything hand-made", () => {
-    const m = withLibrary();
-    m.tiles["t"] = {
-      ...emptyTile(),
-      layers: [stamp("alive"), caption("alive"), newTextLayer(), newImageLayer("own.png")],
-    };
-    expect(pruneDeadLayoutRefs(m)).toBe(0);
-    expect(m.tiles["t"].layers).toHaveLength(4);
-  });
-
-  it("takes the wording and the per-tile picture of a dead layer with it", () => {
-    /* Both are keyed by layer id, and the layer is the only thing that reaches
-     * them: left behind they are typed words sitting in the manifest that
-     * nothing can show and nothing can clear. */
-    const m = withLibrary();
-    const words = caption("dead");
-    const picture = stamp("dead");
-    const mine = newTextLayer();
-    m.tiles["t"] = {
-      ...emptyTile(),
-      layers: [picture, words, mine],
-      text: { [words.id]: "Elani", [mine.id]: "meins" },
-      swap: { [picture.id]: "face.png" },
-    };
-
-    pruneDeadLayoutRefs(m);
-
-    expect(m.tiles["t"].text).toEqual({ [mine.id]: "meins" });
-    expect(m.tiles["t"].swap).toEqual({});
-  });
-
-  it("cascades a layout deletion through every tile", () => {
-    const m = withLibrary();
-    m.tiles["a"] = { ...emptyTile(), layers: [stamp("alive")] };
-    m.tiles["b"] = { ...emptyTile(), layers: [stamp("alive"), newTextLayer()] };
-    m.layouts = [];
-    expect(pruneDeadLayoutRefs(m)).toBe(2);
-    expect(m.tiles["a"].layers).toEqual([]);
-    expect(m.tiles["b"].layers).toHaveLength(1);
-  });
-});
-
-describe("stampInto", () => {
-  it("adds a stamp carrying the layout it came from", () => {
-    const overlay = emptyTile();
-    const stamp = stampInto(overlay, "L1", "render1.png");
-    expect(overlay.layers).toHaveLength(1);
-    expect(stamp.layoutId).toBe("L1");
-    expect(stamp.asset).toBe("render1.png");
-  });
-
-  it("lands the stamp filling the tile, not at the picture default", () => {
-    // A stamp is rendered at exactly tile resolution, so the only scale that
-    // reproduces the Layout as composed is 1. newImageLayer's 0.3 default is
-    // meant for a picture dropped in by hand and would shrink the whole sheet
-    // to a patch floating in the middle of the tile.
-    const stamp = stampInto(emptyTile(), "L1", "render.png");
-    expect(stamp.scale).toBe(1);
-    expect(stamp.x).toBe(0.5);
-    expect(stamp.y).toBe(0.5);
-  });
-
-  it("replaces the picture of an existing stamp rather than stacking a copy", () => {
-    const overlay = emptyTile();
-    const first = stampInto(overlay, "L1", "render1.png");
-    const again = stampInto(overlay, "L1", "render2.png");
-    expect(overlay.layers).toHaveLength(1);
-    expect(again.id).toBe(first.id); // same layer, new picture
-    expect(again.asset).toBe("render2.png");
-  });
-
-  it("keeps stamps of different layouts apart", () => {
-    const overlay = emptyTile();
-    stampInto(overlay, "L1", "a.png");
-    stampInto(overlay, "L2", "b.png");
-    expect(overlay.layers).toHaveLength(2);
-  });
-
-  it("leaves an ordinary picture alone, even in the same stack", () => {
-    const overlay = emptyTile();
-    const plain = newImageLayer("hand-picked.png");
-    overlay.layers.push(plain);
-    stampInto(overlay, "L1", "render.png");
-    expect(overlay.layers).toHaveLength(2);
-    expect(plain.asset).toBe("hand-picked.png");
-  });
-});
-
-describe("refreshStamps", () => {
-  it("repoints every stamp of one layout, wherever it sits", () => {
-    const m = emptyManifest();
-    const a = emptyTile();
-    const b = emptyTile();
-    stampInto(a, "L1", "old.png");
-    stampInto(b, "L1", "old.png");
-    stampInto(b, "L2", "other.png");
-    const untouched = newImageLayer("hand-picked.png");
-    b.layers.push(untouched);
-    m.tiles = { t0: a, t1: b };
-
-    expect(refreshStamps(m, "L1", "new.png")).toBe(2);
-    expect((a.layers[0] as ImageLayer).asset).toBe("new.png");
-    expect((b.layers[0] as ImageLayer).asset).toBe("new.png");
-    // Neither another layout's stamp nor a plain picture may move.
-    expect((b.layers[1] as ImageLayer).asset).toBe("other.png");
-    expect(untouched.asset).toBe("hand-picked.png");
-  });
-
-  it("reports zero when nothing uses the layout", () => {
-    expect(refreshStamps(emptyManifest(), "nope", "new.png")).toBe(0);
-  });
-
-  it("reaches a stamp sitting in a tile's own stack", () => {
-    /* "Update stamps" is the only way an edited Layout reaches the wall. A
-     * tile stamped on its own used to be invisible to it — the design kept
-     * showing the version it was stamped at, for good. */
-    const m = emptyManifest();
-    const tile = emptyTile();
-    stampInto(tile, "L1", "old.png");
-    m.tiles = { t0: tile };
-
-    expect(refreshStamps(m, "L1", "new.png")).toBe(1);
-    expect((tile.layers[0] as ImageLayer).asset).toBe("new.png");
-  });
-});
 
 describe("clearBases", () => {
   const baked = (asset: string) => ({
@@ -716,14 +397,16 @@ describe("clearBases", () => {
 });
 
 describe("layerText", () => {
-  const layer = { ...newTextLayer(), id: "s1", text: "{{id}}" };
-
-  it("expands the tile id", () => {
-    expect(layerText({}, layer, "40000000004743219")).toBe("40000000004743219");
+  it("expands the tile id, which is what makes one caption read as forty", () => {
+    const layer = { ...newTextLayer(), id: "s1", text: "{{id}}" };
+    expect(layerText(layer, "40000000004743219")).toBe("40000000004743219");
   });
 
-  it("prefers the per-tile override, so style syncs but wording does not", () => {
-    expect(layerText({ s1: "Ranger" }, layer, "40000000004743219")).toBe("Ranger");
+  it("leaves words that name no placeholder alone", () => {
+    /* The per-tile override this used to prefer is gone with the record that
+       held it: a caption belongs to its tile, so its own text is the answer. */
+    const layer = { ...newTextLayer(), id: "s1", text: "Nachtklinge" };
+    expect(layerText(layer, "40000000004743219")).toBe("Nachtklinge");
   });
 });
 
@@ -807,7 +490,7 @@ describe("migrate v6 into one project", () => {
      * only its slot. The order itself is half an hour of hand-dragging and has
      * to come through untouched. */
     const m = migrate(v6());
-    expect(m.version).toBe(7);
+    expect(m.version).toBe(8);
     expect(m.projects).toHaveLength(1);
     expect(m.projects[0].name).toBe("Main");
     expect(m.projects[0].order).toEqual(["t2", "t0"]);
@@ -815,18 +498,26 @@ describe("migrate v6 into one project", () => {
   });
 
   it("copies a group's stack onto each of its members", () => {
+    /* The stamp "st" is gone by the end of the chain: v8 dissolves it into the
+     * layers of the layout it named, and this fixture's layout holds none. What
+     * has to survive is the copy the group put on each tile, on both tiles,
+     * and as two objects rather than one shared between them. */
     const m = migrate(v6());
-    expect(m.tiles.t0.layers.map((l) => l.id)).toEqual(["st", "cap"]);
-    expect(m.tiles.t2.layers.map((l) => l.id)).toEqual(["st", "cap"]);
+    expect(m.tiles.t0.layers.map((l) => l.id)).toEqual(["cap"]);
+    expect(m.tiles.t2.layers.map((l) => l.id)).toEqual(["cap"]);
     // Copies, not one object shared by both — otherwise moving a layer on one
     // tile would move it on every other member of the old group.
     expect(m.tiles.t0.layers[0]).not.toBe(m.tiles.t2.layers[0]);
   });
 
-  it("keeps layer ids, so per-tile wording still resolves", () => {
+  it("keeps layer ids, so per-tile wording lands in the layer itself", () => {
+    /* The id is what carried the wording across the v6 fold, and it is what
+     * carries it into the layer in v8 — the record is emptied once the words
+     * are where they are drawn from. */
     const m = migrate(v6());
-    expect(m.tiles.t0.text.cap).toBe("Krieger");
-    expect(m.tiles.t0.layers.some((l) => l.id === "cap")).toBe(true);
+    expect(m.tiles.t0.text).toEqual({});
+    const cap = m.tiles.t0.layers.find((l) => l.id === "cap") as TextLayer;
+    expect(cap.text).toBe("Krieger");
   });
 
   it("gives the wall picture to the project, not to the tiles", () => {
@@ -842,22 +533,23 @@ describe("migrate v6 into one project", () => {
     expect(m.tiles.t1.layers).toEqual([]);
   });
 
-  it("keeps each tile's picture and every layout", () => {
+  it("keeps each tile's picture, and takes the layouts away", () => {
     const m = migrate(v6());
     expect(m.tiles.t0.base).toEqual({ asset: "b.png", crop });
-    expect(m.layouts.map((l) => l.name)).toEqual(["Meins"]);
+    // v8 has no layouts: what they held is on the tiles that wore them.
+    expect((m as unknown as { layouts?: unknown[] }).layouts ?? []).toHaveLength(0);
   });
 
   it("takes a v1 tile's bare picture, which sat under the id itself", () => {
     const m = migrate({ version: 1, order: ["a"], tiles: { a: { asset: "x.png", crop } } });
-    expect(m.version).toBe(7);
+    expect(m.version).toBe(8);
     expect(m.tiles.a.base).toEqual({ asset: "x.png", crop });
     expect(m.projects[0].order).toEqual(["a"]);
   });
 
   it("survives a null tile and unreadable input", () => {
     expect(migrate({ version: 1, order: ["a"], tiles: { a: null } }).tiles.a.base).toBeNull();
-    expect(migrate(null).version).toBe(7);
+    expect(migrate(null).version).toBe(8);
   });
 
   it("leaves the input alone and runs again to the same result", () => {
@@ -869,11 +561,11 @@ describe("migrate v6 into one project", () => {
   });
 
   it("reads a document from a newer build rather than gutting it", () => {
-    /* `version: 8` matched neither the v7 test nor the v6 one and fell through
-     * to toV6, which reads a shape that stopped existing two versions ago:
-     * projects, folders, the shelf and every tile layer were dropped. Reachable
-     * by starting an older Tessera once — the first thing anyone does when a
-     * new version misbehaves. */
+    /* A version this build has never heard of matched none of the tests and
+     * fell through to toV6, which reads a shape that stopped existing two
+     * versions ago: projects, folders, the shelf and every tile layer were
+     * dropped. Reachable by starting an older Tessera once — the first thing
+     * anyone does when a new version misbehaves. */
     const doc = emptyManifest();
     const p = newProject("Main");
     p.order = ["t0"];
@@ -881,7 +573,7 @@ describe("migrate v6 into one project", () => {
     doc.projects = [p];
     doc.tiles.t0 = { base: null, layers: [newTextLayer()], text: {} };
 
-    const fromNewer = { ...structuredClone(doc), version: 8, wallpaper: "unknown to us" };
+    const fromNewer = { ...structuredClone(doc), version: 9, wallpaper: "unknown to us" };
     const back = migrate(fromNewer);
 
     expect(back.projects.map((x) => x.name)).toEqual(["Main"]);
@@ -893,225 +585,153 @@ describe("migrate v6 into one project", () => {
   });
 });
 
-describe("per-tile captions", () => {
-  const liveCaption = (id: string, text = "Kachel {{id}}") => {
-    const l = { ...newTextLayer(), id, text, perTile: true };
-    return l;
-  };
-
-  it("keeps an emptied override empty instead of falling back", () => {
-    // The bug this project already had once: clearing the field put the
-    // layer's default text straight back, so it could not be cleared at all.
-    const layer = liveCaption("t1", "Standard");
-    expect(layerText({}, layer, "t00")).toBe("Standard");
-    expect(layerText({ t1: "" }, layer, "t00")).toBe("");
-    expect(layerText({ t1: "Eigen" }, layer, "t00")).toBe("Eigen");
+describe("migrate v7 into v8: stamps dissolve into the tiles they dressed", () => {
+  /* A v7 manifest of the shape a real wall had. The layout holds a baked
+   * picture, a baked shape and one live caption; the tile wears the stamp, its
+   * own layer above it, and the caption copy the stamp brought. */
+  const v7 = () => ({
+    version: 7,
+    projects: [{ ...newProject("Main"), id: "p1", order: ["t0", "t1"] }],
+    layouts: [
+      {
+        ...newLayout("Meins"),
+        id: "L1",
+        stamped: "abc",
+        layers: [
+          { ...newImageLayer("frame.png"), id: "frame", x: 0.5, y: 0.5, scale: 0.8 },
+          { ...newShapeLayer("rect"), id: "bar", w: 0.6, h: 0.05 },
+          { ...newTextLayer(), id: "cap", perTile: true, text: "{{id}}" },
+        ],
+      },
+    ],
+    tiles: {
+      t0: {
+        ...emptyTile(),
+        layers: [
+          { ...newImageLayer("baked.png"), id: "stamp", layoutId: "L1", scale: 1 },
+          { ...newShapeLayer("ellipse"), id: "mine", w: 0.2, h: 0.2 },
+          { ...newTextLayer(), id: "cap", layoutId: "L1", live: true, x: 0.5, y: 0.9 },
+        ],
+        text: { cap: "Nachtklinge" },
+        swap: { frame: "eigenes.png" },
+        paint: { bar: "#ff0000" },
+        frame: { cap: { x: 0.1, y: -0.05, z: 1, a: 15 } },
+      },
+      t1: { ...emptyTile(), layers: [] },
+    },
   });
 
-  it("expands {{id}} to the tile it lands on", () => {
-    expect(layerText({}, liveCaption("t1"), "t07")).toBe("Kachel t07");
+  const at = (m: Manifest, tile: string) => m.tiles[tile].layers.map((l) => l.id);
+
+  it("puts the layout's baked layers where the stamp stood", () => {
+    /* Order is the whole risk here. A live copy is appended to the end of the
+     * stack and draws over everything; the stamp itself sits lower. Dropping
+     * the full layout in at the stamp's position would push the tile's own
+     * layer down under a design that used to sit beneath it. */
+    const m = migrate(v7());
+    expect(at(m, "t0")).toEqual(["frame", "bar", "mine", "cap"]);
+    expect(m.version).toBe(8);
   });
 
-  it("leaves live captions out of what gets baked", () => {
-    const layout = newLayout("L");
-    layout.layers.push(newImageLayer("x.png"), liveCaption("t1"));
-    expect(bakeable(layout).layers.map((l) => l.kind)).toEqual(["image"]);
-    // The Layout itself is untouched — the editor still shows the caption.
-    expect(layout.layers).toHaveLength(2);
+  it("keeps the live copy rather than the layout's per-tile original", () => {
+    /* Both carry id "cap". The copy is the one the tile has been editing — it
+     * holds the wording, the placement and the eye — so the bakeable filter
+     * leaves the original out and the copy stays put. Two layers with one id on
+     * one tile would be a stack that cannot be addressed. */
+    const m = migrate(v7());
+    const caps = m.tiles.t0.layers.filter((l) => l.id === "cap");
+    expect(caps).toHaveLength(1);
+    expect((caps[0] as TextLayer).text).toBe("Nachtklinge");
   });
 
-  it("keeps a group's remaining children when a live member is dropped", () => {
-    const layout = newLayout("L");
-    const group = { ...newGroupLayer([newImageLayer("x.png"), liveCaption("t1")]), x: 0.7 };
-    layout.layers.push(group);
-    const baked = bakeable(layout).layers[0];
-    expect(baked.kind).toBe("group");
-    expect(baked.kind === "group" && baked.children.map((c) => c.kind)).toEqual(["image"]);
-    // The displacement survives, or the remaining children would jump.
-    expect(baked.x).toBe(0.7);
+  it("folds the per-tile records into the layers and drops the records", () => {
+    const m = migrate(v7());
+    const by = (id: string) => findLayer(m.tiles.t0.layers, id)!;
+    expect((by("frame") as ImageLayer).asset).toBe("eigenes.png");
+    expect((by("bar") as ShapeLayer).fill).toBe("#ff0000");
+    expect((by("cap") as TextLayer).text).toBe("Nachtklinge");
+    expect(m.tiles.t0.text).toEqual({});
+    expect((m.tiles.t0 as Record<string, unknown>).swap).toBeUndefined();
+    expect((m.tiles.t0 as Record<string, unknown>).paint).toBeUndefined();
+    expect((m.tiles.t0 as Record<string, unknown>).frame).toBeUndefined();
   });
 
-  it("copies live captions onto the tile and keeps their ids", () => {
-    const layout = newLayout("L");
-    layout.layers.push(liveCaption("t1"));
-    const overlay = emptyTile();
-
-    expect(syncLiveLayers(overlay, layout)).toBe(1);
-    expect(overlay.layers).toHaveLength(1);
-    expect(overlay.layers[0].id).toBe("t1");
-    expect(overlay.layers[0].layoutId).toBe(layout.id);
-    // perTile means nothing on a tile, where every caption is already live.
-    expect((overlay.layers[0] as TextLayer).perTile).toBeUndefined();
+  it("applies a frame only to the layer that was actually framed", () => {
+    /* framed() runs at draw time for live copies and for nothing else, so a
+     * frame record belonging to a withdrawn copy describes a layer that is
+     * drawing unframed today. Folding every record found would move layers
+     * nobody ever placed — silent, and visible only as a wall that shifted. */
+    const doc = v7();
+    doc.tiles.t0.frame = {
+      cap: { x: 0.1, y: -0.05, z: 1, a: 15 },
+      // No live copy by this name: left over from one that was withdrawn.
+      bar: { x: 0.4, y: 0.4, z: 2, a: 0 },
+    } as (typeof doc.tiles.t0)["frame"];
+    const m = migrate(doc);
+    const cap = findLayer(m.tiles.t0.layers, "cap") as TextLayer;
+    const bar = findLayer(m.tiles.t0.layers, "bar") as ShapeLayer;
+    expect(cap.x).toBeCloseTo(0.6, 5);
+    expect(cap.rotation).toBeCloseTo(15, 5);
+    // Untouched: still the layout's own numbers.
+    expect(bar.x).toBeCloseTo(0.5, 5);
+    expect(bar.w).toBeCloseTo(0.6, 5);
   });
 
-  it("updates a copy in place rather than stacking a second one", () => {
-    const layout = newLayout("L");
-    layout.layers.push(liveCaption("t1"));
-    const overlay = emptyTile();
-    syncLiveLayers(overlay, layout);
-
-    (layout.layers[0] as TextLayer).size = 0.2;
-    syncLiveLayers(overlay, layout);
-    expect(overlay.layers).toHaveLength(1);
-    expect((overlay.layers[0] as TextLayer).size).toBe(0.2);
+  it("carries a hidden stamp's eye onto everything it dissolved into", () => {
+    const doc = v7();
+    doc.tiles.t0.layers[0] = { ...doc.tiles.t0.layers[0], hidden: true };
+    const m = migrate(doc);
+    expect(findLayer(m.tiles.t0.layers, "frame")!.hidden).toBe(true);
+    expect(findLayer(m.tiles.t0.layers, "bar")!.hidden).toBe(true);
+    // The tile's own layer was never part of that assignment.
+    expect(findLayer(m.tiles.t0.layers, "mine")!.hidden).toBeFalsy();
   });
 
-  it("folds a group's displacement into the copy", () => {
-    const layout = newLayout("L");
-    const caption = { ...liveCaption("t1"), x: 0.3, y: 0.4 };
-    layout.layers.push({ ...newGroupLayer([caption]), x: 0.7, y: 0.2 });
-    const overlay = emptyTile();
-    syncLiveLayers(overlay, layout);
-    // group at 0.7/0.2 displaces by +0.2/-0.3 over the neutral 0.5/0.5
-    expect(overlay.layers[0].x).toBeCloseTo(0.5);
-    expect(overlay.layers[0].y).toBeCloseTo(0.1);
+  it("dissolves a stamp whose layout is gone to nothing, records and all", () => {
+    const doc = v7();
+    doc.layouts = [];
+    const m = migrate(doc);
+    // Its own layer and the copy survive; the stamp and the design go.
+    expect(at(m, "t0")).toEqual(["mine", "cap"]);
+    expect(m.tiles.t0.text).toEqual({});
   });
 
-  it("lets a shape be per-tile, so a per-tile cutter may cut it", () => {
-    /* A shape has no wording and no picture of its own to vary — what varies is
-     * the thing cutting it. A gradient block cut by each character's class icon
-     * needs the block to travel with the icon: the rule says a per-tile cutter
-     * only cuts a per-tile layer, and shapes had no way to say yes to it. The
-     * checkbox did not exist, so the mask just fell off as "no longer allowed". */
-    const layout = newLayout("L");
-    const icon = { ...newImageLayer("icon.svg"), id: "icon", perTile: true };
-    const block = { ...newShapeLayer("rect"), id: "block", perTile: true, maskId: "icon" };
-    layout.layers.push(icon, block);
-
-    // The dropdown offers the per-tile icon to the per-tile shape.
-    expect(maskChoices(layout.layers, "block").map((l) => l.id)).toEqual(["icon"]);
-    // The stamp carries neither; both travel.
-    expect(bakeable(layout).layers).toEqual([]);
-    const overlay = emptyTile();
-    syncLiveLayers(overlay, layout);
-    expect(overlay.layers.map((l) => l.id).sort()).toEqual(["block", "icon"]);
-    expect(overlay.layers.every((l) => l.live)).toBe(true);
+  it("keeps an orphaned live copy, which is what the wall was drawing", () => {
+    /* Nothing has swept these since v7, and layerShows only consults a stamp
+     * that is present — so a copy whose stamp was deleted goes on drawing.
+     * Deleting it here would be a visible loss nobody asked for. */
+    const doc = v7();
+    doc.tiles.t1.layers = [
+      { ...newTextLayer(), id: "waise", layoutId: "gone", live: true, text: "bleibt" },
+    ] as (typeof doc.tiles.t1)["layers"];
+    const m = migrate(doc);
+    expect(at(m, "t1")).toEqual(["waise"]);
+    expect((findLayer(m.tiles.t1.layers, "waise") as TextLayer).text).toBe("bleibt");
   });
 
-  it("sends the shape a live layer is cut by along with it", () => {
-    /* The reason the two settings used to lock each other out: the layer left
-     * the Layout and the thing cutting it stayed behind, so on the tile the
-     * maskId resolved to nothing and the picture came back whole. */
-    const layout = newLayout("L");
-    const shape = { ...newShapeLayer("rect"), id: "cut" };
-    const caption = { ...liveCaption("t1"), maskId: "cut" };
-    layout.layers.push(shape, caption);
-    const overlay = emptyTile();
-
-    syncLiveLayers(overlay, layout);
-
-    const copied = overlay.layers.find((l) => l.id === "cut");
-    expect(copied).toBeTruthy();
-    // Marked like every other copy, so the existing sweeps own it: hidden from
-    // the tile list, withdrawn with the layout, gone when the layout goes.
-    expect(copied!.live).toBe(true);
-    expect(copied!.layoutId).toBe(layout.id);
+  it("strips the flags that only meant something while layouts existed", () => {
+    const m = migrate(v7());
+    for (const l of m.tiles.t0.layers) {
+      const raw = l as unknown as Record<string, unknown>;
+      expect(raw.layoutId).toBeUndefined();
+      expect(raw.live).toBeUndefined();
+      expect(raw.perTile).toBeUndefined();
+    }
+    /* Emptied here rather than absent: the field is still on the type until
+     * the layout editor itself is taken out. Written so it keeps passing once
+     * it is. */
+    expect((m as unknown as { layouts?: unknown[] }).layouts ?? []).toHaveLength(0);
   });
 
-  it("folds a group's displacement into the cutter too", () => {
-    // Otherwise the cut lands somewhere else entirely — there are no groups on
-    // a tile to put it back.
-    const layout = newLayout("L");
-    const shape = { ...newShapeLayer("rect"), id: "cut", x: 0.3, y: 0.4 };
-    layout.layers.push({ ...newGroupLayer([shape]), x: 0.7, y: 0.2 });
-    layout.layers.push({ ...liveCaption("t1"), maskId: "cut" });
-    const overlay = emptyTile();
-
-    syncLiveLayers(overlay, layout);
-
-    const copied = overlay.layers.find((l) => l.id === "cut")!;
-    expect(copied.x).toBeCloseTo(0.5);
-    expect(copied.y).toBeCloseTo(0.1);
-  });
-
-  it("withdraws the cutter once nothing on the tile is cut by it", () => {
-    const layout = newLayout("L");
-    layout.layers.push({ ...newShapeLayer("rect"), id: "cut" });
-    layout.layers.push({ ...liveCaption("t1"), maskId: "cut" });
-    const overlay = emptyTile();
-    syncLiveLayers(overlay, layout);
-    expect(overlay.layers).toHaveLength(2);
-
-    delete (layout.layers[1] as TextLayer).maskId;
-    syncLiveLayers(overlay, layout);
-
-    expect(overlay.layers.map((l) => l.id)).toEqual(["t1"]);
-  });
-
-  it("removes a copy once its source stops being per-tile", () => {
-    const layout = newLayout("L");
-    layout.layers.push(liveCaption("t1"));
-    const overlay = emptyTile();
-    syncLiveLayers(overlay, layout);
-
-    (layout.layers[0] as TextLayer).perTile = false;
-    expect(syncLiveLayers(overlay, layout)).toBe(0);
-    expect(overlay.layers).toHaveLength(0);
-  });
-
-  it("leaves another layout's copies alone", () => {
-    const mine = newLayout("A");
-    mine.layers.push(liveCaption("t1"));
-    const theirs = newLayout("B");
-    const overlay = emptyTile();
-    syncLiveLayers(overlay, mine);
-    syncLiveLayers(overlay, theirs);
-    expect(overlay.layers).toHaveLength(1);
+  it("leaves its input alone and runs again to the same result", () => {
+    const input = v7();
+    const copy = structuredClone(input);
+    const once = migrate(input);
+    expect(input).toEqual(copy);
+    expect(migrate(structuredClone(once))).toEqual(once);
   });
 });
 
-describe("duplicateLayout", () => {
-  const source = () => {
-    const l = newLayout("Original");
-    const mask = { ...newShapeLayer("rect"), id: "shape" };
-    const masked = { ...newTextLayer(), id: "cap", maskId: "shape", perTile: true };
-    l.layers.push(mask, { ...newGroupLayer([masked]), id: "grp" });
-    l.stamped = "irgendein-fingerabdruck";
-    return l;
-  };
-
-  it("gives every layer a new id, nested ones too", () => {
-    const from = source();
-    const copy = duplicateLayout(from, "Kopie");
-    const oldIds = new Set([...walkLayers(from.layers)].map((l) => l.id));
-    const newIds = [...walkLayers(copy.layers)].map((l) => l.id);
-
-    expect(copy.id).not.toBe(from.id);
-    expect(newIds).toHaveLength(3);
-    expect(newIds.some((id) => oldIds.has(id))).toBe(false);
-    // Ids are what per-tile wording and stamp tracking hang on, so a shared
-    // one would make editing the copy move the original's captions.
-    expect(new Set(newIds).size).toBe(3);
-  });
-
-  it("keeps everything else, including the per-tile flag", () => {
-    const copy = duplicateLayout(source(), "Kopie");
-    const caption = [...walkLayers(copy.layers)].find((l) => l.kind === "text");
-    expect(copy.name).toBe("Kopie");
-    expect(caption?.kind === "text" && caption.perTile).toBe(true);
-    expect(copy.layers[1].kind === "group" && copy.layers[1].children).toHaveLength(1);
-  });
-
-  it("points a mask at the copy's own shape, not the original's", () => {
-    const from = source();
-    const copy = duplicateLayout(from, "Kopie");
-    const shape = copy.layers[0];
-    const caption = [...walkLayers(copy.layers)].find((l) => l.kind === "text");
-    expect(caption?.maskId).toBe(shape.id);
-    expect(caption?.maskId).not.toBe("shape");
-  });
-
-  it("starts unstamped, because the copy has never been on a tile", () => {
-    expect(duplicateLayout(source(), "Kopie").stamped).toBeUndefined();
-  });
-
-  it("leaves the original alone", () => {
-    const from = source();
-    const before = structuredClone(from);
-    duplicateLayout(from, "Kopie");
-    expect(from).toEqual(before);
-  });
-});
 
 describe("relocateLayer", () => {
   const at = (layers: Layer[], id: string) => {
@@ -1295,114 +915,6 @@ describe("newTextLayer", () => {
   });
 });
 
-describe("per-tile pictures", () => {
-  /** A Layout with one live image, stamped onto a tile. */
-  const stamped = () => {
-    const layout = newLayout("Klassen");
-    const logo = newImageLayer("default-logo.png");
-    logo.perTile = true;
-    layout.layers.push(logo);
-    const overlay: { layers: Layer[] } = emptyTile();
-    stampInto(overlay, layout.id, "sheet.png");
-    syncLiveLayers(overlay, layout);
-    return { layout, overlay, logo };
-  };
-
-  it("keeps a live picture out of the stamp and beside it", () => {
-    const { overlay, logo } = stamped();
-    expect(overlay.layers.map((l) => l.kind)).toEqual(["image", "image"]);
-    const [stamp, live] = overlay.layers as ImageLayer[];
-    expect(stamp.asset).toBe("sheet.png");
-    expect(stamp.live).toBeFalsy();
-    // The copy keeps the layout layer's id, which is what the per-tile map
-    // is keyed by.
-    expect(live.id).toBe(logo.id);
-    expect(live.live).toBe(true);
-  });
-
-  it("leaves the live picture alone when the stamp is re-rendered", () => {
-    /* The trap: both carry the same layoutId and both are images, so a lookup
-     * written on those two facts alone would overwrite a per-tile logo with
-     * the whole flattened sheet.
-     *
-     * The live copy is put first on purpose. Fresh from syncLiveLayers it sits
-     * behind the stamp, and a lookup taking the first match then finds the
-     * right layer by luck — but the layer list is drag-sortable, so that order
-     * is one drop away from reversing. */
-    const { layout, overlay, logo } = stamped();
-    overlay.layers.reverse();
-    stampInto(overlay, layout.id, "sheet-v2.png");
-    const live = overlay.layers.find((l) => l.id === logo.id) as ImageLayer;
-    const stamp = overlay.layers.find((l) => l.id !== logo.id) as ImageLayer;
-    expect(stamp.asset).toBe("sheet-v2.png");
-    expect(live.asset).toBe("default-logo.png");
-  });
-
-  it("withdraws the live picture without taking the stamp with it", () => {
-    // The same trap one step later: the cleanup pass must not mistake the
-    // stamp for a copy that is no longer live.
-    const { layout, overlay, logo } = stamped();
-    layout.layers = [];
-    syncLiveLayers(overlay, layout);
-    expect(overlay.layers).toHaveLength(1);
-    expect((overlay.layers[0] as ImageLayer).asset).toBe("sheet.png");
-    expect(overlay.layers.some((l) => l.id === logo.id)).toBe(false);
-  });
-
-  it("bakes everything except the live picture", () => {
-    const layout = newLayout("Gemischt");
-    const baked = newImageLayer("frame.png");
-    const live = newImageLayer("logo.png");
-    live.perTile = true;
-    layout.layers.push(baked, live);
-    expect(bakeable(layout).layers.map((l) => l.id)).toEqual([baked.id]);
-  });
-});
-
-describe("layerAsset", () => {
-  const layer = () => ({ ...newImageLayer("default.png"), id: "L1" });
-
-  it("falls back to the layer's own picture when the tile has none", () => {
-    expect(layerAsset({}, layer())).toBe("default.png");
-  });
-
-  it("takes the tile's picture over the layer's", () => {
-    expect(layerAsset({ L1: "witch.png" }, layer())).toBe("witch.png");
-  });
-
-  it('treats "" as a choice, not as absence', () => {
-    /* "No picture on this tile" has to survive. `||` here would put the
-     * default straight back — the same trap the caption text fell into. */
-    expect(layerAsset({ L1: "" }, layer())).toBe("");
-  });
-});
-
-describe("layerIcon", () => {
-  const layer = () => ({ ...newShapeLayer("icon", "Ranger"), id: "L1" });
-
-  it("falls back to the layer's own class when the tile names none", () => {
-    expect(layerIcon({}, layer())).toBe("Ranger");
-  });
-
-  it("takes the tile's class over the layer's", () => {
-    expect(layerIcon({ L1: "Witch" }, layer())).toBe("Witch");
-  });
-
-  it('treats "" as a choice, not as absence', () => {
-    /* "No icon on this tile" has to survive, exactly as it does for a picture:
-     * `||` would put the layer's class straight back. */
-    expect(layerIcon({ L1: "" }, layer())).toBe("");
-  });
-
-  it("keys on the layer, so two icon layers on a tile choose apart", () => {
-    /* One map per tile carries every layer's choice — a wall with a class badge
-     * and a guild badge must not have one answer the other's question. */
-    const guild = { ...newShapeLayer("icon", "Nova"), id: "L2" };
-    const swaps = { L1: "Witch", L2: "Shai" };
-    expect(layerIcon(swaps, layer())).toBe("Witch");
-    expect(layerIcon(swaps, guild)).toBe("Shai");
-  });
-});
 
 describe("pruneToFolder", () => {
   /** One project holding three tiles: two placed, one shelved, and a folder
@@ -1458,16 +970,16 @@ describe("droppedWork", () => {
   it("names only the tiles that lose something", () => {
     const m = wall();
     m.tiles.b.layers = [newTextLayer()];
-    m.tiles.c.text = { L1: "Hallo" };
+    m.tiles.c.layers = [{ ...newTextLayer(), text: "Hallo" }];
     // `a` is untouched and `d` is still in the folder — neither is a loss.
     m.tiles.d.layers = [newTextLayer()];
     expect(droppedWork(m, ["d"]).sort()).toEqual(["b", "c"]);
   });
 
-  it("counts a baked picture and a per-tile swap as work", () => {
+  it("counts a baked picture and a tile's own caption as work", () => {
     const m = wall();
     m.tiles.a.base = { asset: "mosaic.png", crop: { x: 0, y: 0, w: 10, h: 10 } };
-    m.tiles.b.swap = { L1: "face.png" };
+    m.tiles.b.layers = [{ ...newTextLayer(), text: "Nachtklinge" }];
     expect(droppedWork(m, []).sort()).toEqual(["a", "b"]);
   });
 
@@ -1563,29 +1075,6 @@ describe("masks", () => {
     expect(maskChoices([newGroupLayer([inner]), pic], pic.id).map((l) => l.id)).toEqual([inner.id]);
   });
 
-  it("offers a per-tile cutter only to a layer that is per-tile itself", () => {
-    /* A caption editable on the wall says something different on every tile, so
-     * what it cuts has to be worked out per tile too. That is possible for a
-     * layer that travels to the tile with it — a picture through each
-     * character's own name — and impossible for one baked into the stamp: the
-     * stamp is a single picture for the whole wall, and "which letters" has no
-     * shared answer there. */
-    const shape = newShapeLayer("rect");
-    const words = { ...newTextLayer(), perTile: true };
-    const stamped = newImageLayer("x.png");
-    const alsoLive = { ...newImageLayer("y.png"), perTile: true };
-    const layers = [shape, words, stamped, alsoLive];
-
-    // Baked into the stamp: only a cutter that is baked with it will do.
-    expect(maskChoices(layers, stamped.id).map((l) => l.id)).toEqual([shape.id]);
-    // On the tile: anything may cut it, the per-tile caption included.
-    expect(maskChoices(layers, alsoLive.id).map((l) => l.id)).toEqual([
-      shape.id,
-      words.id,
-      stamped.id,
-    ]);
-  });
-
   it("counts a shape as a stencil only while something visible cuts with it", () => {
     const shape = newShapeLayer("rect");
     const pic = newImageLayer("x.png");
@@ -1671,10 +1160,9 @@ describe("archiving a tile", () => {
   it("keeps the work on an archived tile", () => {
     // Put away, not thrown away: it comes back with what was made for it.
     const m = withTiles();
-    m.tiles.b.layers = [newTextLayer()];
-    m.tiles.b.text = { L1: "Elani" };
+    m.tiles.b.layers = [{ ...newTextLayer(), id: "L1", text: "Elani" }];
     setArchived(m, ["b"], true);
     expect(m.tiles.b.layers).toHaveLength(1);
-    expect(m.tiles.b.text).toEqual({ L1: "Elani" });
+    expect((m.tiles.b.layers[0] as TextLayer).text).toBe("Elani");
   });
 });

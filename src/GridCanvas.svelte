@@ -9,13 +9,15 @@
   import {
     app,
     applyTransform,
+    applyTransformBulk,
     assignedTiles,
+    bulkTargets,
     clearAll,
     clearTiles,
+    nudgeLayer,
+    pickedLayers,
     refreshCoverPreview,
     selectLayer,
-    setTileFrame,
-    tileFrame,
     swapTilePlaces,
     wall,
     toggleTile,
@@ -26,25 +28,24 @@
   import {
     buildGrid,
     cellAt,
+    drawnLayers,
     freeScale,
     ghostImage,
     gridSize,
+    isFlattened,
     layerSize,
     readBack,
     rebuildTile,
     snapScale,
-    soleTileChange,
+    snapWidth,
     standRect,
+    tilesChanged,
     wallPrint,
     type Tagged,
     type WallPrint,
   } from "./lib/scene";
-  import { framed, layerAsset, layerText, type Layer } from "./lib/model";
-  import { isLiveCopy, layerShows, offLayouts } from "./lib/stamps";
+  import { findLayer, layerText, stencilIds, walkLayers, type Layer } from "./lib/model";
 
-  /* On while the placing tool is chosen in App's toolbar. The wall has no other
-     mode, and that is deliberate — see the note on frameAt below. */
-  let { framing = false }: { framing?: boolean } = $props();
 
   let host: HTMLDivElement;
   let el: HTMLCanvasElement;
@@ -65,6 +66,13 @@
   /** How close in screen pixels the pull reaches. Converted to scene units per
    *  drag, so it feels the same at any zoom. */
   const SNAP_PX = 8;
+
+  /** How many changed tiles are still worth redrawing one at a time. A single
+   *  tile costs about a third of a full wall at three hundred tiles — almost
+   *  all of it paint — so a handful of targeted redraws stays ahead, and past
+   *  that the full build is both cheaper and simpler. Raised from "exactly one"
+   *  when an edit could first reach several tiles at once. */
+  const REDRAW_MAX = 8;
 
   /* ---- The placing tool -------------------------------------------------
    *
@@ -89,6 +97,18 @@
    * without which you would be nudging an invisible thing until something
    * happened to appear. */
   let target: { tileId: string; layerId: string } | null = null;
+  /** Which state the frame was measured against.
+   *
+   *  It stands for a layer and is built from that layer's own numbers, so it
+   *  is only true of the document it was built from. It also survives every
+   *  rebuild (`keep`), which is what let it go stale: a Size typed into the
+   *  panel, an undo, a tile swapped into another slot — the layer moved and the
+   *  frame stayed. And the frame is what the next gesture writes back, in
+   *  absolute numbers, so a one-pixel nudge afterwards put the layer back where
+   *  the stale frame still thought it was and the panel edit was gone. */
+  let framedAt = -1;
+  /** Counts the calls to frameAt, so one that finishes late can tell. */
+  let frameGen = 0;
   let stand: fabric.Object | undefined;
   let ghost: fabric.Object | undefined;
   /** Whether what is being placed may be stretched — see the handles in
@@ -96,16 +116,23 @@
    *  to go on, and a stand-in is a plain rectangle whatever it stands for. */
   let twoAxes = false;
 
-  /** The live layers drawn on a tile, newest last — the ones a tile places.
-   *
-   *  Live copies only. A layer the tile owns outright is already draggable on
-   *  the wall and has nothing to differ from: editing it *is* editing the
-   *  layer. */
+  /** The layers on a tile the stand-in can be put on: the ones that draw. */
   const placeableOn = (tileId: string) => {
-    const own = app.manifest.tiles[tileId]?.layers ?? [];
-    const off = offLayouts(own);
-    return own.filter(
-      (l) => isLiveCopy(l) && layerShows(l, off) && !(l.kind === "image" && !l.asset),
+    /* What the wall draws, plus the groups themselves.
+     *
+     * The drawn list has the groups folded away and their displacement carried
+     * by the members, which is what the frame wants — reading the tile's own
+     * stack instead meant a layer inside a group was not in the array at all,
+     * so picking one showed neither frame nor ghost.
+     *
+     * The groups are added back because each is a row that can be picked, and
+     * picking one has to put a frame on it. Their own coordinates are already
+     * the ones a frame wants; a group inside a group would want its parent's
+     * displacement folded in too, and nothing here makes one of those yet. */
+    const real = app.manifest.tiles[tileId]?.layers ?? [];
+    const groups = [...walkLayers(real)].filter((l) => l.kind === "group");
+    return [...drawnLayers(app.manifest, tileId), ...groups].filter(
+      (l) => !l.hidden && !(l.kind === "image" && !l.asset),
     );
   };
 
@@ -114,28 +141,43 @@
     if (ghost) canvas?.remove(ghost);
     stand = ghost = undefined;
     twoAxes = false;
+    // Asked for outright: the canvas no longer repaints itself on a remove
+    // (see renderOnAddRemove where it is built), and without this the frame
+    // stays on screen as a ghost until something else happens to paint.
+    canvas?.requestRenderAll();
   }
 
-  /** The layer as the Layout asks for it on this tile — this tile's picture or
-   *  class filled in, but without what the tile chose about where it sits.
-   *  What a Frame is measured against. */
+  /** The layer as this tile draws it — what the stand-in has to match.
+   *
+   *  Only a caption still needs filling in, and only because a "{{id}}"
+   *  placeholder resolves against the tile: a box is measured from the words in
+   *  it, and one sized off the placeholder sat at a fifth of the width over a
+   *  caption that fills the tile. A picture and a class icon carry their own
+   *  answers on the layer now. */
   function atRest(tileId: string, layerId: string): Layer | undefined {
     const layer = placeableOn(tileId).find((l) => l.id === layerId);
     if (!layer) return undefined;
-    const tile = app.manifest.tiles[tileId];
-    /* This tile's own wording, not the Layout's. A caption's box is measured
-       from the words in it, so a frame sized off the default sat at a fifth of
-       the width over a caption that fills the tile. */
-    if (layer.kind === "text") return { ...layer, text: layerText(tile?.text ?? {}, layer, tileId) };
+    if (layer.kind === "text") return { ...layer, text: layerText(layer, tileId) };
     if (layer.kind !== "image") return layer;
-    const asset = layerAsset(tile?.swap ?? {}, layer);
-    return asset ? { ...layer, asset } : undefined;
+    // "" is a real answer — no picture on this tile — and there is nothing to
+    // put a frame around.
+    return layer.asset ? layer : undefined;
   }
 
   /** Puts the stand-in — and, for a picture, the ghost — on what this tile
    *  currently shows for that layer. */
   async function frameAt(tileId: string, layerId: string) {
     if (!canvas || !app.deps) return;
+    /* Which call this is. Building a frame awaits a picture off disk, and two
+       picks in quick succession resolve in decode order rather than click
+       order: the first one to finish last tore down the second one's frame,
+       put up its own, and pointed `target` at a layer nobody had selected —
+       so the panel showed one layer and the frame wrote to another. Worse when
+       the layer was deleted in between: nothing checked, and a transparent
+       `keep` rectangle stayed over that cell for the rest of the session,
+       swallowing every click on the tile underneath. */
+    const mine = ++frameGen;
+    const stale = () => mine !== frameGen || !canvas || app.selected !== layerId;
     const ids = visibleIds();
     const base = atRest(tileId, layerId);
     const index = ids.indexOf(tileId);
@@ -150,7 +192,10 @@
       return;
     }
 
-    const shown = framed(base, tileFrame(tileId, layerId));
+    /* The layer as it stands, with nothing added on top: a Frame used to be the
+       tile's private offset from a shared design, and the layer on this tile is
+       the placement now. */
+    const shown = base;
     const cell = cellAt(index);
     const size = layerSize(shown);
     const width = size.w * TILE_W;
@@ -168,6 +213,8 @@
        ponytail: if a masked caption turns out to need one, extend ghostImage
        in scene.ts — the renderer's reading of a layer lives there, not here. */
     const drawn = shown.kind === "image" ? await ghostImage(shown, app.deps) : undefined;
+    // Overtaken while that was decoding: put nothing up, take nothing down.
+    if (stale()) return;
     const height = drawn ? width * ((drawn.height || 1) / (drawn.width || 1)) : size.h * TILE_H;
 
     dropFrameTools();
@@ -204,10 +251,15 @@
        stands for instead of clearing the choice — the tool reads that same
        field to know what to place, and an empty write would take its own frame
        down. */
-    Object.assign(stand, { framing: true, keep: true, layerId });
+    /* `tileId` as well as the layer: applyTransform resolves the stack from the
+       object's own tile, and a stand-in without one would fall back to a scan
+       of the wall and write the gesture onto whichever tile matched first. */
+    Object.assign(stand, { framing: true, keep: true, layerId, tileId });
     canvas.add(stand);
     canvas.setActiveObject(stand);
     target = { tileId, layerId };
+    // Measured against this state; see framedAt.
+    framedAt = app.version;
     canvas.requestRenderAll();
   }
 
@@ -224,34 +276,55 @@
     ghost.setCoords();
   }
 
-  /** What the tile chose, as a difference from what the Layout asked for. */
+  /** Where the gesture left the layer, written onto the layer itself.
+   *
+   *  It used to write a Frame: the tile's departure from where a Layout had
+   *  put the layer, kept in a record of its own and added back at draw time.
+   *  There is no Layout to depart from, the layer on this tile is the placement,
+   *  and the record stopped being read when the stamps came apart — so the tool
+   *  went on moving the stand-in over a picture that never followed. Same patch
+   *  and same two functions the direct drag uses now, which is what makes the
+   *  two agree. */
   async function writeFrame() {
     if (!stand || !target) return;
     const base = atRest(target.tileId, target.layerId);
     if (!base) return;
     const ids = visibleIds();
     const back = readBack(stand as Tagged, ids.length, ids.indexOf(target.tileId));
-    /* The zoom measured against the layer's own resting width, whichever field
-       that comes out of — one factor that means the same thing to a picture, an
-       icon and a caption, which each keep their size differently.
-       Not readBack's `scale`: that goes through getScaledWidth, which counts
-       the frame's own 1px stroke. A plain drag then wrote a zoom of 1.003 on a
-       half-tile picture and 1.011 on a caption, and every nudge multiplied it
-       again — a picture that grew a little each time it was moved. */
-    const rest = layerSize(base);
-    const width = ((stand.width ?? 0) * (stand.scaleX ?? 1)) / TILE_W;
-    const height = ((stand.height ?? 0) * (stand.scaleY ?? 1)) / TILE_H;
-    await setTileFrame(target.tileId, target.layerId, {
-      x: back.x - base.x,
-      y: back.y - base.y,
-      z: rest.w ? width / rest.w : 1,
-      a: back.rotation - base.rotation,
-      /* The second axis, and only where there is one to have. Written even when
-         it equals the first, so a shape stretched and then squared back stores
-         the square rather than an absent field the reader would fill in from
-         the width. */
-      ...(freeScale(base) ? { zh: rest.h ? height / rest.h : 1 } : {}),
-    });
+    const patch = {
+      ...back,
+      /* Measured off the stand-in's own box rather than taken from readBack,
+         which goes through getScaledWidth and counts the frame's 1px stroke. A
+         plain drag otherwise wrote 1.003 of the width on a half-tile picture
+         and multiplied it again on every nudge — a picture that grew a little
+         each time it was moved. */
+      scale: ((stand.width ?? 0) * (stand.scaleX ?? 1)) / TILE_W,
+      scaleH: ((stand.height ?? 0) * (stand.scaleY ?? 1)) / TILE_H,
+      /* The stand-in is a rectangle and has no crop of its own to report, and
+         resize() drops a picture's crop when the patch carries none. Handed
+         back what the layer already had, so moving a trimmed picture does not
+         untrim it. */
+      crop: base.kind === "image" ? base.crop : undefined,
+      /* The two above are the size the layer should end up at, measured off the
+         frame the hand let go of — not a factor to apply to what it has. The
+         stand-in keeps the scale of the gesture that just ended, so a factor
+         read from it lands again on the next write and again on the one after:
+         the frame grew once and the shape grew every time it was touched. */
+      absolute: true,
+    };
+    const targets = bulkTargets(target.layerId);
+    /* Structural even for a plain move, where a direct drag skips it. There the
+       canvas already shows the result because the object the hand moved is the
+       layer. Here the hand moved the stand-in — a transparent rectangle — and
+       the layer it stands for is a different object that nothing redraws
+       without a rebuild. So the frame ended up in the new place with the
+       picture still in the old one, and stayed that way until anything else
+       bumped the document: a lock, a hide, a field in the panel. With several
+       tiles picked the bulk path bumps it regardless, which is the difference
+       the report led with. */
+    await (targets.length > 1
+      ? applyTransformBulk(stand as Tagged, patch, targets)
+      : applyTransform(stand as Tagged, patch, true));
   }
 
   /* The frame follows the choice on the right: one tile picked, one of its live
@@ -263,16 +336,38 @@
      clause only puts it back when something else did, which is the case when
      the tile it stood on stops existing. */
   $effect(() => {
-    if (!framing) {
-      target = null;
-      dropFrameTools();
-      canvas?.requestRenderAll();
-      return;
-    }
     void app.version;
-    const tile = app.selectedTiles.length === 1 ? app.selectedTiles[0] : "";
+    /* The tile the layer was picked on, not the tile selection. Those are two
+       different things: clicking a layer's row sets the pair (id, tile) and
+       leaves the wall's tile selection alone, so asking the selection meant the
+       frame stayed away until the tile was picked a second time — once in the
+       list to reach the row, once on the wall to satisfy this. The pair is the
+       honest source; it is what every write on this layer already uses. */
+    const tile = app.selectedTile;
     const layerId = app.selected;
-    if (!tile || !layerId || !placeableOn(tile).some((l) => l.id === layerId)) {
+    /* No mode to switch on any more: the frame appears by itself, on exactly
+       the layers whose own object cannot serve as a handle. A class icon and a
+       masked layer are drawn as a whole-tile bake, so their handles would sit
+       at the corners of the cell rather than at the edges of the layer — every
+       other layer is its own handle and is dragged directly. isFlattened is the
+       renderer's own rule, read from here so the two cannot drift apart. */
+    const own = placeableOn(tile);
+    const picked = own.find((l) => l.id === layerId);
+    /* A group is the other kind with no object of its own: it is a
+       displacement and nothing more, dissolved into its members before a
+       single thing is drawn. So it needs the same frame a bake does, and
+       dragging it writes the group's own x/y — which is exactly how its
+       members all move by the same amount. */
+    /* A padlock takes a layer out of reach, and the frame is a way to reach it
+       — the one the lock never covered, because the stand-in is built here and
+       carries none of the object's own flags. Locking a class icon left its
+       violet frame standing and fully draggable. `layoutId` goes with it for
+       the reason the tile objects give: a Layout owns that placement and would
+       throw the drag away on the next update. */
+    const held = !!picked && (!!picked.locked || !!picked.layoutId);
+    const needsFrame =
+      !!picked && !held && (isFlattened(picked, own) || picked.kind === "group");
+    if (!tile || !layerId || !needsFrame) {
       if (target) {
         target = null;
         dropFrameTools();
@@ -283,6 +378,7 @@
     if (
       target?.tileId !== tile ||
       target.layerId !== layerId ||
+      framedAt !== app.version ||
       !(canvas && stand && canvas.getObjects().includes(stand))
     )
       /* Reported, not dropped. This awaits a picture off disk, and both
@@ -334,6 +430,9 @@
       (canvas.getWidth() - grid.w * z) / 2,
       (canvas.getHeight() - grid.h * z) / 2,
     ]);
+    // Third of the three viewport changes that have to ask for their own frame
+    // — see the note on the wheel handler.
+    canvas.requestRenderAll();
     zoom = z;
   }
 
@@ -354,6 +453,17 @@
    * per event, each drawing a state already several changes stale. */
   let queued = false;
 
+  /** A build that was owed while the hand was still on an object. Cleared by
+   *  mouse:up, which asks for it again. */
+  let deferred = false;
+
+  /** Fabric's own marker for "a drag, scale or rotate is happening right now".
+   *  Read rather than tracked here: the canvas is the one that knows, and a
+   *  flag of ours would have to be kept in step with every way a gesture can
+   *  end, including the ones that never reach mouse:up. */
+  const midGesture = () =>
+    !!(canvas as unknown as { _currentTransform?: unknown } | undefined)?._currentTransform;
+
   /* --- Redrawing one tile instead of the wall.
    *
    * A full build costs about three milliseconds a tile and runs on every edit,
@@ -361,8 +471,8 @@
    * a caption moved. Almost always one tile changed and two hundred and ninety
    * nine were redrawn identically.
    *
-   * Which tile that is gets answered by comparing what is drawn against what
-   * should be (wallPrint/soleTileChange), rather than by asking forty mutating
+   * Which tiles those are gets answered by comparing what is drawn against what
+   * should be (wallPrint/tilesChanged), rather than by asking forty mutating
    * functions to declare what they touched. A mutation nobody remembered to
    * annotate cannot go wrong, because the comparison never asked it. The rule
    * that makes the comparison sound, and the reasons the answer is a timid
@@ -380,6 +490,25 @@
         queued = false;
         const version = app.version;
         if (!canvas || !deps) return;
+        /* Not under a live gesture. A rebuild takes every object off the canvas
+         * and puts new ones back, and Fabric is holding a reference to the one
+         * being dragged: it goes on moving an object that is no longer on the
+         * canvas, and the drop is written to nothing. The layer stays where it
+         * was, no undo step appears, and the wall keeps whatever it painted
+         * last — which is how "I moved it and it only took effect once I
+         * clicked something else" comes about, because the click was a rebuild
+         * that finally drew the truth.
+         *
+         * A plain drag is what makes this reachable: it does not bump the
+         * version, so nothing here notices the model moved under the build,
+         * and there is no second pass to correct it.
+         *
+         * `built` is deliberately left alone, so the effect still counts this
+         * version as owed; mouse:up asks again once the hand has let go. */
+        if (midGesture()) {
+          deferred = true;
+          return;
+        }
         // Fit *before* building, not after: the tile count comes from the
         // manifest, so the viewport can be right from the first frame instead of
         // showing the wall at 100% and then visibly snapping down to fit.
@@ -393,14 +522,18 @@
           const view = $state.snapshot(wall());
           const m = $state.snapshot(app.manifest);
           const print = wallPrint(view, m);
-          const one = soleTileChange(drawn, print);
+          const few = tilesChanged(drawn, print);
           /* Forgotten before the build, not after it: a build that throws
              leaves the canvas in a state nothing here can describe, and the
              next pass has to start from a full one rather than trust a
              fingerprint for a wall that was never finished. */
           drawn = null;
-          if (one) await rebuildTile(canvas, one, view, m, deps, true);
-          else await buildGrid(canvas, view, m, deps, true);
+          if (few && few.length <= REDRAW_MAX) {
+            // Painted once at the end rather than once per tile — see the note
+            // on rebuildTile's `render`, and the numbers that forced it.
+            for (const id of few) await rebuildTile(canvas, id, view, m, deps, true, false);
+            canvas.renderAll();
+          } else await buildGrid(canvas, view, m, deps, true);
           drawn = print;
         } finally {
           rebuilding = false;
@@ -425,6 +558,23 @@
     const version = app.version;
     const deps = app.deps;
     if (canvas && deps && version !== built) void rebuild(deps);
+  });
+
+  /* A gesture that asked for no rebuild moved the canvas without moving the
+     record of what the canvas holds. Brought up to date rather than thrown
+     away: the object the hand moved *is* the layer and Fabric put it exactly
+     where the write says, so the new fingerprint is known here and exact —
+     where discarding it forced the next structural edit to rebuild all
+     forty-four tiles (measured: 412ms against 35ms for the one tile that
+     actually changed).
+     Left stale, the fingerprint describes the wall before the drag, so an undo
+     of that drag restores precisely what it remembers, the comparison answers
+     "nothing changed", and the screen keeps the dragged position while the
+     model and the file hold the old one. */
+  $effect(() => {
+    if (!app.unprinted) return;
+    app.unprinted = false;
+    if (drawn && canvas) drawn = wallPrint($state.snapshot(wall()), $state.snapshot(app.manifest));
   });
 
   /* Which tiles a selected wall picture would actually be baked into. Keyed on
@@ -458,15 +608,51 @@
    * in the sidebar handed it straight back: anything a Layout owns could be
    * dragged on the wall, and "Stempel aktualisieren" then threw half of those
    * nudges away and kept the other half. */
+  /** Is this object the selected layer *on the selected tile*?
+   *
+   *  The id alone is not the question. A design dissolved onto forty-four tiles
+   *  puts the same layer id on all of them, so matching by id made every copy
+   *  grabbable at once and handed the active handles to whichever one Fabric
+   *  listed first — a caption dragged on tile 40 while the pointer was on
+   *  tile 12. A wall-spanning layer has no tile and answers "" on both sides. */
+  const isPick = (o: fabric.Object) =>
+    (o as Tagged).layerId === app.selected && ((o as Tagged).tileId ?? "") === app.selectedTile;
+
+  /** Whether the layer that is picked is locked, read off the document.
+   *
+   *  Every other object is inert regardless, so this is the one lock that
+   *  decides anything — which is why it is worth one lookup rather than a tag
+   *  on every object. The tag is written when the object is built and says
+   *  what was true then; a padlock clicked since does not reach it, and the
+   *  padlock is not a reason to rebuild a wall. */
+  function pickIsLocked() {
+    const own: Layer[] = app.selectedTile
+      ? drawnLayers(app.manifest, app.selectedTile)
+      : wall().gridLayers;
+    const l = own.find((x: Layer) => x.id === app.selected);
+    return !!l && (!!l.locked || !!l.layoutId);
+  }
+
   $effect(() => {
     if (!canvas) return;
-    const chosen = app.selected;
+    app.selected;
+    app.selectedTile;
     app.version;
     void building.then(() => {
       if (!canvas) return;
+      const held = pickIsLocked();
       for (const o of canvas.getObjects()) {
         const mine = (o as Tagged).layerId;
-        if (mine) o.evented = o.selectable = mine === chosen && !(o as Tagged).locked;
+        /* A baked layer has two things standing for it: the frame, and the
+           bake itself — which is tile-sized whatever the layer measures, so it
+           answered the mouse across the whole cell. Pressing anywhere in that
+           cell grabbed it instead of picking the tile, which killed tile
+           selection and the rubber band there; and its snap box *is* the cell,
+           so every stop on both axes sat at nought and any nudge shorter than
+           the snap distance was pulled back to no movement at all. The frame
+           is the handle for these, so the bake stops being one. */
+        const doubled = !!target && (o as { flattened?: boolean }).flattened;
+        if (mine) o.evented = o.selectable = isPick(o) && !held && !doubled;
       }
       // A rubber band would only ever catch the one grabbable object.
       canvas.selection = false;
@@ -478,12 +664,14 @@
    * every object and the id alone would not have changed. */
   $effect(() => {
     const id = app.selected;
+    app.selectedTile;
     app.version;
     if (!canvas) return;
     void building.then(() => {
       if (!canvas) return;
-      if ((canvas.getActiveObject() as Tagged | null)?.layerId === id) return;
-      const obj = id && canvas.getObjects().find((o) => (o as Tagged).layerId === id);
+      const live = canvas.getActiveObject();
+      if (live && isPick(live)) return;
+      const obj = id && canvas.getObjects().find(isPick);
       if (obj) canvas.setActiveObject(obj);
       else canvas.discardActiveObject();
       canvas.requestRenderAll();
@@ -497,6 +685,16 @@
       // A model with a single `scale` per image cannot store a stretch, so
       // corner handles must never produce one.
       uniformScaling: true,
+      /* Every add and remove asks Fabric for a repaint of its own, and a
+       * repaint of this wall is nearly its whole cost — 431 of 450ms at 301
+       * tiles. buildGrid and rebuildTile both paint deliberately when they are
+       * done, so those requests are pure duplication; they only stay invisible
+       * because Fabric defers them to the next frame and a single rebuild ends
+       * before one arrives. Redraw several tiles in a row, though, and the
+       * frames land between the awaits: eight tiles measured 3971ms with this
+       * on against 469ms with it off. Off, and the paint stays where the code
+       * puts it. */
+      renderOnAddRemove: false,
     });
     /* Dev-only handle, same reason as the one in main.ts: anything asking what
      * the canvas is actually showing — control positions, the viewport
@@ -525,6 +723,14 @@
       }
       const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, canvas!.getZoom() * 0.999 ** opt.e.deltaY));
       canvas!.zoomToPoint(new fabric.Point(opt.e.offsetX, opt.e.offsetY), next);
+      /* Asked for outright. Fabric hangs the repaint after a viewport change on
+         renderOnAddRemove, which is off here so that building a wall does not
+         ask for a frame per object — so a zoom moved the transform and
+         requested nothing, and the screen caught up only when some other event
+         happened to paint. Reported as "zoom only takes effect when I click
+         something else". See the test in incremental.browser.test.ts, which
+         pins that behaviour upstream. */
+      canvas!.requestRenderAll();
       zoom = next;
       opt.e.preventDefault();
       opt.e.stopPropagation();
@@ -582,6 +788,9 @@
       if (!(opt.e instanceof MouseEvent)) return;
       if (panning) {
         canvas!.relativePan(new fabric.Point(opt.e.clientX - last.x, opt.e.clientY - last.y));
+        // Same reason as the wheel above: a pan is a viewport change, and a
+        // viewport change asks for nothing while renderOnAddRemove is off.
+        canvas!.requestRenderAll();
         last = { x: opt.e.clientX, y: opt.e.clientY };
         return;
       }
@@ -614,6 +823,12 @@
       canvas!.requestRenderAll();
     });
     canvas.on("mouse:up", (opt) => {
+      /* The build the gesture was holding off. object:modified has already run
+         by now and written the drop, so this pass sees the finished model. */
+      if (deferred) {
+        deferred = false;
+        if (app.deps) void rebuild(app.deps);
+      }
       panning = false;
       canvas!.selection = false;
       const from = dragFrom;
@@ -698,10 +913,13 @@
           ctx.strokeStyle = "rgba(255, 196, 92, 1)";
           ctx.lineWidth = 3;
         } else if (picked.has(id)) {
-          ctx.fillStyle = "rgba(166, 133, 255, 0.22)";
-          ctx.fillRect(x, y, w, h);
+          /* Outline only. A wash over the whole cell sat on top of the artwork
+             the pick was made in order to judge — colours shifted, a gradient
+             read wrong, and the one tile you were looking at was the one you
+             could see least well. Thick enough to count across a wall of
+             forty-four at a glance. */
           ctx.strokeStyle = "rgba(203, 184, 255, 0.95)";
-          ctx.lineWidth = 2;
+          ctx.lineWidth = 3;
         } else {
           ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
           ctx.lineWidth = 1;
@@ -716,6 +934,35 @@
           ctx.lineWidth = 2;
         }
         ctx.strokeRect(x, y, w, h);
+      }
+
+      /* What a drag is about to reach on the *other* portraits. A gesture on
+         one tile is written to every picked tile carrying that layer, and until
+         now the only sign of that was the tile outline — which says "this tile
+         is picked", not "these layers will move". So a shape dragged on tile
+         two moved a shape on tile one with nothing having pointed at it.
+         The layers themselves are marked, faintly and dashed, on every picked
+         tile but the one under the hand: that one has Fabric's own handles and
+         a second mark on top of them is noise. */
+      const reach = pickedLayers();
+      if (reach.length && app.selectedTiles.length > 1) {
+        const targets = new Set(bulkTargets(app.selected));
+        ctx.setLineDash([4, 3]);
+        ctx.strokeStyle = "rgba(203, 184, 255, 0.55)";
+        ctx.lineWidth = 1;
+        for (const o of canvas!.getObjects()) {
+          const t = o as Tagged & { keep?: boolean };
+          if (t.keep || !t.layerId || !reach.includes(t.layerId)) continue;
+          if (!t.tileId || t.tileId === app.selectedTile || !targets.has(t.tileId)) continue;
+          const r = o.getBoundingRect();
+          ctx.strokeRect(
+            Math.round(r.left * vt[0] + vt[4]) + 0.5,
+            Math.round(r.top * vt[3] + vt[5]) + 0.5,
+            Math.round(r.width * vt[0]),
+            Math.round(r.height * vt[3]),
+          );
+        }
+        ctx.setLineDash([]);
       }
 
       /* Where a dragged wall picture has been pulled flush with the wall. Drawn
@@ -759,33 +1006,35 @@
 
     const pickedOnCanvas = (opt: { selected?: fabric.Object[]; target?: fabric.Object }) => {
       if (rebuilding) return;
-      selectLayer(((opt.selected?.[0] ?? opt.target) as Tagged | undefined)?.layerId ?? "");
+      // The tile comes off the object, so a click says which portrait it meant.
+      const picked = (opt.selected?.[0] ?? opt.target) as Tagged | undefined;
+      selectLayer(picked?.layerId ?? "", picked?.tileId ?? "");
     };
     canvas.on("selection:created", pickedOnCanvas);
     canvas.on("selection:updated", pickedOnCanvas);
     /* Clearing during a rebuild is Fabric dropping its active object, not the
      * user letting go of the layer — letting that through would silently
      * deselect on every structural edit. */
-    /* The frame belongs to the mode, not to the click. Fabric drops the
-       selection whenever a press lands on bare canvas, which in this mode is
-       most presses — so the violet box and its handles vanished under the hand
-       and had to be fetched back by clicking the tile again. It stays until the
-       mode is left. */
+    /* The frame belongs to the layer, not to the click. Fabric drops the
+       selection whenever a press lands on bare canvas, which here is most
+       presses — so the violet box and its handles vanished under the hand and
+       had to be fetched back by clicking the tile again. It stays as long as
+       the layer it belongs to is the chosen one. */
     canvas.on("selection:cleared", () => {
-      if (framing && stand && canvas!.getObjects().includes(stand)) {
+      if (stand && canvas!.getObjects().includes(stand)) {
         canvas!.setActiveObject(stand);
         canvas!.requestRenderAll();
       }
     });
 
     canvas.on("selection:cleared", () => {
-      /* Not while placing. There the chosen layer is what the tool acts on, and
-         a press on the wall is how the next tile is chosen — clearing it there
-         meant the frame died on the way to the tile it was being carried to,
+      /* Not while a frame is up. There the chosen layer is what the frame acts
+         on, and a press on the wall is how the next tile is chosen — clearing
+         it meant the frame died on the way to the tile it was being carried to,
          and forty-four portraits had to be picked out of the list one at a
-         time. Live copies keep the id of the layer they came from, so the same
-         choice lands on the next tile that carries the same Layout. */
-      if (!rebuilding && !framing) selectLayer("");
+         time. Layers dissolved across a wall keep one id, so the same choice
+         lands on the next tile carrying the same design. */
+      if (!rebuilding && !stand) selectLayer("");
     });
 
     /* Snapping a wall picture to the wall.
@@ -815,21 +1064,51 @@
         syncGhost();
       });
 
+    /** What a dragged object is pulled towards.
+     *
+     *  A wall picture answers to the grid it spans. A tile layer answers to its
+     *  own cell and to the other layers on that tile — the same pair the Layout
+     *  editor offers against the sheet and its siblings, which is what makes a
+     *  caption line up with the badge above it without either being measured.
+     *
+     *  Only its own tile's siblings: the wall is a grid of separate portraits
+     *  with gaps between them in the game, so pulling a caption onto something
+     *  three cells over would align it with a thing the player never sees
+     *  beside it. */
+    const snapTargets = (target: Tagged) => {
+      if (target.space === "grid") {
+        const grid = gridSize(visibleIds().length);
+        return [{ left: 0, top: 0, width: grid.w, height: grid.h }];
+      }
+      const at = cellAt(visibleIds().indexOf(target.tileId));
+      const cell = { left: at.x, top: at.y, width: TILE_W, height: TILE_H };
+      const siblings = canvas!
+        .getObjects()
+        .filter(
+          (o) =>
+            o !== target &&
+            (o as Tagged).tileId === target.tileId &&
+            (o as Tagged).space === "tile" &&
+            !(o as { keep?: boolean }).keep,
+        )
+        .map((o) => o.getBoundingRect());
+      return [cell, ...siblings];
+    };
+
     canvas.on("object:moving", (opt) => {
       guides = [];
       const target = opt.target as Tagged | undefined;
-      if (!target || target.space !== "grid" || (opt.e as MouseEvent | undefined)?.altKey) return;
+      if (!target?.layerId || (opt.e as MouseEvent | undefined)?.altKey) return;
 
       /* Fabric has written the new left/top but not refreshed the cached corner
        * coordinates getBoundingRect reads — without this the box is one
        * drag-step stale and the correction lands short. */
       target.setCoords();
-      const grid = gridSize(visibleIds().length);
       // Threshold in screen pixels, converted here, so the pull feels the same
       // however far the view is zoomed out — and the wall is usually far out.
       const snap = snapBox(
         target.getBoundingRect(),
-        [{ left: 0, top: 0, width: grid.w, height: grid.h }],
+        snapTargets(target),
         SNAP_PX / canvas!.getZoom(),
       );
       if (!snap.dx && !snap.dy) return;
@@ -847,16 +1126,31 @@
       guides = [];
       const target = opt.target as Tagged | undefined;
       const corner = opt.transform?.corner;
-      if (!target || !corner || target.space !== "grid") return;
+      if (!target?.layerId || !corner) return;
       if ((opt.e as MouseEvent | undefined)?.altKey) return;
-      const grid = gridSize(visibleIds().length);
+      /* Uniform for a wall picture, which carries one scale; a tile layer
+       * follows its own kind's rule — the same `freeScale` that decided which
+       * handles it was given in the first place. */
+      const layer = findLayer(app.manifest.tiles[target.tileId]?.layers ?? [], target.layerId);
       guides = snapScale(
         target,
         corner,
-        [{ left: 0, top: 0, width: grid.w, height: grid.h }],
+        snapTargets(target),
         SNAP_PX / canvas!.getZoom(),
-        true,
+        target.space === "grid" || !layer || !freeScale(layer),
       );
+    });
+
+    /* A caption's side handles resize its box instead of scaling it, which
+     * Fabric reports as its own event — so without this the one gesture that
+     * decides where a line wraps was the one gesture with no pull at all. */
+    canvas.on("object:resizing", (opt) => {
+      guides = [];
+      const target = opt.target as Tagged | undefined;
+      const corner = opt.transform?.corner;
+      if (!target?.layerId || !corner) return;
+      if ((opt.e as MouseEvent | undefined)?.altKey) return;
+      guides = snapWidth(target, corner, snapTargets(target), SNAP_PX / canvas!.getZoom());
     });
 
     const dropGuides = () => {
@@ -875,7 +1169,53 @@
       const obj = opt.target as Tagged | undefined;
       if (!obj?.layerId) return;
       const ids = visibleIds();
-      void applyTransform(obj, readBack(obj, ids.length, ids.indexOf(obj.tileId)));
+      /* A baked layer sits at its cell's origin at scale 1 whatever the model
+       * says, so reading its transform back would write 0,0 over a real
+       * placement — measuring the bake instead of the layer.
+       *
+       * It used to be refused outright here, which left the gesture half done:
+       * Fabric moves the object during the drag whatever this handler decides,
+       * so a refused drop left a class icon lying where it was dropped, with
+       * the model still holding the old position, until some later action
+       * rebuilt the tile and it jumped back. Reported as "the tile only
+       * updates once I do something else" — and on this document that is most
+       * of the wall, since a class icon is baked and 39 of 67 layers are one.
+       *
+       * The distance is readable even though the position is not: the bake
+       * starts at the cell's origin, so what it has moved away from that is
+       * exactly what the hand dragged. Written as a nudge, which is also why
+       * these keep no scale handles — the bake is tile-sized, and a factor
+       * read off it would mean nothing. */
+      if (obj.flattened) {
+        const at = cellAt(ids.indexOf(obj.tileId));
+        const dx = ((obj.left ?? 0) - at.x) / TILE_W;
+        const dy = ((obj.top ?? 0) - at.y) / TILE_H;
+        /* Back to the origin at once, not when the rebuild gets round to it.
+           The distance is read from there, so an object still carrying the last
+           gesture's offset hands that offset over again: 120 and then 80 more
+           came out as 320, and a picture walked off its tile in a few drags.
+           The rebuild does the same thing a moment later; doing it here as well
+           is what makes it true between two drags that arrive together. */
+        obj.set({ left: at.x, top: at.y });
+        obj.setCoords();
+        void nudgeLayer(obj, dx, dy);
+        return;
+      }
+      const patch = readBack(obj, ids.length, ids.indexOf(obj.tileId));
+      /* With several tiles picked, one drag places the layer on all of them —
+       * the wall's answer to what a Layout did by owning the design. A layer
+       * spanning the whole wall has no tile and no siblings to match. */
+      const targets = obj.tileId ? bulkTargets(obj.layerId) : [];
+      /* A plain move normally skips the rebuild, because the object the hand
+         moved is the layer and the canvas already shows the result. A cutter
+         breaks that: what changes on screen is the *other* layer's pixels, and
+         those are baked. Moving a mask left the frame in the new place with the
+         cut-out picture still in the old one, until anything else redrew the
+         tile — the same shape as the stand-in's fault, one object further on. */
+      const cuts = stencilIds(app.manifest.tiles[obj.tileId]?.layers ?? []).has(obj.layerId);
+      void (targets.length > 1
+        ? applyTransformBulk(obj, patch, targets)
+        : applyTransform(obj, patch, cuts || undefined));
     });
 
     const key = (e: KeyboardEvent, down: boolean) => {

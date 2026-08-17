@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { emptyManifest, newProject, projectOf } from "./model";
+import { emptyManifest, newProject, newTextLayer, projectOf } from "./model";
 
 /* The caches in project.ts hold promises, not values. A rejected one used to
  * stay cached, so one unlucky read became permanent — and because the render
@@ -42,6 +42,12 @@ writeTextFile.mockImplementation(async (path: string, text: string) => {
 });
 rename.mockImplementation(async (from: string, to: string) => {
   await tick();
+  /* Windows refuses these in a filename, and this mock used to take anything —
+   * so the two "set the damaged file aside" tests below passed while the code
+   * they pin could not run at all on the only platform this app ships on. A
+   * timestamp written as 10:03:11 has two of them. */
+  const name = to.slice(to.lastIndexOf("/") + 1);
+  if (/[<>:"|?*]/.test(name)) throw new Error(`invalid filename: ${name}`);
   const held = files.get(from);
   if (held === undefined) throw new Error(`not found: ${from}`);
   files.delete(from);
@@ -61,10 +67,13 @@ const {
   loadFingerprints,
   saveFingerprints,
   listSnapshots,
+  writeSnapshot,
   vaultedIds,
+  pruneVault,
   restoreTiles,
   classify,
   hashTiles,
+  snapshotKey,
   svgWithSize,
   importAsset,
 } = await import("./project");
@@ -183,10 +192,10 @@ describe("restoreTiles", () => {
 });
 
 describe("an SVG gets the size its viewBox already implies", () => {
-  /* Without absolute width/height on the root there is nothing for an <img> to
-   * measure, so the browser hands out the CSS default object size — 300×150 —
-   * and Fabric takes that as the picture's size. A class icon then arrives in
-   * the Layout at a number the file never said. */
+  /* Without absolute width/height on the root there is nothing for an image
+   * element to measure, so the browser hands out the CSS default object size —
+   * 300×150 — and Fabric takes that as the picture's size. A class icon then
+   * arrives in the Layout at a number the file never said. */
   it("copies the viewBox onto a root that carries no size", () => {
     const out = svgWithSize('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 48"><path/></svg>');
     expect(out).toContain('width="64"');
@@ -198,8 +207,9 @@ describe("an SVG gets the size its viewBox already implies", () => {
   });
 
   it("replaces a percentage rather than sitting beside it", () => {
-    // "100%" resolves against a containing block an <img> never provides, so it
-    // is no size at all — and left in place it would win, being first.
+    // "100%" resolves against a containing block an image element never
+    // provides, so it is no size at all — and left in place it would win,
+    // being first.
     const out = svgWithSize(`<svg width='100%' height='100%' viewBox="0 0 20 10"/>`)!;
     expect(out).not.toContain("100%");
     expect(out.match(/width=/g)).toHaveLength(1);
@@ -241,6 +251,60 @@ describe("an SVG gets the size its viewBox already implies", () => {
     // twice is still one file.
     expect(written[0][0]).toContain(name);
   });
+
+  it("does not drop one folder's write because another folder asked next", async () => {
+    /* Superseding is only true within one document. The queue was a single
+     * slot, so a save for folder A still waiting when a save for B arrived was
+     * dropped outright — and its promise resolved as though it had been
+     * written. One folder is open at a time today, so this is the mechanism
+     * that exists to stop a write going missing, going missing in exactly the
+     * case it is for. */
+    files.clear();
+    const a = { ...emptyManifest(), order: ["a"] };
+    const b = { ...emptyManifest(), order: ["b"] };
+    await Promise.all([saveManifest("/docs/A", a), saveManifest("/docs/B", b)]);
+
+    const written = [...files.entries()].filter(([k]) => k.endsWith("manifest.json"));
+    expect(written).toHaveLength(2);
+    expect(written.find(([k]) => k.includes("/A/"))?.[1]).toContain('"a"');
+    expect(written.find(([k]) => k.includes("/B/"))?.[1]).toContain('"b"');
+    expect([...files.keys()].some((k) => k.endsWith(".tmp"))).toBe(false);
+  });
+
+  it("keeps a snapshot's name in the language it was typed in", async () => {
+    /* The list reads a snapshot's display name back off its filename, so what
+     * the filename drops, the user sees dropped: `\w` without the u flag is
+     * ASCII, and "Vor dem Löschen" came back as "Vor dem L_schen". The app
+     * renamed what somebody typed, in the language they type in.
+     * What must still go is what Windows refuses, and `~`, which separates the
+     * project id from the name in that same filename. */
+    expect(snapshotKey("Vor dem Löschen")).toBe("Vor dem Löschen");
+    expect(snapshotKey("Änderung 2 – Ärger")).toBe("Änderung 2 – Ärger".replace("–", "_"));
+    expect(snapshotKey("a/b")).toBe("a_b");
+    expect(snapshotKey("a:b")).toBe("a_b");
+    expect(snapshotKey("id~name")).toBe("id_name");
+  });
+
+  it("takes the extension off the name, not off the path", async () => {
+    /* `lastIndexOf(".")` answers -1 when there is none and `slice(-1)` is the
+     * last character rather than "", so the ".png" fallback was dead: a file
+     * called `klasse` was stored as `<hash>e`. And when only a directory
+     * carried a dot, the "extension" swallowed a path separator and the write
+     * landed in a folder that does not exist. */
+    files.clear();
+    const platform = await import("./platform");
+    const written: string[] = [];
+    vi.mocked(platform.readFile).mockResolvedValue(new Uint8Array([1, 2, 3]));
+    vi.mocked(platform.writeFile).mockImplementation(async (path) => {
+      written.push(String(path));
+    });
+
+    expect(await importAsset("/docs/FaceTexture", "C:/icons/klasse")).toMatch(/\.png$/);
+    expect(await importAsset("/docs/FaceTexture", "C:\\my.icons\\klasse")).toMatch(/\.png$/);
+    expect(await importAsset("/docs/FaceTexture", "C:/my.icons/face.PNG")).toMatch(/\.png$/);
+    // Nothing built a path with a separator inside the asset's own name.
+    for (const p of written) expect(p.split("assets/")[1]).not.toMatch(/[\\/]/);
+  });
 });
 
 describe("loadManifest lines the manifest up with the folder", () => {
@@ -258,6 +322,34 @@ describe("loadManifest lines the manifest up with the folder", () => {
     for (const id of ["a", "b", "c"]) m.tiles[id] = { base: null, layers: [], text: {} };
     return JSON.stringify(m);
   };
+
+  it("copies an older document aside before this build can write over it", async () => {
+    /* The only way back from a migration. It runs on open and the first edit
+     * saves the new shape, so without this the v7 document is gone one
+     * keystroke later — undo lives in memory and starts empty, and snapshots
+     * re-run the same migration when they are read. */
+    files.clear();
+    const platform = await import("./platform");
+    const old = { version: 7, projects: [], tiles: {}, layouts: [{ id: "L1", name: "Meins" }] };
+    const text = JSON.stringify(old);
+    vi.mocked(platform.readTextFile).mockResolvedValueOnce(text);
+
+    const { manifest: m, migrated } = await loadManifest("/docs/FaceTexture", []);
+
+    expect(m.version).toBe(8);
+    expect(migrated).toEqual({ from: 7, backup: "manifest.v7.bak.json" });
+    // Byte for byte what was on disk, not the migrated shape.
+    expect(files.get("/docs/FaceTexture/../FaceTexture.tessera/manifest.v7.bak.json")).toBe(text);
+  });
+
+  it("keeps the first backup and says nothing on an already-current document", async () => {
+    files.clear();
+    const platform = await import("./platform");
+    vi.mocked(platform.readTextFile).mockResolvedValueOnce(stored());
+    const { migrated } = await loadManifest("/docs/FaceTexture", ["a"]);
+    expect(migrated).toBeNull();
+    expect([...files.keys()].some((k) => k.includes(".bak.json"))).toBe(false);
+  });
 
   it("drops tiles the folder no longer has from grid, shelf and drawers", async () => {
     const platform = await import("./platform");
@@ -277,16 +369,20 @@ describe("loadManifest lines the manifest up with the folder", () => {
     files.clear();
     const platform = await import("./platform");
     const dressed = JSON.parse(stored());
-    dressed.tiles.b.text = { L1: "Elani" };
+    // Work is layers now. A tile's wording record was a second way to carry
+    // some, and it went with the design that owned it.
+    dressed.tiles.b.layers = [{ ...newTextLayer(), id: "L1", text: "Elani" }];
     vi.mocked(platform.readTextFile).mockResolvedValueOnce(JSON.stringify(dressed));
 
     const { lost, snapshot } = await loadManifest("/docs/FaceTexture", ["a", "c"]);
     expect(lost).toEqual(["b"]);
     const written = [...files.keys()].find((k) => k.includes("/snapshots/"));
     expect(written).toContain(snapshot.replace(/:/g, "_"));
-    // The un-pruned document: the tile is in there with its wording, which is
+    // The un-pruned document: the tile is in there with its caption, which is
     // exactly what the prune is about to take away.
-    expect(JSON.parse(files.get(written!)!).manifest.tiles.b.text).toEqual({ L1: "Elani" });
+    const kept = JSON.parse(files.get(written!)!).manifest.tiles.b.layers;
+    expect(kept).toHaveLength(1);
+    expect(kept[0].text).toBe("Elani");
   });
 
   it("writes no snapshot when nothing of value goes", async () => {
@@ -332,6 +428,61 @@ describe("a folder that will not open is not the same as an empty one", () => {
     await expect(vaultedIds("/docs/FaceTexture")).rejects.toThrow("locked");
   });
 
+  it("does not empty the vault because the game folder read empty", async () => {
+    /* pruneVault deletes every backup whose portrait is no longer in the
+     * folder, off one readDir, on every open, unattended. The vault is the only
+     * copy of what the game shipped once Tessera has written over a file, and
+     * `remove` is not a step any undo reaches.
+     *
+     * An empty listing is the case where that reasoning breaks: a folder that
+     * reads empty says nothing about which characters exist — a fresh install
+     * before anyone has logged in, a listing the OS refused, a sync client that
+     * has not brought the files down yet. Forty-four originals is not a
+     * conclusion to draw from zero portraits. */
+    const platform = await import("./platform");
+    const readDir = vi.mocked(platform.readDir);
+    const remove = vi.mocked(platform.remove);
+    remove.mockClear();
+    exists.mockImplementation(async () => true);
+    readDir.mockResolvedValueOnce([
+      { name: "40000000011240606.bmp", isFile: true },
+      { name: "40000000011311807.bmp", isFile: true },
+    ] as never);
+
+    expect(await pruneVault("/docs/FaceTexture", [])).toBe(2);
+    expect(remove).not.toHaveBeenCalled();
+    /* The listing above is still queued, because nothing read it — which is
+     * the result. Put back rather than left, or the next test gets a vault
+     * listing where it queued a failure. */
+    readDir.mockReset();
+    readDir.mockResolvedValue([]);
+  });
+
+  it("keeps the vault when the folder came back missing most of it", async () => {
+    /* The case the empty-listing guard did not cover, and the likelier one: a
+     * sync client or an antivirus that has three of forty-four files, not
+     * none. Pruning on that listing deletes forty-one pristine originals. */
+    const platform = await import("./platform");
+    const readDir = vi.mocked(platform.readDir);
+    const remove = vi.mocked(platform.remove);
+    remove.mockClear();
+    exists.mockImplementation(async () => true);
+    const held = ["a", "b", "c", "d", "e", "f"];
+    readDir.mockResolvedValueOnce(held.map((id) => ({ name: `${id}.bmp`, isFile: true })) as never);
+
+    // Two of six still listed: four would go, which is more than half.
+    expect(await pruneVault("/docs/FaceTexture", ["a", "b"])).toBe(4);
+    expect(remove).not.toHaveBeenCalled();
+
+    // One missing out of six is an ordinary deletion, and is swept.
+    readDir.mockResolvedValueOnce(held.map((id) => ({ name: `${id}.bmp`, isFile: true })) as never);
+    expect(await pruneVault("/docs/FaceTexture", held.slice(1))).toBe(0);
+    expect(remove).toHaveBeenCalledTimes(1);
+
+    readDir.mockReset();
+    readDir.mockResolvedValue([]);
+  });
+
   it("draws the same line for the snapshot list", async () => {
     const platform = await import("./platform");
     const readDir = vi.mocked(platform.readDir);
@@ -359,6 +510,25 @@ describe("fingerprints survive a half-written file, and say so if they did not",
     await saveFingerprints("/docs/FaceTexture", { a: { original: "aaa" } });
     expect(files.get(path)).toContain("aaa");
     expect([...files.keys()].some((k) => k.endsWith(".tmp"))).toBe(false);
+    expect(rename).toHaveBeenCalled();
+  });
+
+  it("writes a snapshot through a temp file too", async () => {
+    /* A snapshot is what the app offers as the way back from the two actions
+     * that cannot be undone, and this was the one write here that truncated its
+     * target first. A power cut during the "Before write" taken on every save
+     * to the game leaves half a file that listSnapshots still offers and
+     * readSnapshot throws on — and unlike a damaged manifest, nothing sets a
+     * damaged snapshot aside. */
+    files.clear();
+    rename.mockClear();
+    await writeSnapshot(
+      "/docs/FaceTexture",
+      { name: "Before write", projectId: "p1" },
+      { manifest: emptyManifest(), prints: {} },
+    );
+    expect([...files.keys()].some((k) => k.endsWith(".tmp"))).toBe(false);
+    expect([...files.keys()].some((k) => k.includes("Before write"))).toBe(true);
     expect(rename).toHaveBeenCalled();
   });
 
