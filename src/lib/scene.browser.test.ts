@@ -562,6 +562,114 @@ describe("export matches what the editor shows", () => {
   });
 });
 
+describe("blend modes", () => {
+  /** Mid-grey under, red over — a pair whose product is nothing like either of
+   *  them, so "multiply happened" and "the top layer simply drew" cannot be
+   *  confused. Normal stacking leaves 255,0,0 here; multiplying leaves 128,0,0. */
+  const stacked = (m: Manifest, id: string, extra: Partial<ImageLayer> = {}) => {
+    const under = newImageLayer("block:#808080");
+    under.scale = 0.9;
+    const over = newImageLayer("block:#ff0000");
+    over.scale = 0.5;
+    Object.assign(over, extra);
+    m.tiles[id].layers.push(under, over);
+    return over;
+  };
+
+  it("mixes a layer with what is under it in the tile", async () => {
+    const m = manifest(1);
+    const [id] = order(m);
+    stacked(m, id, { blend: "multiply" });
+
+    const [r, g, b] = pixel(
+      (await renderTiles(view(m), m, testDeps)).get(id)!,
+      TILE_W / 2,
+      TILE_H / 2,
+    );
+    expect(Math.abs(r - 128)).toBeLessThanOrEqual(2);
+    expect(g).toBe(0);
+    expect(b).toBe(0);
+  });
+
+  it("leaves a layer alone when no mode is set", async () => {
+    /* The other half of the pair: without it, a test that only checks the
+     * multiplied value cannot tell a working mode from a renderer that darkens
+     * everything. */
+    const m = manifest(1);
+    const [id] = order(m);
+    stacked(m, id);
+
+    const [r] = pixel((await renderTiles(view(m), m, testDeps)).get(id)!, TILE_W / 2, TILE_H / 2);
+    expect(r).toBe(255);
+  });
+
+  it("still mixes when the layer is baked to pixels first", async () => {
+    /* A masked layer is rasterised onto a transparent canvas of its own before
+     * it reaches the cell. Setting the mode on the inner draw would mix it with
+     * that emptiness — nothing — and the wall would show plain stacking. This
+     * is the test that says the mode is set on the object that lands on the
+     * tile. */
+    const m = manifest(1);
+    const [id] = order(m);
+    const hole = newShapeLayer("ellipse");
+    hole.id = "cutter";
+    hole.w = hole.h = 0.4;
+    m.tiles[id].layers.push(hole);
+    stacked(m, id, { blend: "multiply", maskId: "cutter" });
+
+    const [r, g, b] = pixel(
+      (await renderTiles(view(m), m, testDeps)).get(id)!,
+      TILE_W / 2,
+      TILE_H / 2,
+    );
+    expect(Math.abs(r - 128)).toBeLessThanOrEqual(2);
+    expect(g).toBe(0);
+    expect(b).toBe(0);
+  });
+
+  it("comes out of the export the way the editor drew it", async () => {
+    /* Two render paths meet here: mixing depends on what has already been drawn,
+     * so a ground the export canvas lacked — or objects added in a different
+     * order — would show up as a different colour rather than as an error. The
+     * only way to know is to compare the pixels. */
+    const m = manifest(4);
+    const [id] = order(m);
+    stacked(m, id, { blend: "multiply" });
+
+    const exported = (await renderTiles(view(m), m, testDeps)).get(id)!;
+
+    const grid = gridSize(4);
+    const editor = new fabric.Canvas(undefined, {
+      width: grid.w,
+      height: grid.h,
+      enableRetinaScaling: false,
+      backgroundColor: "#17171a",
+    });
+    let shown: Uint8ClampedArray;
+    try {
+      await buildGrid(editor, view(m), m, testDeps, true);
+      editor.renderAll();
+      const at = cellAt(0);
+      shown = editor.getElement().getContext("2d")!.getImageData(at.x, at.y, TILE_W, TILE_H).data;
+    } finally {
+      await editor.dispose();
+    }
+
+    let differing = 0;
+    for (let i = 0; i < TILE_W * TILE_H; i++) {
+      const [r, g, b] = pixel(exported, i % TILE_W, Math.floor(i / TILE_W));
+      const o = i * 4;
+      if (
+        Math.abs(r - shown[o]) > 1 ||
+        Math.abs(g - shown[o + 1]) > 1 ||
+        Math.abs(b - shown[o + 2]) > 1
+      )
+        differing++;
+    }
+    expect(differing).toBe(0);
+  });
+});
+
 describe("a mask on a tile", () => {
   it("ignores a maskId whose shape is not on the tile", async () => {
     /* A cut needs both halves. syncLiveLayers sends the cutter along with the

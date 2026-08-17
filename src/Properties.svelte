@@ -106,6 +106,32 @@
    *  Exactly 360 stays 360: it is where the slider's own drag ends, and folding
    *  it to 0 snapped the knob back to the far left mid-gesture. */
   const turn = (deg: number) => (deg === 360 ? 360 : ((deg % 360) + 360) % 360);
+
+  /** Every mixing mode a canvas has, in the browser's own words, with a reading
+   *  name beside each. The plain name is what the rest of the world calls the
+   *  mode — "Multiply", not "source-over" — while the value is what actually
+   *  reaches `globalCompositeOperation`, so nothing has to be translated on the
+   *  way to the wall or back off the disk.
+   *
+   *  Ordered the way an image editor orders them: stacking first, then the ones
+   *  that darken, then the ones that lighten, then the odd ones out, and the
+   *  four that take one part of a colour from the layer and the rest from
+   *  underneath. */
+  const BLENDS: [GlobalCompositeOperation, string][] = [
+    ["source-over", "Normal"],
+    ["multiply", "Multiply"],
+    ["darken", "Darken"],
+    ["screen", "Screen"],
+    ["lighten", "Lighten"],
+    ["color-dodge", "Colour dodge"],
+    ["overlay", "Overlay"],
+    ["hard-light", "Hard light"],
+    ["difference", "Difference"],
+    ["hue", "Hue"],
+    ["saturation", "Saturation"],
+    ["color", "Colour"],
+    ["luminosity", "Luminosity"],
+  ];
 </script>
 
 <!-- Named for the layer rather than for the panel. "Properties" over a list of
@@ -685,6 +711,24 @@
   />
   {@render amount("opacity", layer.opacity * 100, (n) => n / 100, 0, 100, "%")}
 </label>
+
+<!-- How the layer is mixed with what lies under it in the tile — the portrait
+     and any layer further down at once, since those are the same pixels.
+     Not for a group: it has no object on the canvas to mix, only a shift it
+     hands its members. -->
+{#if layer.kind !== "group"}
+  <label class="field">
+    <span>Blend</span>
+    <select
+      value={layer.blend ?? "source-over"}
+      onchange={(e) => set("blend", e.currentTarget.value)}
+    >
+      {#each BLENDS as [mode, label] (mode)}
+        <option value={mode}>{label}</option>
+      {/each}
+    </select>
+  </label>
+{/if}
 
 <!-- The typed twin of a swatch. The native picker has sliders and no text
      field, so a colour from a palette had to be matched by eye. Accepts

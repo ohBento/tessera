@@ -178,6 +178,20 @@ describe("deciding whether one tile is enough", () => {
     expect(tilesChanged(before, print(m))).toEqual([a]);
   });
 
+  it("counts a change of blend mode as a change", () => {
+    /* The fingerprint has to describe what is drawn. A mode is not a flag about
+       where you are in the work — it decides the colour of every pixel the
+       layer covers — so a tile that changed one has to be rebuilt. Left out, the
+       dropdown would write the field and the wall would go on showing the old
+       mixing until something else forced a redraw. */
+    const m = dressed(9);
+    const [a] = order(m);
+    const before = print(m);
+
+    m.tiles[a].layers[0].blend = "multiply";
+    expect(tilesChanged(before, print(m))).toEqual([a]);
+  });
+
   it("refuses when two tiles changed", () => {
     const m = dressed(9);
     const before = print(m);

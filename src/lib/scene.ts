@@ -1376,6 +1376,8 @@ export async function buildGrid(
   for (const l of wall.gridLayers) {
     if (l.hidden || l.kind !== "image" || l.space !== "grid") continue;
     const obj = await imageObject(l, deps, { w: grid.w, h: grid.h, x: 0, y: 0 });
+    // Same field, one layer up: this one meets the portraits themselves.
+    if (l.blend) obj.globalCompositeOperation = l.blend;
     if (interactive) makeInteractive(obj, l, false);
     else obj.selectable = obj.evented = false;
     Object.assign(obj, { layerId: l.id, tileId: "", space: "grid", locked: !!l.locked });
@@ -1637,6 +1639,13 @@ async function tileLayerObjects(
       // The cutter's own pixels are not the point — the hole it makes in
       // something else is. It is here to be grabbed, not to be seen.
       if (stencil) obj.opacity = 0;
+      /* Set on the object that lands on the wall, not inside the layer's own
+         draw. A mask or a class icon is rasterised onto a transparent canvas of
+         its own first, and a mix against nothing is not a mix — the mode has to
+         meet the portrait, which only happens here, where the finished object
+         is composited into the cell. One line covers every kind and the baked
+         ones with it. */
+      if (l.blend) obj.globalCompositeOperation = l.blend;
       Object.assign(obj, { layerId: l.id, tileId: id, space: "tile", locked, flattened: flat });
       out.push(obj);
     }

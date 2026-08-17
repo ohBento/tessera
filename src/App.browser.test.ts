@@ -2207,6 +2207,65 @@ describe("what the wall lost with the layout editor", () => {
   });
 });
 
+describe("blend mode in the panel", () => {
+  const blendBox = () =>
+    [...document.querySelectorAll<HTMLSelectElement>("aside label.field select")].find(
+      (s) => s.closest("label")!.querySelector("span")!.textContent === "Blend",
+    );
+
+  it("writes the picked mode onto the layer", async () => {
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const shape = tileLayers(tile).at(-1)!;
+    selectLayer(shape.id, tile);
+    reveal("props");
+    await tick();
+    await until(() => !!blendBox());
+
+    const box = blendBox()!;
+    // Every mode the canvas has, so the menu cannot quietly lose one.
+    expect(box.options.length).toBe(13);
+    box.value = "multiply";
+    box.dispatchEvent(new Event("change", { bubbles: true }));
+
+    const mode = () =>
+      (findLayer(app.manifest.tiles[tile]!.layers, shape.id) as unknown as { blend?: string })
+        .blend;
+    await until(() => mode() === "multiply");
+    expect(undoLabel()).toBe("Change blend");
+  });
+
+  it("does not offer one on a group", async () => {
+    /* A group is a displacement its members are drawn by — there is no object of
+     * its own on the canvas for a mode to mix, so offering the control would
+     * promise something no pixel follows. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const one = tileLayers(tile).at(-1)!;
+    await addTileShape("ellipse");
+    const two = tileLayers(tile).at(-1)!;
+    selectLayer(one.id, tile);
+    alsoSelect(two.id, tile);
+    await groupPicked();
+
+    const group = tileLayers(tile).find((l) => l.kind === "group")!;
+    selectLayer(group.id, tile);
+    reveal("props");
+    await tick();
+    // Wait for the panel to be showing the group before reading what it lacks.
+    await until(() =>
+      [...document.querySelectorAll("aside p.empty")].some((p) =>
+        p.textContent!.includes("carries its children"),
+      ),
+    );
+    expect(blendBox()).toBeUndefined();
+  });
+});
+
 describe("lining layers up", () => {
   const press = (title: string) => {
     const button = [...document.querySelectorAll("button")].find((b) =>
