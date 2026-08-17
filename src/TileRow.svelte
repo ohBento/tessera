@@ -346,7 +346,17 @@
            what the layer accepts, so the row keeps the pictures and icons and
            leaves the words to the panel. -->
 
-      {#each tileImages(id) as pic (pic.id)}
+      <!-- Keyed on the layer, not on its id — and this is the one place in the
+           row where that matters. The list of rows above is one level of one
+           stack, where an id cannot repeat; these three walk the tile's whole
+           tree, so a document written before the guard — a loose layer and a
+           group holding a copy of it, one id twice — meets both of them here.
+           Two entries under one key is an error Svelte throws on instead of
+           drawing, and it takes the rest of the row down with it: the report
+           was that such a tile would not open at all. An object is its own key
+           and no two layers are the same object. Same keying on the icon and
+           shape lists below, which walk the same tree. -->
+      {#each tileImages(id) as pic (pic)}
         <p class="sub">{layerLabel(pic)}</p>
         <!-- A gallery rather than a file dialog per tile: class
              logos repeat across a wall, so from the second tile
@@ -412,7 +422,7 @@
            tile names the class — but the choices need no importing, so it is
            the artwork grid rather than a gallery of what happens to be in
            play. -->
-      {#each tileIcons(id) as badge (badge.id)}
+      {#each tileIcons(id) as badge (badge)}
         {@const showing = badge.icon}
         <!-- "Class", not the layer's name. An icon layer is auto-named after
              the class it was made with — Witch01 — so the layer's name over a
@@ -458,7 +468,7 @@
            while the icon cutting it could be moved. What a tile owns here is
            the colour, and the row that carries it carries the way into the
            placing tool too. -->
-      {#each tileShapes(id) as shape (shape.id)}
+      {#each tileShapes(id) as shape (shape)}
         <p class="sub">{layerLabel(shape)}</p>
         <div class="gallery indent">
           {#each tilePaintChoices(id, shape.id) as colour (colour)}
