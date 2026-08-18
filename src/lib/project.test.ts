@@ -640,13 +640,27 @@ describe("hashTiles", () => {
 
   it("reads them all at once rather than one after the next", async () => {
     /* The open is what this is for: a read is a two-megabyte trip across the
-       IPC boundary, and in turn they cost forty-four of those in a row. The
-       delays above add up to 30ms in sequence and 12ms overlapped. */
+       IPC boundary, and in turn they cost forty-four of those in a row.
+
+       Counted, not timed. This measured elapsed milliseconds against the
+       mock's delays — 30ms one after the next, 12ms overlapped, asserted under
+       24 — and a stopwatch cannot tell "in sequence" from "at once on a busy
+       machine". A loaded CI runner took 34ms for the overlapped work and
+       failed the release build on it, twice. How many reads stand open at the
+       same time is what is being claimed, and that is the same number on any
+       machine. */
     const ids = ["t00", "t01", "t02", "t03"];
-    outOfOrder(ids);
-    const start = Date.now();
+    let open = 0;
+    let peak = 0;
+    readFile.mockImplementation(async () => {
+      peak = Math.max(peak, ++open);
+      await new Promise((r) => setTimeout(r, 5));
+      open--;
+      return new Uint8Array([1]);
+    });
+
     await hashTiles("/dir", ids);
-    expect(Date.now() - start).toBeLessThan(24);
+    expect(peak).toBe(ids.length);
   });
 
   it("leaves out a tile it could not read rather than failing the open", async () => {
