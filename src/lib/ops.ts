@@ -12,6 +12,7 @@
 import { ask } from "./platform";
 import {
   app,
+  fail,
   changedHere,
   deleteProject,
   openProject,
@@ -36,7 +37,7 @@ export async function confirmed(message: string, title: string) {
   try {
     return await ask(message, { title, kind: "warning" });
   } catch (e) {
-    app.error = `Could not ask for confirmation: ${e}`;
+    fail(`Could not ask for confirmation: ${e}`);
     return false;
   }
 }

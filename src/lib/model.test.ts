@@ -1105,6 +1105,43 @@ describe("uncrop", () => {
     expect(l.scale).toBeCloseTo(0.6, 6);
   });
 
+  it("leaves the pixels that were kept exactly where they were", () => {
+    /* Reported as "Reset crop shifts the picture": trim the right edge and the
+     * whole picture jumps left when it comes back, by half of what was trimmed.
+     * Trimming holds the far edge still — the window's centre moves — and
+     * giving the picture back grows it about that moved centre, so the part
+     * that never went anywhere ends up somewhere else. The kept pixels are the
+     * fixed point of this operation. */
+    const l = newImageLayer("logo.png");
+    // A picture half a tile wide, centred, with a fifth of its width trimmed
+    // off the right: the window is 0.4 wide and its centre sits at 0.45.
+    l.scale = 0.4;
+    l.x = 0.45;
+    l.crop = { l: 0, r: 0.2, t: 0, b: 0 };
+
+    uncrop(l);
+
+    expect(l.scale).toBeCloseTo(0.5, 6);
+    expect(l.x).toBeCloseTo(0.5, 6);
+  });
+
+  it("puts a picture trimmed at the top back down where it was", () => {
+    /* The same sum on the other axis, and the one the model cannot do alone: a
+     * layer stores its width and the height follows from the picture's own
+     * proportions, so the caller has to say how tall it is. A square picture
+     * half a tile wide is 0.5 * 624 / 804 of a tile tall. */
+    const l = newImageLayer("logo.png");
+    const tall = (0.5 * 624) / 804;
+    l.scale = 0.5 * 0.8; // a fifth off the top narrows nothing, but scale is width
+    l.scale = 0.5;
+    l.y = 0.5 + (0.2 / 2) * tall; // trimming the top moved the window's centre down
+    l.crop = { l: 0, r: 0, t: 0.2, b: 0 };
+
+    uncrop(l, 1);
+
+    expect(l.y).toBeCloseTo(0.5, 6);
+  });
+
   it("leaves a picture that was never cropped exactly as it is", () => {
     const l = newImageLayer("logo.png");
     l.scale = 0.3;

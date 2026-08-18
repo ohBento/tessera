@@ -55,6 +55,10 @@ import {
   moveTilesToProject,
   deleteProject,
   newProjectFrom,
+  addTileImage,
+  resetCrop,
+  say,
+  fail,
   openFolder,
   openProjectView,
   projects,
@@ -722,6 +726,30 @@ describe("the wall", () => {
   });
 
 
+  it("takes a range inside a drawer, over the drawer's own contents", async () => {
+    /* The range ran over wall order whatever list was clicked in. A drawer
+     * holds whichever tiles were filed into it, and they need not sit next to
+     * each other on the wall — so shift-clicking from the drawer's first row to
+     * its third swept up everything lying between them out there, tiles the
+     * drawer does not hold and the eye cannot see in that list. The range is
+     * taken over whichever list holds the tile now. */
+    await enterInbox();
+    const wall = app.folderIds.slice(0, 5);
+    app.selectedTiles = [...wall];
+    await newProjectFrom("Konto");
+    await newFolderHere("Fertig");
+    const drawer = folders()[0];
+    // Every other tile, so the drawer's rows are not neighbours on the wall.
+    const filed = [wall[0], wall[2], wall[4]];
+    for (const id of filed) await fileTile(id, drawer.id);
+    expect(folders()[0].tiles).toEqual(filed);
+
+    app.selectedTiles = [];
+    toggleTile(filed[0], {});
+    toggleTile(filed[2], { shift: true });
+    expect(app.selectedTiles).toEqual(filed);
+  });
+
   it("puts the document aside and back again, leaving the game folder alone", async () => {
     /* Twenty kilobytes, not a folder copy: assets and vault copies are never
      * deleted, so a restored snapshot finds everything it names still on disk.
@@ -807,7 +835,7 @@ describe("the wall", () => {
     // says so rather than letting a wall change behind the user's back.
     const other = projects().find((p) => p.id === second)!;
     expect([...other.order, ...other.shelf]).toEqual([c]);
-    expect(app.error).toContain("1 tile(s) taken back");
+    expect(app.note).toContain("1 tile(s) taken back");
   });
 
 
@@ -1157,7 +1185,7 @@ describe("putting the game's own portraits back", () => {
 
     expect(restorableCount()).toBe(0);
     await restoreProject();
-    expect(app.error).toContain("Nothing to put back");
+    expect(app.note).toContain("Nothing to put back");
   });
 });
 
@@ -2214,6 +2242,227 @@ describe("what the wall lost with the layout editor", () => {
   });
 });
 
+describe("a new project's order", () => {
+  it("keeps the order the tiles were clicked in", async () => {
+    /* The wall's order is the in-game order and is handwork — see the note on
+     * placeTile. So a project built from a selection has to keep the order the
+     * hand put them in, not sort them back into the order the folder lists
+     * them. Ctrl-click appends, and this is what says so. */
+    await enterInbox();
+    const [a, b, c] = app.folderIds;
+    toggleTile(c, {});
+    toggleTile(a, { ctrl: true });
+    toggleTile(b, { ctrl: true });
+    expect(app.selectedTiles).toEqual([c, a, b]);
+
+    await newProjectFrom("Konto");
+    expect(projects()[0].order).toEqual([c, a, b]);
+  });
+});
+
+describe("what the status line says", () => {
+  it("keeps a failure and a success apart, newest wins", async () => {
+    /* One field carried both, so "44 tile(s) written" and "Saving failed" were
+     * the same sentence in the same place in the same colour — and a standing
+     * failure sat over the success that followed it until something cleared it.
+     * Two fields, and each setter drops the other. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+
+    fail("it went wrong");
+    expect(app.error).toBe("it went wrong");
+    expect(app.note).toBe("");
+
+    say("it went right");
+    expect(app.note).toBe("it went right");
+    expect(app.error).toBe("");
+
+    fail("wrong again");
+    expect(app.error).toBe("wrong again");
+    expect(app.note).toBe("");
+
+    // Picking something up is moving on: the line goes quiet, both halves of it.
+    toggleTile(tile, {});
+    expect(app.error).toBe("");
+    expect(app.note).toBe("");
+  });
+
+  it("marks a failure and leaves a note plain", async () => {
+    await enterInbox();
+    reveal("tiles");
+    const line = () => document.querySelector(".status")!;
+    fail("a red thing");
+    await until(() => !!line().querySelector(".bad"));
+    expect(line().querySelector(".bad")!.textContent).toContain("a red thing");
+
+    say("a plain thing");
+    await until(() => !line().querySelector(".bad"));
+    expect(line().textContent).toContain("a plain thing");
+  });
+});
+
+describe("reaching the whole selection", () => {
+  it("gives every picked tile's picture its edges back", async () => {
+    /* Reset crop was the odd one out: the panel's heading says how many tiles
+     * it writes to, and this button gave one picture back its edges while the
+     * other forty-three kept the trim. */
+    await enterInbox();
+    const [a, b] = app.folderIds;
+    app.selectedTiles = [a, b];
+    // Placed by hand rather than through the file picker: what is under test is
+    // the reach of the button, not how a picture gets onto a tile.
+    const id = "pic";
+    for (const tile of [a, b]) {
+      const l = newImageLayer("block:#00ff88");
+      l.id = id;
+      l.crop = { l: 0.1, r: 0.1, t: 0.1, b: 0.1 };
+      app.manifest.tiles[tile].layers.push(l);
+    }
+    app.version++;
+    await tick();
+    const on = (tile: string) =>
+      findLayer(app.manifest.tiles[tile]!.layers, id) as unknown as { crop?: unknown };
+    expect(on(a).crop).toBeTruthy();
+    expect(on(b).crop).toBeTruthy();
+
+    selectLayer(id, a);
+    await resetCrop(id);
+
+    expect(on(a).crop).toBeUndefined();
+    expect(on(b).crop).toBeUndefined();
+    // One step back, not two: the pair went in a single write.
+    await undoEdit();
+    expect(on(a).crop).toBeTruthy();
+    expect(on(b).crop).toBeTruthy();
+  });
+
+  it("puts a picture back where its own pixels were", async () => {
+    /* Reported: trim the right edge, press Reset crop, and the picture jumps
+     * left by half of what was trimmed — up when the bottom had been pulled in,
+     * and so on round. Trimming holds the far edge still, so the window's
+     * centre moves; the model's sum is tested next to `uncrop`, and this is the
+     * path through the panel, where the picture's own proportions have to be
+     * measured before the sum can be done at all. The test asset is square. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    // Imported through the picker, so the picture is a real file the panel can
+    // measure — which is the half of this that a hand-made layer cannot test.
+    queuePick(await magentaSquare("square"));
+    await addTileImage();
+    const layer = tileLayers(tile).at(-1)!;
+    const id = layer.id;
+    const trimmed = findLayer(app.manifest.tiles[tile]!.layers, id) as unknown as {
+      scale: number;
+      x: number;
+      y: number;
+      crop?: unknown;
+    };
+    trimmed.scale = 0.5;
+    // A fifth off the top: the window's centre sits that much lower. The
+    // picture is square, so its full height is 0.5 * 624 / 804 of a tile.
+    const tall = (0.5 * TILE_W) / TILE_H;
+    trimmed.crop = { l: 0, r: 0, t: 0.2, b: 0 };
+    trimmed.x = 0.5;
+    trimmed.y = 0.5 + 0.1 * tall;
+    app.version++;
+    selectLayer(id, tile);
+    await tick();
+
+    await resetCrop(id);
+
+    const after = findLayer(app.manifest.tiles[tile]!.layers, id) as unknown as {
+      x: number;
+      y: number;
+      crop?: unknown;
+    };
+    expect(after.crop).toBeUndefined();
+    expect(after.y).toBeCloseTo(0.5, 5);
+    expect(after.x).toBeCloseTo(0.5, 5);
+  });
+
+  it("picks a class for every picked tile", async () => {
+    /* The other button that reached one tile from a panel whose heading says
+     * how many it writes to. Driven through the sheet, because the reach is
+     * decided where the icon is clicked. */
+    await enterInbox();
+    const [a, b] = app.folderIds;
+    app.selectedTiles = [a, b];
+    await addTileShape("icon", "Ranger");
+    const id = tileLayers(a).at(-1)!.id;
+    selectLayer(id, a);
+    reveal("props");
+    await tick();
+
+    // The Class row's button carries the class in force, "Ranger" here.
+    const button = [...document.querySelectorAll<HTMLButtonElement>("aside button.wide")].find(
+      (x) => x.closest("label")?.querySelector("span")?.textContent === "Class",
+    );
+    expect(button).toBeTruthy();
+    button!.click();
+    await tick();
+
+    const witch = [...document.querySelectorAll<HTMLButtonElement>("button")].find(
+      (x) => x.title === "Witch",
+    );
+    expect(witch).toBeTruthy();
+    witch!.click();
+
+    const icon = (tile: string) =>
+      (findLayer(app.manifest.tiles[tile]!.layers, id) as unknown as { icon?: string }).icon;
+    await until(() => icon(a) === "Witch");
+    expect(icon(b)).toBe("Witch");
+  });
+});
+
+describe("the arrow keys", () => {
+  const press = (key: string, shift = false) =>
+    window.dispatchEvent(new KeyboardEvent("keydown", { key, shiftKey: shift, bubbles: true }));
+
+  it("nudges the picked layer a tile pixel, and ten with shift", async () => {
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const id = tileLayers(tile).at(-1)!.id;
+    selectLayer(id, tile);
+    const at = () => findLayer(app.manifest.tiles[tile]!.layers, id)!;
+    const from = at().x;
+
+    press("ArrowRight");
+    await until(() => at().x !== from);
+    expect(at().x).toBeCloseTo(from + 1 / TILE_W, 6);
+
+    const one = at().x;
+    press("ArrowRight", true);
+    await until(() => at().x !== one);
+    expect(at().x).toBeCloseTo(one + 10 / TILE_W, 6);
+
+    // Down is down: y grows towards the chin, as everywhere else.
+    const before = at().y;
+    press("ArrowDown");
+    await until(() => at().y !== before);
+    expect(at().y).toBeCloseTo(before + 1 / TILE_H, 6);
+  });
+
+  it("reaches every picked tile, the way a drag does", async () => {
+    await enterInbox();
+    const [a, b] = app.folderIds;
+    app.selectedTiles = [a, b];
+    await addTileShape("rect");
+    const id = tileLayers(a).at(-1)!.id;
+    selectLayer(id, a);
+    const on = (tile: string) => findLayer(app.manifest.tiles[tile]!.layers, id)!;
+    const from = { a: on(a).x, b: on(b).x };
+
+    press("ArrowLeft");
+    await until(() => on(a).x !== from.a);
+    expect(on(a).x).toBeCloseTo(from.a - 1 / TILE_W, 6);
+    expect(on(b).x).toBeCloseTo(from.b - 1 / TILE_W, 6);
+  });
+});
+
 describe("blend mode in the panel", () => {
   const blendBox = () =>
     [...document.querySelectorAll<HTMLSelectElement>("aside label.field select")].find(
@@ -2558,7 +2807,7 @@ describe("three the demolition took and nobody missed", () => {
     await restoreProject();
     await until(() => !app.busy);
 
-    expect(app.error).toContain("put back in the game");
+    expect(app.note).toContain("put back in the game");
     expect(JSON.stringify(app.manifest)).toBe(before);
   });
 

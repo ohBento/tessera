@@ -22,6 +22,7 @@
     wall,
     toggleTile,
     visibleIds,
+    fail,
   } from "./lib/editor.svelte";
   import { TILE_H, TILE_W } from "./lib/bmp";
   import { cellIndexAt, cellsIn, isTyping, snapBox, type Guide } from "./lib/geometry";
@@ -388,7 +389,7 @@
          rebuild a few lines down has said so all along; this is the same
          failure on the same pictures. */
       frameAt(tile, layerId).catch((e) => {
-        app.error = `The placing frame could not be built: ${e}`;
+        fail(`The placing frame could not be built: ${e}`);
       });
   });
 
@@ -548,7 +549,7 @@
        * keeps the chain resolvable, and leaving `built` alone means the next
        * version bump retries instead of giving up. */
       .catch((e) => {
-        app.error = `The view could not be built: ${e}`;
+        fail(`The view could not be built: ${e}`);
       });
     return building;
   }

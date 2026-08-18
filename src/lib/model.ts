@@ -6,6 +6,10 @@
  *  the manifest half-changed — so the rule is that nothing here may depend on
  *  the caller having snapshotted first. A manifest is JSON by definition, so
  *  the round trip loses nothing that was ever going to reach disk. */
+/* The tile's pixel size, for the one sum here that crosses the two axes:
+   a picture's proportions are its own, the tile's are not square. */
+import { TILE_H, TILE_W } from "./bmp";
+
 export const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 
 /** Crop rectangle in source-image pixels. */
@@ -130,9 +134,25 @@ export const cropSpan = (c: Inset) => ({ w: 1 - c.l - c.r, h: 1 - c.t - c.b });
  *  of it. Dropping the crop on its own would redraw the whole picture in the
  *  space the visible part occupied — the trim would read as having shrunk the
  *  picture rather than cropped it. */
-export function uncrop(l: ImageLayer) {
+export function uncrop(l: ImageLayer, aspect = 0) {
   if (!l.crop) return;
+  const { l: left, r, t, b } = l.crop;
   l.scale /= cropSpan(l.crop).w || 1;
+  /* Put the centre back by the same half the trim moved it. Trimming holds the
+     far edge still (see trimTo), so the window's centre travels half of what
+     was cut; a layer is drawn about its centre, so giving the picture back
+     grows it around that moved centre and the pixels nobody trimmed end up
+     somewhere else — left when the right edge had been pulled in, up when the
+     bottom had. `l.scale` is the whole picture's width by now, which is what
+     the halves are fractions of.
+
+     `aspect` is the picture's own height over its width. A layer stores its
+     width and lets the height follow from the pixels, so the model cannot know
+     how far a vertical trim moved anything; the caller, which has the picture,
+     says. Absent, the horizontal correction still happens and the vertical one
+     is skipped — the old behaviour on that axis rather than a wrong guess. */
+  l.x -= ((left - r) / 2) * l.scale;
+  if (aspect > 0) l.y -= ((t - b) / 2) * l.scale * aspect * (TILE_W / TILE_H);
   delete l.crop;
 }
 
