@@ -2416,6 +2416,67 @@ describe("reaching the whole selection", () => {
   });
 });
 
+describe("escape during a drag", () => {
+  it("puts the layer back and writes nothing", async () => {
+    /* The way out of a drag that went wrong. Until now the only way out was to
+     * finish it and press Ctrl+Z — a write to the document and a save, to undo
+     * something that was never meant, and with several tiles picked the wrong
+     * drag has landed on all of them by then. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    await addTileShape("rect");
+    const id = tileLayers(tile).at(-1)!.id;
+    selectLayer(id, tile);
+    await tick();
+
+    const canvas = (window as { tesseraWall?: fabric.Canvas }).tesseraWall!;
+    const objectFor = () =>
+      canvas.getObjects().find((o) => {
+        const t = o as Tagged;
+        return t.layerId === id && t.tileId === tile;
+      }) as Tagged | undefined;
+    await until(() => !!objectFor());
+    const obj = objectFor()!;
+
+    const at = () => ({ ...(findLayer(app.manifest.tiles[tile]!.layers, id) as unknown as { x: number; y: number }) });
+    const from = at();
+    const stood = obj.getCenterPoint();
+    const steps = historySteps().length;
+
+    // Once, not on every step of the gesture: the harness calls this on each
+    // move, and a second Escape after the drag is cancelled means what Escape
+    // means the rest of the time — drop the layer.
+    let pressed = false;
+    await dragObject(canvas, obj, 120, 90, () => {
+      if (pressed) return;
+      pressed = true;
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    await tick();
+    await new Promise((r) => setTimeout(r, 120));
+
+    const after = at();
+    expect(after.x).toBeCloseTo(from.x, 6);
+    expect(after.y).toBeCloseTo(from.y, 6);
+    // Nothing to undo: a cancelled gesture is not an edit.
+    expect(historySteps().length).toBe(steps);
+    /* On screen too, not merely in the document. Clearing Fabric's transform is
+       enough to write nothing, but the object would sit where the hand left it
+       until something redrew the tile — a picture that disagrees with the
+       document it is a picture of. */
+    const back = (canvas.getObjects().find((o) => {
+      const t = o as Tagged;
+      return t.layerId === id && t.tileId === tile;
+    }) as Tagged).getCenterPoint();
+    expect(back.x).toBeCloseTo(stood.x, 1);
+    expect(back.y).toBeCloseTo(stood.y, 1);
+
+    // And the layer is still the one picked, ready to be dragged again.
+    expect(app.selected).toBe(id);
+  });
+});
+
 describe("the arrow keys", () => {
   const press = (key: string, shift = false) =>
     window.dispatchEvent(new KeyboardEvent("keydown", { key, shiftKey: shift, bubbles: true }));

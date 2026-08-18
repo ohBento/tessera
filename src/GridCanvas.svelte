@@ -462,8 +462,9 @@
    *  Read rather than tracked here: the canvas is the one that knows, and a
    *  flag of ours would have to be kept in step with every way a gesture can
    *  end, including the ones that never reach mouse:up. */
-  const midGesture = () =>
-    !!(canvas as unknown as { _currentTransform?: unknown } | undefined)?._currentTransform;
+  export function midGesture() {
+    return !!(canvas as unknown as { _currentTransform?: unknown } | undefined)?._currentTransform;
+  }
 
   /* --- Redrawing one tile instead of the wall.
    *
@@ -1234,13 +1235,69 @@
     };
     const onDown = (e: KeyboardEvent) => key(e, true);
     const onUp = (e: KeyboardEvent) => key(e, false);
+
+    /** Escape, while the hand is still down: puts the layer back where the drag
+     *  started and lets the gesture end without writing anything.
+     *
+     *  The way out of a drag that went wrong. Until now the only way was to
+     *  finish it and press Ctrl+Z, which is a write to the document and a save
+     *  to undo something that was never meant — and with several tiles picked
+     *  the wrong drag has already landed on all of them by then.
+     *
+     *  Fabric keeps the object's state from before the gesture on the live
+     *  transform, so putting it back is that record, not a copy of our own that
+     *  could disagree with it. Clearing `_currentTransform` is what makes the
+     *  release quiet: the mouse-up path only finishes and fires
+     *  `object:modified` when there is a transform to finish.
+     *
+     *  In the capture phase and stopped there, because App listens for Escape
+     *  on the same window and would drop the layer — the pick is the one thing
+     *  that should survive cancelling a drag, since the next thing anyone does
+     *  is drag it again. */
+    const onEscape = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const held = canvas as unknown as {
+        _currentTransform?: { target: fabric.Object; original?: Record<string, unknown> } | null;
+      };
+      const live = held?._currentTransform;
+      if (!live?.target) return;
+      /* Placement and shape only. Fabric's record also carries the origin the
+         gesture worked from — a scale runs from the opposite corner, so it is
+         often "left"/"top" — and putting that on an object drawn from its
+         centre reinterprets the very left/top being restored, which moves the
+         layer instead of putting it back. */
+      const o = live.original as Record<string, number | boolean> | undefined;
+      if (o)
+        live.target.set({
+          left: o.left as number,
+          top: o.top as number,
+          scaleX: o.scaleX as number,
+          scaleY: o.scaleY as number,
+          angle: o.angle as number,
+          flipX: !!o.flipX,
+          flipY: !!o.flipY,
+        });
+      live.target.setCoords();
+      held._currentTransform = null;
+      canvas?.requestRenderAll();
+      /* Immediate, not merely stopped: App listens for Escape on the same
+         window and drops the picked layer, and the pick is the one thing that
+         should survive cancelling a drag — the next thing anyone does is drag
+         it again. Both listeners sit on the window, so when the key lands on
+         the window itself the phases do not separate them and only the
+         immediate form gets in front. */
+      e.stopImmediatePropagation();
+      e.preventDefault();
+    };
     addEventListener("keydown", onDown);
     addEventListener("keyup", onUp);
+    addEventListener("keydown", onEscape, true);
 
     return () => {
       ro.disconnect();
       removeEventListener("keydown", onDown);
       removeEventListener("keyup", onUp);
+      removeEventListener("keydown", onEscape, true);
       const dying = canvas;
       canvas = undefined;
       void dying?.dispose();
