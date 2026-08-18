@@ -104,7 +104,7 @@ import {
   type SnapshotRef,
   tauriDeps,
 } from "./project";
-import { TILE_H } from "./bmp";
+import { TILE_H, TILE_W } from "./bmp";
 import { layerSize, textWidth, type SceneDeps, type Tagged } from "./scene";
 
 export const app = $state({
@@ -112,7 +112,17 @@ export const app = $state({
   manifest: emptyManifest() as Manifest,
   deps: null as SceneDeps | null,
   busy: "",
+  /* What went wrong, and only that. A message here is a failure the user has
+   * to know about; it is drawn in the colour of one. */
   error: "",
+  /* What just happened, and went right — "44 tile(s) written", "Undone: move
+   * layer". The two shared one field, so every success was drawn in the
+   * failure's colour and read as one: a write that worked and a write that
+   * refused were the same sentence in the same place. Two fields and two
+   * setters (`say` and `fail`) keep them apart, and each clears the other
+   * so the line always shows the latest thing rather than a stale warning
+   * over a fresh success. */
+  note: "",
   /* Bumped only by changes that alter *which* objects exist. A drag moves an
    * object Fabric is already showing, so rebuilding the scene for it would
    * throw away the live canvas to redraw what is already correct — that is the
@@ -214,6 +224,11 @@ export const app = $state({
  *
  *  Either end missing — a shelved tile has no slot on the wall — means there
  *  is no range to take, so the click stands on its own. */
+/** The row of tiles a click lands in: a drawer's contents when the tile is
+ *  filed in one, the wall's own order otherwise. What a range is taken over. */
+const listHolding = (id: string): string[] =>
+  folders().find((f) => f.tiles.includes(id))?.tiles ?? visibleIds();
+
 const tileRange = (ids: string[], from: string, to: string): string[] => {
   const a = ids.indexOf(from);
   const b = ids.indexOf(to);
@@ -226,16 +241,39 @@ const tileRange = (ids: string[], from: string, to: string): string[] => {
  *  Ctrl adds or removes one, Shift takes everything from the anchor to here —
  *  the two gestures every list has. Filing twenty tiles into a drawer used to
  *  cost twenty ctrl-clicks, because Shift was merely a second Ctrl. */
+/** Says what just happened. Clears any standing failure: the line shows one
+ *  thing, and it should be the newest one. */
+export function say(text: string) {
+  app.note = text;
+  app.error = "";
+}
+
+/** Says what went wrong, and drops whatever went right before it. */
+export function fail(text: string) {
+  app.error = text;
+  app.note = "";
+}
+
+/** Takes the line back to saying nothing at all. */
+export function hush() {
+  app.error = "";
+  app.note = "";
+}
+
 export function toggleTile(id: string, mods: { ctrl?: boolean; shift?: boolean }) {
   // Picking something is the user moving on; a note about the last action has
   // had its moment and is now in the way of the selection count.
-  app.error = "";
+  hush();
   const current = app.selectedTiles;
   /* The anchor deliberately stays where it is: a second shift-click reshapes
    * the same range rather than starting over from the last one, which is what
    * makes "a bit further down after all" one click instead of three. */
   if (mods.shift && app.tileAnchor) {
-    app.selectedTiles = tileRange(visibleIds(), app.tileAnchor, id);
+    /* Over the list the tile is actually in. A drawer's tiles are off the wall,
+       so `visibleIds()` does not hold them and the range came back as the one
+       clicked tile — Shift in a drawer of thirty was thirty clicks, which is
+       the very list where a range matters most. */
+    app.selectedTiles = tileRange(listHolding(id), app.tileAnchor, id);
     return;
   }
   app.tileAnchor = id;
@@ -255,14 +293,6 @@ export const clearTiles = () => (app.selectedTiles = []);
 export function clearAll() {
   app.selectedTiles = [];
   app.selected = "";
-  /* The tile the layer was picked on goes with it. It is that layer's address
-     and nothing else reads it once there is no layer — but bulkTargets counts
-     it as a target whatever the wall selection says, so a tile left behind
-     here was still being written to after the wall it sits on had been left. */
-  /* The tile the layer was picked on goes with it. It is that layer's address
-     and nothing else reads it once there is no layer — but bulkTargets counts
-     it as a target whatever the wall selection says, so a tile left behind
-     here was still being written to after the wall it sits on had been left. */
   /* The tile the layer was picked on goes with it. It is that layer's address
      and nothing else reads it once there is no layer — but bulkTargets counts
      it as a target whatever the wall selection says, so a tile left behind
@@ -378,7 +408,7 @@ export async function archiveSelection(away: boolean) {
     setArchived(app.manifest, ids, away);
     clearAll();
   });
-  app.error = away ? `${ids.length} tile(s) archived` : `${ids.length} tile(s) back in Unsorted`;
+  say(away ? `${ids.length} tile(s) archived` : `${ids.length} tile(s) back in Unsorted`);
 }
 
 export function openProjectView(id: string) {
@@ -525,7 +555,7 @@ export async function stripSelectedTiles() {
      * happen in complete silence next to actions that report their count, and
      * the wording and per-tile pictures it also takes are keyed by layer id —
      * so "layers" undersells it to exactly the person who typed them. */
-    app.error = `Cleared ${stripping.length} tile(s) — layers, wording and per-tile pictures`;
+    say(`Cleared ${stripping.length} tile(s) — layers, wording and per-tile pictures`);
   });
 }
 
@@ -754,7 +784,7 @@ async function mutate(label: string, fn: () => void, structural = true, run?: st
    * the live selection count and its "clear" link until something
    * else happened to overwrite it. Anything a mutation wants to say sets it
    * inside fn, after this. */
-  app.error = "";
+  hush();
   const before = plain(app.manifest);
   const pushed = checkpoint(history, before, label, run);
   try {
@@ -765,7 +795,7 @@ async function mutate(label: string, fn: () => void, structural = true, run?: st
      * canvas did not, and the file on disk was a third answer. Putting the
      * recorded state back is the only way all three stay in step. */
     app.manifest = before;
-    app.error = `Change failed: ${e}`;
+    fail(`Change failed: ${e}`);
     app.version++;
     /* Only what this call put there. Inside an open run — a slider being
        dragged, a caption being typed — the checkpoint above pushed nothing,
@@ -827,7 +857,7 @@ async function travel(step: typeof undo<Manifest>, how: "Undone" | "Redone") {
    * edit tells you what it touched by touching it, and this one can reach
    * anywhere on the wall. Before persist, so a failed save still gets the last
    * word. */
-  app.error = `${how}: ${there.label}`;
+  say(`${how}: ${there.label}`);
   await persist();
 }
 
@@ -1074,12 +1104,12 @@ let running = 0;
 async function run(label: string, fn: () => Promise<void>): Promise<boolean> {
   running++;
   app.busy = label;
-  app.error = "";
+  hush();
   try {
     await fn();
     return true;
   } catch (e) {
-    app.error = String(e);
+    fail(String(e));
     return false;
   } finally {
     if (--running === 0) app.busy = "";
@@ -1096,7 +1126,7 @@ async function persist(): Promise<boolean> {
     await saveManifest(app.dir, plain(app.manifest));
     return true;
   } catch (e) {
-    app.error = `Saving failed: ${e}`;
+    fail(`Saving failed: ${e}`);
     return false;
   }
 }
@@ -1252,7 +1282,7 @@ export async function openFolder(dir?: string) {
         `Layouts are gone: every stamp is now editable layers on the tile itself. ` +
           `The version ${migrated.from} document was copied to "${migrated.backup}" first.`,
       );
-    if (said.length) app.error = said.join(" · ");
+    if (said.length) say(said.join(" · "));
   });
 }
 
@@ -1554,6 +1584,18 @@ const EDGE_WORD: Record<AlignEdge, string> = {
   bottom: "at the bottom",
 };
 
+/** Moves the picked layers by a whole number of tile pixels — what the arrow
+ *  keys do.
+ *
+ *  In pixels rather than fractions because that is the unit the eye works in:
+ *  a caption is nudged until it looks right against a 624x804 portrait, and
+ *  the same key press has to mean the same distance whatever is picked. The
+ *  same tiles a drag would reach are reached here, by the same rule. */
+export const nudgePicked = (px: number, py: number) =>
+  movePicked("Move layer", (boxes) =>
+    boxes.map(() => ({ dx: px / TILE_W, dy: py / TILE_H })),
+  );
+
 /** Lines the picked layers up on one edge of their tile. */
 export const alignPicked = (edge: AlignEdge) =>
   movePicked(`Line up ${EDGE_WORD[edge]}`, (boxes) => alignBoxes(boxes, edge, TILE_BOX));
@@ -1719,7 +1761,7 @@ export async function clearMosaic() {
   const ids = visibleIds();
   await mutate("Clear wall picture", () => {
     clearBases(app.manifest, ids);
-    app.error = `${n} portrait(s) restored`;
+    say(`${n} portrait(s) restored`);
   });
 }
 
@@ -1763,9 +1805,10 @@ export async function bakeMosaic() {
   if (!layer || !project) return;
   const off = unbakeable(layer);
   if (off.length) {
-    app.error =
+    fail(
       `Not applied: a baked background keeps only the placement, so ${off.join(", ")} ` +
-      `would be lost. Reset ${off.length > 1 ? "those" : "that"} first, or leave the picture live.`;
+        `would be lost. Reset ${off.length > 1 ? "those" : "that"} first, or leave the picture live.`,
+    );
     return;
   }
   await run("bake", async () => {
@@ -1775,7 +1818,7 @@ export async function bakeMosaic() {
      * would put crops on the wrong portraits. */
     const crops = mosaicBakeCrops(layer, { w: bmp.width, h: bmp.height }, project.order.length);
     if (!crops.size) {
-      app.error = "The picture does not fully cover any tile";
+      fail("The picture does not fully cover any tile");
       return;
     }
     await mutate("Apply wall picture", () => {
@@ -1825,7 +1868,7 @@ export async function keepCharacter(id: string) {
     await saveFingerprints(app.dir, prints);
     app.changedTiles = app.changedTiles.filter((x) => x !== id);
     app.version++;
-    app.error = "Kept. The vault's copy of the old face was released.";
+    say("Kept. The vault's copy of the old face was released.");
   });
 }
 
@@ -1848,7 +1891,7 @@ export async function replaceCharacter(id: string) {
     recordOriginal(prints, id);
     await saveFingerprints(app.dir, prints);
     app.changedTiles = app.changedTiles.filter((x) => x !== id);
-    app.error = "Layers cleared. Ctrl+Z brings them back — the vault's original is gone.";
+    say("Layers cleared. Ctrl+Z brings them back — the vault's original is gone.");
   });
 }
 
@@ -1902,7 +1945,7 @@ export async function replaceAllCharacters() {
     for (const id of ids) recordOriginal(prints, id);
     await saveFingerprints(app.dir, prints);
     app.changedTiles = app.changedTiles.filter((id) => !dropped.has(id));
-    app.error = `${ids.length} tile(s) cleared. Ctrl+Z brings the layers back — the vault's originals are gone.`;
+    say(`${ids.length} tile(s) cleared. Ctrl+Z brings the layers back — the vault's originals are gone.`);
   });
 }
 
@@ -1936,9 +1979,11 @@ export async function restoreProject() {
   const ids = projectTiles(p);
   await run("restore", async () => {
     const n = await restoreTiles(app.dir, ids);
-    app.error = n
-      ? `${n} portrait(s) put back in the game`
-      : "Nothing to put back — none of these were written";
+    say(
+      n
+        ? `${n} portrait(s) put back in the game`
+        : "Nothing to put back — none of these were written",
+    );
     /* No rebuild, and no cache to drop: loadOriginal already prefers the vault
      * copy over the file in the game folder, and the vault copy is exactly what
      * was just written there. The editor's idea of each original is unchanged,
@@ -2030,7 +2075,7 @@ export async function renameSnapshot(ref: SnapshotRef, to: string) {
   if (snapshotTaken(name)) {
     // Said out loud rather than swallowed: the field springs back to the old
     // name, which on its own looks like a dropped keystroke.
-    app.error = `There is already a snapshot called "${name}"`;
+    fail(`There is already a snapshot called "${name}"`);
     return;
   }
   await run("snapshot", async () => {
@@ -2086,7 +2131,7 @@ export async function restoreSnapshot(ref: SnapshotRef) {
         clearAll();
         app.openProjectId = "";
       });
-      app.error = `Restored "${ref.name}"`;
+      say(`Restored "${ref.name}"`);
       return;
     }
 
@@ -2120,9 +2165,9 @@ export async function restoreSnapshot(ref: SnapshotRef) {
       taken ? `${taken} tile(s) taken back from another project` : "",
       released ? `${released} newer tile(s) sent to Unsorted` : "",
     ].filter(Boolean);
-    app.error = also.length
-      ? `Restored "${ref.name}" — ${also.join(", ")}`
-      : `Restored "${ref.name}"`;
+    say(
+      also.length ? `Restored "${ref.name}" — ${also.join(", ")}` : `Restored "${ref.name}"`,
+    );
   });
 }
 
@@ -2160,7 +2205,7 @@ export async function saveToGame() {
     // The write vaults every original it touched on the way past, so what
     // "Reset in game" can put back has just grown.
     app.vaulted = await vaultedIds(app.dir);
-    app.error = `${n} tile(s) written`;
+    say(`${n} tile(s) written`);
   });
 }
 
@@ -2305,9 +2350,19 @@ export async function setLayerField(id: string, key: LayerField, value: unknown)
 /** Gives a trimmed picture back whole — see `uncrop`, which is where the sums
  *  live, because "reset" has to put the scale back as well as the crop. */
 export async function resetCrop(id: string) {
-  const layer = anyLayer(id);
-  if (layer?.kind !== "image" || !layer.crop) return;
-  await mutate("Reset crop", () => uncrop(layer), true);
+  /* Every tile the pick reaches, like every other field in the panel. It used
+     to give one picture back its edges while the other forty-three kept the
+     trim — from a panel whose heading says how many tiles it is writing to. */
+  const targets = bulkTargets(id)
+    .map((t) => findLayer(app.manifest.tiles[t]?.layers ?? [], id))
+    .filter((l): l is ImageLayer => l?.kind === "image" && !!l.crop);
+  const here = anyLayer(id);
+  const loose = here?.kind === "image" && here.crop && !targets.includes(here) ? [here] : [];
+  const all = [...targets, ...loose];
+  if (!all.length) return;
+  await mutate("Reset crop", () => {
+    for (const layer of all) uncrop(layer);
+  }, true);
 }
 
 /** Ends the current undo run, so the next edit starts a new step. The one
@@ -2467,7 +2522,7 @@ export async function pasteLayerProps(id: string, tileId = app.selectedTile) {
   const mine = new Set([...walkLayers([to])].map((l) => l.id));
   const own = tileId ? (app.manifest.tiles[tileId]?.layers ?? []) : (openProject()?.gridLayers ?? []);
   if (bringing.size && [...walkLayers(own)].some((l) => bringing.has(l.id) && !mine.has(l.id))) {
-    app.error = "Not pasted — this tile already carries a layer of that name";
+    fail("Not pasted — this tile already carries a layer of that name");
     return;
   }
   await mutate("Paste properties", () => writeProps(to, from));
@@ -2522,9 +2577,10 @@ export async function pasteLayerOntoTiles() {
     // Said out loud: a paste that quietly reached six tiles of eight is the
     // kind of thing found a week later.
     if (clashed.length)
-      app.error =
+      fail(
         `Pasted onto ${done.length} tile(s); ${clashed.length} skipped — ` +
-        `already carrying a layer of that name`;
+          `already carrying a layer of that name`,
+      );
   });
 }
 
@@ -2612,7 +2668,7 @@ async function dropInto(
        anything it holds, which would take the whole branch out of reach. Said
        out loud — the row springing back looks like a drag that never
        registered, and the answer is to aim somewhere else. */
-    app.error = "A group cannot be put inside itself";
+    fail("A group cannot be put inside itself");
     return;
   }
   await mutate(parentId ? "Move layer into group" : "Reorder layer", () => {

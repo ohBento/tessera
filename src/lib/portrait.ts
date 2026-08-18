@@ -2,7 +2,7 @@
  * the cards on the overview, the shelf, the tile rows, the strip beside a
  * Layout. Every one of them wants the same picture at a different size, and
  * none of them owns it. */
-import { app } from "./editor.svelte";
+import { app, fail } from "./editor.svelte";
 
 /** An object URL for a stored asset, for gallery thumbnails.
  *
@@ -46,7 +46,7 @@ export function portrait(el: HTMLCanvasElement, arg: { id: string; ready: boolea
      so a broken file cannot fill the line on every redraw. */
   const show = (next: { id: string; ready: boolean }) =>
     void draw(next).catch((e) => {
-      app.error = `A portrait could not be drawn: ${e}`;
+      fail(`A portrait could not be drawn: ${e}`);
     });
 
   show(arg);

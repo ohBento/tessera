@@ -108,6 +108,8 @@
     undoEdit,
     undoLabel,
     undoable,
+    fail,
+    nudgePicked,
   } from "./lib/editor.svelte";
   import {
     allNewCharacters,
@@ -205,6 +207,23 @@
       !iconsOpen
     ) {
       void deleteLayer(app.selected);
+      e.preventDefault();
+      return;
+    }
+    /* The arrows nudge what is picked, a tile pixel at a time and ten with
+       Shift — the gesture a mouse cannot make. A drag lands where the hand
+       stops; "two pixels left, and the same two on all forty-four" is a
+       keyboard job. Reaches the same tiles a drag would, by the same rule.
+
+       Before the Ctrl gate below, because these carry no modifier of their
+       own. */
+    const step = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[
+      e.key
+    ];
+    if (step && app.selected && !keysOpen && !iconsOpen) {
+      const far = e.shiftKey ? 10 : 1;
+      void nudgePicked(step[0] * far, step[1] * far);
+      // Or the wall's own scroll answers the same key underneath.
       e.preventDefault();
       return;
     }
@@ -437,7 +456,7 @@
        reload, so a broken file cannot fill the line on every redraw. */
     const show = (next: { id: string; ready: boolean }) =>
       void draw(next).catch((e) => {
-        app.error = `A portrait could not be drawn: ${e}`;
+        fail(`A portrait could not be drawn: ${e}`);
       });
 
     show(arg);
@@ -968,7 +987,13 @@
       {#if app.busy}
         {app.busy}…
       {:else if app.error}
-        {app.error}
+        <!-- A failure and a success used to be the same sentence in the same
+             place, in the same colour: "44 tile(s) written" and "Saving failed"
+             read alike, and the one that mattered had nothing to make it stand
+             out. The failure is marked now; what merely happened is not. -->
+        <span class="bad">{app.error}</span>
+      {:else if app.note}
+        {app.note}
       {:else if app.selectedTiles.length}
         <!-- The second half only where it can be anything but zero. Inside a
              project every picked tile is claimed by definition, so it read
@@ -1719,7 +1744,11 @@
           onclick={() => {
             const target = iconTarget;
             closeIconSheet();
-            if (target?.tile) void setTileLayerField([target.tile], target.layer, "icon", name);
+            /* Every tile the pick reaches, like the panel's own fields. Picking
+               a class from a panel whose heading reads "· 44 tiles" and having
+               it land on one of them was the odd one out. */
+            if (target?.tile)
+              void setTileLayerField(bulkTargets(target.layer), target.layer, "icon", name);
             else if (target) void setLayerField(target.layer, "icon", name);
             // Nothing asked for it: the toolbar did, so it lands wherever a new
             // layer lands — the sheet, or every picked tile.
@@ -2012,6 +2041,12 @@
   .status {
     margin-left: auto;
     color: #8f88a8;
+  }
+
+  /* Only failures. The line is grey for everything that went as asked, so this
+     colour means one thing and is worth looking at when it appears. */
+  .status .bad {
+    color: #ff9f9f;
   }
 
   .docs {
