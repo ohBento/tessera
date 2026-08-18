@@ -2349,6 +2349,24 @@ export async function setLayerField(id: string, key: LayerField, value: unknown)
 
 /** Gives a trimmed picture back whole — see `uncrop`, which is where the sums
  *  live, because "reset" has to put the scale back as well as the crop. */
+/** How tall a picture is against how wide, straight from the pixels.
+ *
+ *  Asked of the same URL the wall draws from, so it is the picture actually on
+ *  screen and not a second idea of it. Answers 0 when there is nothing to
+ *  measure — no deps yet, or a name that will not load — and `uncrop` then does
+ *  the horizontal half of its sum and leaves the vertical one alone. */
+async function assetAspect(name: string): Promise<number> {
+  if (!app.deps || !name) return 0;
+  try {
+    const img = new Image();
+    img.src = await app.deps.asset(name);
+    await img.decode();
+    return img.naturalWidth ? img.naturalHeight / img.naturalWidth : 0;
+  } catch {
+    return 0;
+  }
+}
+
 export async function resetCrop(id: string) {
   /* Every tile the pick reaches, like every other field in the panel. It used
      to give one picture back its edges while the other forty-three kept the
@@ -2360,8 +2378,12 @@ export async function resetCrop(id: string) {
   const loose = here?.kind === "image" && here.crop && !targets.includes(here) ? [here] : [];
   const all = [...targets, ...loose];
   if (!all.length) return;
+  /* Measured per layer, not once: a tile can carry its own picture under a
+     shared id, and two pictures of different proportions want different sums.
+     Awaited before the write, because a mutation is not a place to wait in. */
+  const aspects = await Promise.all(all.map((l) => assetAspect(l.asset)));
   await mutate("Reset crop", () => {
-    for (const layer of all) uncrop(layer);
+    all.forEach((layer, i) => uncrop(layer, aspects[i]));
   }, true);
 }
 

@@ -55,6 +55,7 @@ import {
   moveTilesToProject,
   deleteProject,
   newProjectFrom,
+  addTileImage,
   resetCrop,
   say,
   fail,
@@ -2334,6 +2335,51 @@ describe("reaching the whole selection", () => {
     await undoEdit();
     expect(on(a).crop).toBeTruthy();
     expect(on(b).crop).toBeTruthy();
+  });
+
+  it("puts a picture back where its own pixels were", async () => {
+    /* Reported: trim the right edge, press Reset crop, and the picture jumps
+     * left by half of what was trimmed — up when the bottom had been pulled in,
+     * and so on round. Trimming holds the far edge still, so the window's
+     * centre moves; the model's sum is tested next to `uncrop`, and this is the
+     * path through the panel, where the picture's own proportions have to be
+     * measured before the sum can be done at all. The test asset is square. */
+    await enterInbox();
+    const tile = app.folderIds[0];
+    app.selectedTiles = [tile];
+    // Imported through the picker, so the picture is a real file the panel can
+    // measure — which is the half of this that a hand-made layer cannot test.
+    queuePick(await magentaSquare("square"));
+    await addTileImage();
+    const layer = tileLayers(tile).at(-1)!;
+    const id = layer.id;
+    const trimmed = findLayer(app.manifest.tiles[tile]!.layers, id) as unknown as {
+      scale: number;
+      x: number;
+      y: number;
+      crop?: unknown;
+    };
+    trimmed.scale = 0.5;
+    // A fifth off the top: the window's centre sits that much lower. The
+    // picture is square, so its full height is 0.5 * 624 / 804 of a tile.
+    const tall = (0.5 * TILE_W) / TILE_H;
+    trimmed.crop = { l: 0, r: 0, t: 0.2, b: 0 };
+    trimmed.x = 0.5;
+    trimmed.y = 0.5 + 0.1 * tall;
+    app.version++;
+    selectLayer(id, tile);
+    await tick();
+
+    await resetCrop(id);
+
+    const after = findLayer(app.manifest.tiles[tile]!.layers, id) as unknown as {
+      x: number;
+      y: number;
+      crop?: unknown;
+    };
+    expect(after.crop).toBeUndefined();
+    expect(after.y).toBeCloseTo(0.5, 5);
+    expect(after.x).toBeCloseTo(0.5, 5);
   });
 
   it("picks a class for every picked tile", async () => {
