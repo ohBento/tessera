@@ -190,7 +190,10 @@
     /* Escape used to leave the placing mode. With the mode gone it drops the
        layer instead, which takes the frame with it — the same key doing the
        same thing it always did from where the user was standing. */
-    if (key === "escape" && app.selected) {
+    /* Not while a gesture is live: Escape cancels the drag then, and the wall
+       does that itself. The pick has to survive it — the next thing anyone does
+       after taking a drag back is drag the same layer again. */
+    if (key === "escape" && app.selected && !grid?.midGesture()) {
       selectLayer("");
       e.preventDefault();
       return;
@@ -325,7 +328,7 @@
     ["Ctrl + Y  ·  Ctrl + Shift + Z", "Redo"],
     ["Delete  ·  Backspace", "Take the picked layer off its tile"],
     ["Ctrl + D", "Duplicate the picked layer on its tile"],
-    ["Escape", "Drop the picked layer, or close the sheet over the page"],
+    ["Escape", "Take back the drag in progress · drop the picked layer · close a sheet"],
     /* Half of what this app can do is behind a right-click and nothing on
        screen said so — a sheet that lists the gestures and leaves out the one
        that opens the actions is a map with the roads missing. */
