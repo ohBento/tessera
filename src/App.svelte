@@ -334,6 +334,7 @@
        that opens the actions is a map with the roads missing. */
     ["Right-click a layer row", "Duplicate, group, ungroup, copy and paste a look"],
     ["Right-click the wall", "Act on the picked tiles: hide, lock, remove a layer, archive"],
+    ["Arrow keys", "Nudge the picked layer a tile pixel · with Shift, ten"],
     ["?", "This sheet"],
     ["Wheel", "Zoom"],
     ["Middle-drag", "Pan"],
